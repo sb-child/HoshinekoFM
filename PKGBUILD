@@ -12,10 +12,9 @@ conflicts=('material-3-file-manager')
 options=('!strip')
 _appimage="Materials-${pkgver}.AppImage"
 
-# Since this is a local build for now, we assume the AppImage is present in the release folder
-# In a real AUR package, this would be a URL source
-source=("file://$(pwd)/release/${_appimage}"
-        "file://$(pwd)/assets/icon.png")
+# Using GitHub Release source
+source=("${_appimage}::https://github.com/bhimio1/material-3-file-explorer/releases/download/v${pkgver}/${_appimage}"
+        "https://raw.githubusercontent.com/bhimio1/material-3-file-explorer/v${pkgver}/assets/icon.png")
 sha256sums=('SKIP' 'SKIP')
 
 package() {
