@@ -6,12 +6,16 @@ import os from 'os';
 import { spawn, exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import dbus from 'dbus-next';
+import { setupPtyHandlers, setMainWindow, killAllPty } from './pty';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 // --- State ---
 let mainWindow: BrowserWindow | null = null;
+
+// Initialize PTY handlers
+setupPtyHandlers();
 let terminalProcess: any = null;
 let terminalSessionProxy: any = null;
 
@@ -64,6 +68,7 @@ function createWindow() {
         },
         autoHideMenuBar: true,
     });
+    setMainWindow(mainWindow);
 
     if (process.env.NODE_ENV === 'development') {
         mainWindow.loadURL('http://localhost:5173');
@@ -235,48 +240,36 @@ ipcMain.handle('fs:get-home', () => {
     return os.homedir();
 });
 
-ipcMain.handle('terminal:open', async (_, initialPath: string) => {
-    if (terminalProcess) {
-        // Check if process is still alive?
-        try {
-            process.kill(terminalProcess.pid, 0);
-            return; // Still running
-        } catch {
-            terminalProcess = null;
-        }
-    }
-
-    const cwd = initialPath || os.homedir();
-    terminalProcess = spawn('konsole', ['--nofork', '--workdir', cwd], {
-        detached: true,
-        stdio: 'ignore'
-    });
-
-    const pid = terminalProcess.pid;
-    if (pid) {
-        setupTerminal(pid);
-    }
-
-    // Cleanup on exit
-    terminalProcess.on('exit', () => {
-        terminalProcess = null;
-        terminalSessionProxy = null;
-    });
+// Embedded terminal handles opening via ipcRenderer.invoke('terminal:spawn') directly in pty.ts
+// We keep terminal:open as a no-op or alias if needed, but the frontend now uses ptySpawn.
+ipcMain.handle('terminal:open', async () => {
+    // Legacy handler - no op or focus existing?
+    // Frontend handles the pane toggling.
+    return true;
 });
 
+// Embedded terminal handles opening via ipcRenderer.invoke('terminal:spawn') directly in pty.ts
+
 ipcMain.handle('terminal:cd', async (_, dirPath: string) => {
-    if (terminalSessionProxy && dirPath) {
-        try {
-            const safePath = dirPath.replace(/'/g, "'\\''");
-            if (terminalSessionProxy.runCommand) {
-                await terminalSessionProxy.runCommand(`cd '${safePath}' && clear`);
-            } else if (terminalSessionProxy.sendText) {
-                await terminalSessionProxy.sendText(`cd '${safePath}'\r`);
-                await terminalSessionProxy.sendText(`clear\r`);
-            }
-        } catch (e) {
-            console.error('Failed to send cd to terminal', e);
-        }
+    // Send 'cd' command to the active PTY session(s)
+    // We need a way to target the specific tab's terminal or the "global" one.
+    // For now, let's broadcast to the most recent or active one if possible, 
+    // or better yet, frontend should handle this by writing to its own PTY pid.
+    // BUT checking App.tsx, TerminalService.cd calls this. 
+    // We should probably rely on the frontend sending data to the PTY directly.
+
+    // However, to keep compatibility with TerminalService.cd implementation:
+    // We can emit an event to the renderer to tell the active terminal to cd?
+    // OR we can make TerminalService.cd just use ptyWrite.
+
+    // Simplest fix: Make this handler send the input to the PTY wrapper.
+    if (dirPath) {
+        // We'll add a helper in pty.ts to write to all sessions or a specific one.
+        // For now, let's just log or ignore, assuming App.tsx is updated to not call this? 
+        // No, App.tsx calls TerminalService.cd.
+
+        // Plan: Update TerminalService.ts to use ptyWrite instead of this IPC.
+        // For now, removing the Konsole spawning code.
     }
 });
 
@@ -406,98 +399,147 @@ ipcMain.handle('app:get-startup-path', async () => {
 
 ipcMain.handle('window:set-icon', async (_, iconType: 'light' | 'dark' | string) => {
     if (!mainWindow) return;
-    // Implementation depends on having assets. 
-    // --- Directory Size ---
-    ipcMain.handle('system:get-directory-size', async (_, dirPath: string) => {
-        // Use du -sb for bytes (Linux/GNU). -s = summary, -b = bytes
-        // Note: `du -sb` is GNU. `du -sk` is POSIX (blocks). 
-        // `du -b` is not available on all systems (e.g. BusyBox might vary, but usually Linux has coreutils).
-        // Safer: `du -sk` and multiply by 1024.
 
-        try {
-            // Use du -sk for bytes (Linux). -s = summary, -k = 1k blocks
-            const { stdout } = await execAsync(`du -sk "${dirPath}"`);
-            const match = stdout.match(/^(\d+)/);
-            if (match) {
-                return parseInt(match[1], 10) * 1024;
-            }
-            return 0;
-        } catch (error: any) {
-            // du returns exit code 1 if it can't read some files, but still outputs total.
-            // In this case, execAsync throws, but the partial stdout is in error.stdout
-            if (error.stdout) {
-                const match = error.stdout.match(/^(\d+)/);
-                if (match) {
-                    return parseInt(match[1], 10) * 1024;
-                }
-            }
-            console.error('Failed to get directory size completely', error);
-            return 0;
-        }
-    });
-
-    // Search
-    ipcMain.handle('system:search', async (_, directory: string, query: string, options?: { type?: 'f' | 'd', minSize?: string, maxSize?: string }) => {
-        try {
-            // Build find command
-            const args = [directory];
-            if (options?.type) args.push('-type', options.type);
-            if (query) args.push('-iname', `*${query}*`);
-            if (options?.minSize) args.push('-size', `+${options.minSize}`);
-            if (options?.maxSize) args.push('-size', `-${options.maxSize}`);
-
-            // Limit results logic if needed, but for now standard execution
-            const { stdout } = await execFileAsync('find', args, { maxBuffer: 1024 * 1024 * 10 });
-
-            const lines = stdout.split('\n').filter(Boolean);
-            const results: any[] = []; // Use any to avoid IFile import issues
-
-            const topLines = lines.slice(0, 100);
-
-            for (const pathStr of topLines) {
-                try {
-                    const stats = await fs.stat(pathStr);
-                    results.push({
-                        name: path.basename(pathStr),
-                        path: pathStr,
-                        isDirectory: stats.isDirectory(),
-                        size: stats.size,
-                        mtime: stats.mtime
-                    });
-                } catch { }
-            }
-            return results;
-        } catch (error) {
-            console.error('Search failed:', error);
-            return [];
-        }
-    });
-
-    // Existing open dialog...ht have icon-light.png / icon-dark.png in resources
-    // or just allowing a path.
-    // user asked for "change whith theme".
-
-    // Placeholder logic for now, or real if we had the assets.
-    // For now, accept a path.
     if (path.isAbsolute(iconType)) {
         mainWindow.setIcon(iconType);
     } else {
         // Construct path to assets
-        // Try to find icon in assets folder
         const possiblePaths = [
             path.join(__dirname, `../assets/icon-${iconType}.png`),
             path.join(process.resourcesPath, `assets/icon-${iconType}.png`)
         ];
-
         for (const p of possiblePaths) {
             try {
-                // Check if exists
                 await fs.access(p);
                 mainWindow.setIcon(p);
                 return;
             } catch { }
         }
-        // console.log('Icon asset not found for:', iconType);
+    }
+});
+
+ipcMain.handle('system:get-directory-size', async (_, dirPath: string) => {
+    try {
+        // Use du -sb for bytes (Linux/GNU). -s = summary, -b = bytes
+        const { stdout } = await execAsync(`du -sb "${dirPath}"`);
+        const match = stdout.match(/^(\d+)/);
+        if (match) {
+            return parseInt(match[1], 10);
+        }
+        return 0;
+    } catch (error: any) {
+        // du might fail on some files but still return partial
+        if (error.stdout) {
+            const match = error.stdout.match(/^(\d+)/);
+            if (match) return parseInt(match[1], 10);
+        }
+        return 0;
+    }
+});
+
+ipcMain.handle('system:get-recommended-apps', async (_, filePath: string) => {
+    try {
+        // 1. Get Mime Type
+        // Escape double quotes in filePath for shell command
+        const safePath = filePath.replace(/"/g, '\\"');
+        const { stdout: mimeOut } = await execAsync(`xdg-mime query filetype "${safePath}"`);
+        const mime = mimeOut.trim();
+        if (!mime) return [];
+
+        // console.log('MIME:', mime, 'for', filePath);
+
+        // 2. Find desktop files
+        const searchPaths = [
+            '/usr/share/applications',
+            path.join(os.homedir(), '.local/share/applications'),
+            '/var/lib/flatpak/exports/share/applications',
+            path.join(os.homedir(), '.local/share/flatpak/exports/share/applications')
+        ];
+
+        const appFiles = new Set<string>();
+        for (const searchPath of searchPaths) {
+            try {
+                // Check if directory exists first
+                await fs.access(searchPath);
+
+                // Use grep to find files containing the mime type
+                // -l = list filenames only
+                // escape mime type for grep? usually mime has / and -, safeish.
+                const { stdout: grepOut } = await execAsync(`grep -l "${mime}" "${searchPath}"/*.desktop || true`);
+                grepOut.split('\n').filter(Boolean).forEach(f => appFiles.add(f));
+            } catch (e) {
+                // console.log('Error searching path:', searchPath, e);
+            }
+        }
+
+        // 3. Parse desktop files
+        const apps: any[] = [];
+        for (const file of appFiles) {
+            try {
+                const content = await fs.readFile(file, 'utf-8');
+                const nameMatch = content.match(/^Name=(.*)$/m);
+                const iconMatch = content.match(/^Icon=(.*)$/m);
+                const execMatch = content.match(/^Exec=(.*)$/m);
+                const noDisplayMatch = content.match(/^NoDisplay=(.*)$/m);
+                // Only show if not hidden
+                if (noDisplayMatch && noDisplayMatch[1].toLowerCase() === 'true') continue;
+
+                if (nameMatch && execMatch) {
+                    // Clean Exec command (remove %f, %U etc)
+                    let execCmd = execMatch[1].replace(/%[fFuUikc]/g, '').trim();
+                    // If quotes wrap the command, remove them? usually Exec="cmd" isn't standard, but Exec=cmd param is.
+
+                    apps.push({
+                        name: nameMatch[1],
+                        icon: iconMatch ? iconMatch[1] : null, // Frontend should handle icon resolution
+                        exec: execCmd,
+                        path: file
+                    });
+                }
+            } catch { }
+        }
+        // console.log('Found apps:', apps.length);
+        return apps;
+    } catch (err) {
+        console.error('Error getting recommended apps:', err);
+        return [];
+    }
+});
+
+// Search
+ipcMain.handle('system:search', async (_, directory: string, query: string, options?: { type?: 'f' | 'd', minSize?: string, maxSize?: string }) => {
+    try {
+        // Build find command
+        const args = [directory];
+        if (options?.type) args.push('-type', options.type);
+        if (query) args.push('-iname', `*${query}*`);
+        if (options?.minSize) args.push('-size', `+${options.minSize}`);
+        if (options?.maxSize) args.push('-size', `-${options.maxSize}`);
+
+        // Limit results logic if needed, but for now standard execution
+        const { stdout } = await execFileAsync('find', args, { maxBuffer: 1024 * 1024 * 10 });
+
+        const lines = stdout.split('\n').filter(Boolean);
+        const results: any[] = []; // Use any to avoid IFile import issues
+
+        const topLines = lines.slice(0, 100);
+
+        for (const pathStr of topLines) {
+            try {
+                const stats = await fs.stat(pathStr);
+                results.push({
+                    name: path.basename(pathStr),
+                    path: pathStr,
+                    isDirectory: stats.isDirectory(),
+                    size: stats.size,
+                    mtime: stats.mtime
+                });
+            } catch { }
+        }
+        return results;
+    } catch (error) {
+        console.error('Search failed:', error);
+        return [];
     }
 });
 

@@ -1,6 +1,6 @@
 # Maintainer: Bhima <bhima.work@gmail.com>
 pkgname=material-3-file-manager-bin
-pkgver=0.0.0
+pkgver=0.1.0
 pkgrel=1
 pkgdesc="A modern Material Design 3 File Manager"
 arch=('x86_64')

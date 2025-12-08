@@ -12,6 +12,7 @@ import { IconButton } from './components/IconButton';
 import { ContextMenu } from './components/ContextMenu';
 import type { ContextMenuItem } from './components/ContextMenu';
 import { SettingsDialog } from './components/SettingsDialog';
+import { TerminalPane } from './components/TerminalPane'; // Import TerminalPane
 import type { IFile } from './types/files';
 import { Dialog } from './components/Dialog';
 import { Button } from './components/Button';
@@ -48,7 +49,6 @@ function AppContent() {
   const [propertiesFile, setPropertiesFile] = useState<IFile | null>(null);
 
   // Open With Dialog State
-  const [openWithDialogOpen, setOpenWithDialogOpen] = useState(false);
   const [openWithFile, setOpenWithFile] = useState<IFile | null>(null);
 
   // Clipboard State (from Context)
@@ -173,7 +173,7 @@ function AppContent() {
 
   const toggleTerminal = async () => {
     if (!terminalOpen) {
-      await TerminalService.open(); // No args
+      // await TerminalService.open(); // Removed: Uses embedded terminal now
       setTerminalOpen(true);
     } else {
       setTerminalOpen(!terminalOpen);
@@ -275,7 +275,6 @@ function AppContent() {
     {
       label: 'Open With...', icon: 'apps', action: () => {
         setOpenWithFile(contextMenu.item);
-        setOpenWithDialogOpen(true);
         setContextMenu(null);
       }
     },
@@ -417,7 +416,7 @@ function AppContent() {
 
         {/* Terminal Panel */}
         {terminalOpen && (
-          <div style={{ height: '200px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ height: '300px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', background: 'var(--surface-variant)' }}>
               <span style={{ fontSize: '12px', fontWeight: 500 }}>Terminal</span>
               <div style={{ flex: 1 }} />
@@ -425,8 +424,8 @@ function AppContent() {
                 <Icon name="close" size={16} />
               </IconButton>
             </div>
-            <div style={{ flex: 1, background: '#1e1e1e', padding: '8px' }}>
-              {/* Terminal content placeholder */}
+            <div style={{ flex: 1, position: 'relative' }}>
+              <TerminalPane cwd={tabs.find(t => t.id === activeTabId)?.path || undefined} />
             </div>
           </div>
         )}
@@ -480,17 +479,19 @@ function AppContent() {
           onClose={() => setPropertiesDialogOpen(false)}
           file={propertiesFile}
         />
-
-        <OpenWithDialog
-          open={openWithDialogOpen}
-          onClose={() => setOpenWithDialogOpen(false)}
-          onSelect={async (exec) => {
-            if (openWithFile) {
-              await window.electron.openWith(exec, openWithFile.path);
-              setOpenWithDialogOpen(false);
-            }
-          }}
-        />
+        {openWithFile && (
+          <OpenWithDialog
+            open={!!openWithFile}
+            path={openWithFile.path}
+            onClose={() => setOpenWithFile(null)}
+            onSelect={(exec) => {
+              if (openWithFile) {
+                window.electron.openWith(exec, openWithFile.path);
+              }
+              setOpenWithFile(null);
+            }}
+          />
+        )}
 
         <SettingsDialog
           open={settingsDialogOpen}

@@ -37,6 +37,15 @@ export interface IElectronAPI {
     exists: (path: string) => Promise<boolean>;
     getStorageUsage: () => Promise<{ total: number; used: number; free: number } | null>;
     getDrives: () => Promise<IDrive[]>;
+    getRecommendedApps: (path: string) => Promise<{ name: string; icon: string | null; exec: string; path: string; }[]>;
+
+    // PTY
+    ptySpawn: (cwd: string) => Promise<number>;
+    ptyWrite: (pid: number, data: string) => void;
+    ptyResize: (pid: number, cols: number, rows: number) => void;
+    ptyKill: (pid: number) => void;
+    ptyOnData: (pid: number, callback: (data: string) => void) => () => void;
+    ptyOnExit: (pid: number, callback: () => void) => () => void;
 }
 
 declare global {

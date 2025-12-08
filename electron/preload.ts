@@ -27,4 +27,21 @@ contextBridge.exposeInMainWorld('electron', {
   search: (dir: string, query: string, options?: any) => ipcRenderer.invoke('system:search', dir, query, options),
   getDirectorySize: (path: string) => ipcRenderer.invoke('system:get-directory-size', path),
   getDrives: () => ipcRenderer.invoke('system:get-drives'),
+  getRecommendedApps: (path: string) => ipcRenderer.invoke('system:get-recommended-apps', path),
+
+  // PTY
+  ptySpawn: (cwd: string) => ipcRenderer.invoke('terminal:spawn', cwd),
+  ptyWrite: (pid: number, data: string) => ipcRenderer.send('terminal:write', pid, data),
+  ptyResize: (pid: number, cols: number, rows: number) => ipcRenderer.send('terminal:resize', pid, cols, rows),
+  ptyKill: (pid: number) => ipcRenderer.send('terminal:kill', pid),
+  ptyOnData: (pid: number, callback: (data: string) => void) => {
+    const handler = (_: any, data: string) => callback(data);
+    ipcRenderer.on(`terminal:data:${pid}`, handler);
+    return () => ipcRenderer.removeListener(`terminal:data:${pid}`, handler);
+  },
+  ptyOnExit: (pid: number, callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(`terminal:exit:${pid}`, handler);
+    return () => ipcRenderer.removeListener(`terminal:exit:${pid}`, handler);
+  }
 });

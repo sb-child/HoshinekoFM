@@ -11,6 +11,20 @@ A modern, "Performance-First" file manager built with Electron, React, and Mater
 - **Terminal Integration**: deeply integrated terminal support.
 - **Preview Support**: Quick look for common file types.
 
+## Custom Theming (Matugen)
+
+Materials supports dynamic theming via [Matugen](https://github.com/InioX/matugen).
+
+To use your system colors:
+1. Install Matugen.
+2. Generate a theme file at `~/.config/matugen/theme.css`.
+3. The app will automatically detect and apply this theme on startup.
+
+Example command to generate theme from wallpaper:
+```bash
+matugen image /path/to/wallpaper.jpg --type css --output ~/.config/matugen/theme.css
+```
+
 ## Installation
 
 ### Arch Linux (AUR)

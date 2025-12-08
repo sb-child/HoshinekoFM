@@ -1,7 +1,7 @@
 {
   "name": "material-3-file-manager",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -15,10 +15,13 @@
   "dependencies": {
     "@fontsource/material-symbols-rounded": "^5.2.30",
     "dbus-next": "^0.10.2",
+    "node-pty": "^1.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-virtualized-auto-sizer": "^1.0.26",
-    "react-window": "^2.2.3"
+    "react-window": "^2.2.3",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
