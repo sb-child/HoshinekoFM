@@ -1,0 +1,76 @@
+.skeleton {
+    background-color: var(--md-sys-color-surface-variant);
+    border-radius: 4px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+    0% {
+        opacity: 0.6;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+
+    100% {
+        opacity: 0.6;
+    }
+}
+
+.file-list-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.file-list-item-skeleton {
+    height: 52px;
+    border-radius: 12px;
+    background-color: transparent;
+    /* Container is transparent, items inside are skeleton */
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+}
+
+/* Grid Mode Skeleton */
+.file-list-skeleton.grid {
+    display: grid;
+    /* Match dynamic grid from FileList.tsx if possible, or use auto-fill */
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 16px;
+    padding: 16px;
+}
+
+.file-list-skeleton.grid .file-list-item-skeleton {
+    height: auto;
+    aspect-ratio: 1;
+    /* roughly square */
+    flex-direction: column;
+    justify-content: center;
+    padding: 16px 8px;
+}
+
+.skeleton-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+}
+
+.grid .skeleton-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 8px;
+}
+
+.skeleton-text {
+    height: 14px;
+    width: 70%;
+    margin-top: 4px;
+}
+
+.grid .skeleton-text {
+    width: 80%;
+}

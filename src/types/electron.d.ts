@@ -1,0 +1,46 @@
+import { IFile } from './files';
+
+export interface IDrive {
+    name: string;
+    label: string;
+    mountpoint: string;
+    size: string;
+    type: string;
+    removable: boolean;
+    usb: boolean;
+}
+
+export interface IElectronAPI {
+    getThemeCss: () => Promise<string | null>;
+    listDir: (path: string) => Promise<IFile[]>;
+    getParentPath: (path: string) => Promise<string>;
+    getHomePath: () => Promise<string>;
+    getPlaces: () => Promise<Array<{ name: string; path: string; icon: string }>>;
+    copyFile: (source: string, dest: string) => Promise<boolean>;
+    moveFile: (source: string, dest: string) => Promise<boolean>;
+    trashFile: (path: string) => Promise<boolean>;
+    renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
+    createDirectory: (path: string) => Promise<boolean>;
+    openPath: (path: string) => Promise<string>;
+    extractFile: (path: string) => Promise<boolean>;
+    getApps: () => Promise<{ name: string; icon: string; exec: string; }[]>;
+    openWith: (exec: string, path: string) => Promise<boolean>;
+    terminalOpen: (path?: string) => Promise<void>;
+    cdTerminal: (path: string) => Promise<void>;
+    openFileDialog: () => Promise<string | null>;
+    readFile: (path: string) => Promise<string | null>;
+    startDrag: (path: string, iconPath?: string) => void;
+    getStartupPath: () => Promise<string | null>;
+    search: (directory: string, query: string, options?: { type?: 'f' | 'd', minSize?: string, maxSize?: string }) => Promise<IFile[]>;
+    getDirectorySize: (path: string) => Promise<number>;
+    setIcon: (iconType: string) => Promise<void>;
+    exists: (path: string) => Promise<boolean>;
+    getStorageUsage: () => Promise<{ total: number; used: number; free: number } | null>;
+    getDrives: () => Promise<IDrive[]>;
+}
+
+declare global {
+    interface Window {
+        electron: IElectronAPI;
+    }
+}

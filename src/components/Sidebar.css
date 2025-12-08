@@ -1,0 +1,69 @@
+.sidebar {
+    width: 200px;
+    background-color: var(--md-sys-color-surface-container-low);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 16px;
+    /* Floating panel look? Or attached? */
+    margin: 12px 0 12px 0;
+    /* Add margin if implementing standard M3 drawer */
+}
+
+.sidebar-title {
+    margin: 0 0 12px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface-variant);
+}
+
+.sidebar-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px 0 16px;
+    /* Navigation Drawer State Layer Item padding */
+    height: 56px;
+    border: none;
+    border-radius: 28px;
+    /* M3 State Layer is full pill for drawer items */
+    background: transparent;
+    color: var(--md-sys-color-on-surface-variant);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    transition: all 0.2s cubic-bezier(0.2, 0.0, 0, 1.0);
+    /* Standard easing */
+}
+
+.sidebar-item:hover {
+    background-color: var(--md-sys-color-surface-container-highest);
+    /* Hover state */
+    color: var(--md-sys-color-on-surface);
+}
+
+.sidebar-item:focus-visible {
+    outline: 2px solid var(--md-sys-color-primary);
+    background-color: var(--md-sys-color-surface-container-highest);
+}
+
+.sidebar-item.active {
+    background-color: var(--md-sys-color-secondary-container);
+    color: var(--md-sys-color-on-secondary-container);
+}
+
+.sidebar-item:active {
+    transform: scale(0.98);
+}
+
+.sidebar-icon {
+    font-size: 24px;
+}

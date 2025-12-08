@@ -1,0 +1,84 @@
+.m3-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 64px;
+    height: 40px;
+    border: none;
+    border-radius: 20px;
+    padding: 0 24px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    letter-spacing: 0.1px;
+    cursor: pointer;
+    transition: background-color 0.2s, box-shadow 0.2s, color 0.2s;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.m3-button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.m3-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.38;
+}
+
+/* Variants */
+.m3-button--filled {
+    background-color: var(--md-sys-color-primary);
+    color: var(--md-sys-color-on-primary);
+}
+
+.m3-button--filled:hover:not(:disabled) {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    filter: brightness(1.08);
+    /* Approximation of state layer */
+}
+
+.m3-button--tonal {
+    background-color: var(--md-sys-color-secondary-container);
+    color: var(--md-sys-color-on-secondary-container);
+}
+
+.m3-button--tonal:hover:not(:disabled) {
+    filter: brightness(0.92);
+    /* Darker on hover for tonal usually, or lighter depending on theme mode */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.m3-button--outlined {
+    background-color: transparent;
+    border: 1px solid var(--md-sys-color-outline);
+    color: var(--md-sys-color-primary);
+    padding: 0 23px;
+    /* Adjust for border */
+}
+
+.m3-button--outlined:hover:not(:disabled) {
+    background-color: rgba(var(--md-sys-color-primary), 0.08);
+    /* Need RGB vars for opacity, fallback to simple darken */
+    background-color: var(--md-sys-color-surface-variant);
+    /* Fallback */
+}
+
+.m3-button--text {
+    background-color: transparent;
+    color: var(--md-sys-color-primary);
+    padding: 0 12px;
+    min-width: auto;
+}
+
+.m3-button--text:hover:not(:disabled) {
+    background-color: var(--md-sys-color-surface-variant);
+}
+
+.m3-button__icon {
+    display: inline-flex;
+    font-size: 18px;
+}

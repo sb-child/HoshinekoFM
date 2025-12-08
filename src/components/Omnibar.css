@@ -1,0 +1,64 @@
+.omnibar {
+    flex: 1;
+    height: 40px;
+    background: var(--md-sys-color-surface-container-high);
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    position: relative;
+    transition: all 0.2s ease;
+    overflow: hidden;
+}
+
+.omnibar.editing {
+    background: var(--md-sys-color-surface-container-highest);
+    padding: 0 12px;
+}
+
+.omnibar-input-wrapper {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+}
+
+.omnibar-icon {
+    opacity: 0.7;
+    font-size: 20px;
+}
+
+.omnibar-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--md-sys-color-on-surface);
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+}
+
+.omnibar-breadcrumbs {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    cursor: text;
+    overflow: hidden;
+    height: 100%;
+}
+
+.omnibar-trigger {
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+}
+
+.omnibar:hover .omnibar-trigger {
+    opacity: 0.5;
+}
+
+.edit-icon {
+    font-size: 18px;
+}
