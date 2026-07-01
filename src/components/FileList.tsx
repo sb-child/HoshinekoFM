@@ -3,7 +3,7 @@ import type { IFile } from "../types/files";
 import { Icon } from "./Icon";
 import "./FileList.css";
 import { getSemanticGroup } from "../utils/fileUtils";
-import AutoSizer from "react-virtualized-auto-sizer";
+import { AutoSizer } from "react-virtualized-auto-sizer";
 import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { useDrag } from "../contexts/DragContext";
@@ -519,11 +519,10 @@ export const FileList: React.FC<FileListProps> = ({
   const didSelectRef = useRef(false);
   const selectStartRef = useRef<{ x: number; y: number } | null>(null);
   const selectionBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
-  const scrollOffsetRef = useRef(0);
   const autoScrollRafRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listImperativeRef = useListRef(null);
-  const listElementRef = useRef<HTMLDivElement | null>(null);
+  const lastDragOverFolderRef = useRef<IFile | null>(null);
 
   const { startDrag, endDrag, getDragState } = useDrag();
 
@@ -559,22 +558,45 @@ export const FileList: React.FC<FileListProps> = ({
   }, []);
 
   const getScrollElement = useCallback((): HTMLDivElement | null => {
-    if (listElementRef.current) return listElementRef.current;
-    if (!containerRef.current) return null;
-    const allDivs = containerRef.current.querySelectorAll('div');
-    for (const div of allDivs) {
-      const cs = window.getComputedStyle(div);
-      if (cs.overflow === 'auto' || cs.overflow === 'scroll' ||
-          cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
-        listElementRef.current = div;
-        div.addEventListener('scroll', () => {
-          scrollOffsetRef.current = div.scrollTop;
-        }, { passive: true });
-        return div;
+    const el = listImperativeRef.current?.element as HTMLDivElement | undefined;
+    if (!el) {
+      console.warn("[selbox] listImperativeRef.element is null/undefined");
+      if (containerRef.current) {
+        const allDivs = containerRef.current.querySelectorAll('div');
+        for (const div of allDivs) {
+          const cs = window.getComputedStyle(div);
+          if (cs.overflow === 'auto' || cs.overflow === 'scroll' ||
+              cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+            console.warn("[selbox] fallback found div with overflow, classes:", div.className, "scrollTop:", div.scrollTop);
+            return div as HTMLDivElement;
+          }
+        }
       }
+      return null;
     }
-    return null;
-  }, []);
+    console.warn("[selbox] listImperativeRef.element:", el.tagName,
+      "classes:", el.className,
+      "overflowY:", window.getComputedStyle(el).overflowY,
+      "scrollTop:", el.scrollTop);
+    // Try: is the element itself scrollable?
+    const cs = window.getComputedStyle(el);
+    if (cs.overflow === 'auto' || cs.overflow === 'scroll' ||
+        cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+      console.warn("[selbox] element itself is scrollable (scrollTop:", el.scrollTop, ")");
+      return el;
+    }
+    // Try firstElementChild
+    const inner = el.firstElementChild;
+    if (inner instanceof HTMLDivElement) {
+      const ics = window.getComputedStyle(inner);
+      console.warn("[selbox] firstElementChild:", inner.tagName,
+        "classes:", inner.className,
+        "overflowY:", ics.overflowY,
+        "scrollTop:", inner.scrollTop);
+      return inner;
+    }
+    return el;
+  }, [listImperativeRef]);
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {
@@ -632,9 +654,10 @@ export const FileList: React.FC<FileListProps> = ({
     [onSelect, onNavigate, renamingPath],
   );
 
-  // --- Drag start (NO React state update — uses ref-based DragContext) ---
+  // --- Drag start (HTML5 DnD for internal, native file drag for external) ---
   const handleFileDragStart = useCallback((e: React.DragEvent, file: IFile) => {
-    e.preventDefault();
+    console.warn("[drag] dragstart entered:", file.name);
+
     lastDragRef.current = { path: file.path, time: Date.now() };
     lastClickRef.current = null;
 
@@ -643,13 +666,50 @@ export const FileList: React.FC<FileListProps> = ({
       : [file];
 
     _draggedPaths = new Set(filesToDrag.map(f => f.path));
-    // Ref-based — no React re-render
     startDrag(filesToDrag, currentPath || "");
+    lastDragOverFolderRef.current = null;
 
-    if (filesToDrag.length === 1 && window.electron?.startDrag) {
+    // HTML5 DnD for internal drops
+    e.dataTransfer.effectAllowed = "copyMove";
+    if (filesToDrag.length === 1) {
+      e.dataTransfer.setData('text/uri-list', 'file://' + filesToDrag[0].path);
+      e.dataTransfer.setData('text/plain', filesToDrag[0].path);
+    } else {
+      const uris = filesToDrag.map(f => 'file://' + f.path).join('\r\n');
+      e.dataTransfer.setData('text/uri-list', uris);
+      e.dataTransfer.setData('text/plain', filesToDrag.map(f => f.path).join('\n'));
+    }
+
+    // Native file drag for external apps (Localsend, etc.)
+    if (window.electron?.startDrag && filesToDrag.length === 1) {
       window.electron.startDrag(filesToDrag[0].path);
     }
   }, [selectedFiles, files, currentPath, startDrag]);
+
+  // Cleanup drag state on dragend
+  useEffect(() => {
+    const onDragEnd = () => {
+      console.warn("[drag] dragend fired, cleaning up");
+      setDragOverPath(null);
+      lastDragOverFolderRef.current = null;
+      _draggedPaths = new Set();
+      endDrag();
+    };
+    document.addEventListener('dragend', onDragEnd, true);
+    return () => document.removeEventListener('dragend', onDragEnd, true);
+  }, [endDrag]);
+
+  // Debug: catch ALL drop events (capture phase, document level)
+  useEffect(() => {
+    const onDocDrop = (e: Event) => {
+      const de = e as DragEvent;
+      console.warn("[drag] DOCUMENT capture drop:", (e.target as HTMLElement)?.tagName,
+        "class:", (e.target as HTMLElement)?.className?.slice(0, 40),
+        "types:", de.dataTransfer?.types);
+    };
+    document.addEventListener('drop', onDocDrop, true);
+    return () => document.removeEventListener('drop', onDocDrop, true);
+  }, []);
 
   const handleItemDoubleClick = useCallback(
     (file: IFile) => {
@@ -684,6 +744,7 @@ export const FileList: React.FC<FileListProps> = ({
   // --- Folder drop handlers ---
 
   const handleFolderDragOver = useCallback((e: React.DragEvent, file: IFile) => {
+    console.warn("[drag] dragover on folder:", file.name, "types:", e.dataTransfer.types);
     if (_draggedPaths.has(file.path)) {
       e.dataTransfer.dropEffect = "none";
       return;
@@ -692,6 +753,8 @@ export const FileList: React.FC<FileListProps> = ({
     e.stopPropagation();
     e.dataTransfer.dropEffect = e.shiftKey ? "copy" : "move";
     setDragOverPath(file.path);
+    // Track for internal drop (native drag kills HTML5 drop events)
+    lastDragOverFolderRef.current = file;
   }, []);
 
   const handleFolderDragLeave = useCallback(() => {
@@ -699,12 +762,15 @@ export const FileList: React.FC<FileListProps> = ({
   }, []);
 
   const handleFolderDrop = useCallback((e: React.DragEvent, targetFile: IFile) => {
+    console.warn("[drag] drop on folder:", targetFile.name);
+    const dragState = getDragState();
+    console.warn("[drag] drop getDragState:", dragState);
     e.preventDefault();
     e.stopPropagation();
     setDragOverPath(null);
 
-    const dragState = getDragState();
     if (!dragState || !onDropOnFolder) {
+      console.warn("[drag] drop NO dragState or NO onDropOnFolder");
       _draggedPaths = new Set();
       endDrag();
       return;
@@ -737,7 +803,7 @@ export const FileList: React.FC<FileListProps> = ({
     columns: number,
     rowHeightFn: (index: number, data: RowData) => number,
   ) => {
-    const rowProps = { iconSize, viewMode, columns } as RowData;
+    const rowProps = { iconSize, viewMode, columns, items } as RowData;
     const positions: { path: string; top: number; height: number; isGrid: boolean; gridIndex?: number; gridCount?: number }[] = [];
     let y = 0;
 
@@ -764,38 +830,47 @@ export const FileList: React.FC<FileListProps> = ({
     return positions;
   }, [iconSize, viewMode]);
 
-  // Selection: uses refs, no useCallback dependency issues
+  // Selection: container-relative coordinates for accurate item intersection
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest(".file-list-item, .file-group-header")) return;
 
     e.preventDefault();
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const scrollEl = getScrollElement();
+    if (!scrollEl) return;
 
-    const startX = e.clientX - rect.left;
-    const startY = e.clientY - rect.top;
+    const container = containerRef.current;
+    if (!container) return;
 
-    selectStartRef.current = { x: startX, y: startY };
+    const containerRect = container.getBoundingClientRect();
+    const sx = e.clientX - containerRect.left;
+    const sy = e.clientY - containerRect.top;
+
+    selectStartRef.current = { x: sx, y: sy };
     isSelectingRef.current = true;
-    selectionBoxRef.current = { x: startX, y: startY, w: 0, h: 0 };
-    setSelectionBox({ x: startX, y: startY, w: 0, h: 0 });
+    selectionBoxRef.current = { x: sx, y: sy, w: 0, h: 0 };
+    setSelectionBox({ x: sx, y: sy, w: 0, h: 0 });
 
     const onMove = (ev: MouseEvent) => {
-      if (!containerRef.current || !selectStartRef.current) return;
-      const r = containerRef.current.getBoundingClientRect();
+      if (!selectStartRef.current) return;
       const hasStart = selectStartRef.current;
-      if (!hasStart) return;
-      const sx = hasStart.x;
-      const sy = hasStart.y;
-      const cx = ev.clientX - r.left;
-      const cy = ev.clientY - r.top;
+      let cx = ev.clientX - containerRect.left;
+      let cy = ev.clientY - containerRect.top;
 
-      const x = Math.min(sx, cx);
-      const y = Math.min(sy, cy);
-      const w = Math.abs(cx - sx);
-      const h = Math.abs(cy - sy);
+      // Auto-scroll
+      const el = getScrollElement();
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+
+      // Clip cursor to scrollable area (in container-relative coords)
+      cx = Math.max(r.left - containerRect.left, Math.min(cx, r.right - containerRect.left));
+      cy = Math.max(r.top - containerRect.top, Math.min(cy, r.bottom - containerRect.top));
+
+      const x = Math.min(hasStart.x, cx);
+      const y = Math.min(hasStart.y, cy);
+      const w = Math.abs(cx - hasStart.x);
+      const h = Math.abs(cy - hasStart.y);
 
       const box = { x, y, w, h };
       selectionBoxRef.current = box;
@@ -810,21 +885,21 @@ export const FileList: React.FC<FileListProps> = ({
       const topEdge = r.top;
       const bottomEdge = r.bottom;
 
-      if (clientY - topEdge < AUTO_SCROLL_ZONE && scrollOffsetRef.current > 0) {
+      if (clientY - topEdge < AUTO_SCROLL_ZONE) {
         const doScroll = () => {
-          const el = getScrollElement();
-          if (!el) return;
-          scrollOffsetRef.current = Math.max(0, scrollOffsetRef.current - AUTO_SCROLL_SPEED);
-          el.scrollTop = scrollOffsetRef.current;
+          const el2 = getScrollElement();
+          if (!el2 || el2.scrollTop <= 0) return;
+          el2.scrollTop = Math.max(0, el2.scrollTop - AUTO_SCROLL_SPEED);
           autoScrollRafRef.current = requestAnimationFrame(doScroll);
         };
         autoScrollRafRef.current = requestAnimationFrame(doScroll);
       } else if (bottomEdge - clientY < AUTO_SCROLL_ZONE) {
         const doScroll = () => {
-          const el = getScrollElement();
-          if (!el) return;
-          scrollOffsetRef.current += AUTO_SCROLL_SPEED;
-          el.scrollTop = scrollOffsetRef.current;
+          const el2 = getScrollElement();
+          if (!el2) return;
+          const maxScroll = el2.scrollHeight - el2.clientHeight;
+          if (el2.scrollTop >= maxScroll) return;
+          el2.scrollTop = Math.min(maxScroll, el2.scrollTop + AUTO_SCROLL_SPEED);
           autoScrollRafRef.current = requestAnimationFrame(doScroll);
         };
         autoScrollRafRef.current = requestAnimationFrame(doScroll);
@@ -832,8 +907,10 @@ export const FileList: React.FC<FileListProps> = ({
     };
 
     const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      console.warn("[selbox] onUp FIRED, selectionBoxRef:", selectionBoxRef.current,
+        "isSelectingRef:", isSelectingRef.current);
+      document.removeEventListener('mousemove', onMove, true);
+      document.removeEventListener('mouseup', onUp, true);
 
       if (autoScrollRafRef.current !== null) {
         cancelAnimationFrame(autoScrollRafRef.current);
@@ -842,45 +919,61 @@ export const FileList: React.FC<FileListProps> = ({
 
       const box = selectionBoxRef.current;
       if (box && box.w > 2 && box.h > 2) {
-        const scrollEl = getScrollElement();
-        const currentScroll = scrollEl?.scrollTop || 0;
+        const scrollEl2 = getScrollElement();
+        if (scrollEl2) {
+          const elRect = scrollEl2.getBoundingClientRect();
+          const currentScroll = scrollEl2.scrollTop;
+          const scrollWidth = scrollEl2.clientWidth;
 
-        const cols = viewMode === "grid"
-          ? Math.max(1, Math.floor(((containerRef.current?.clientWidth || 800) + 8) / (iconSize + 40)))
-          : 0;
-        const items = flattenItems(files, groupingEnabled, viewMode, cols);
-        const positions = getItemPositions(items, cols, rowHeight);
+          // Container-relative box, convert to content-relative for item intersection
+          const boxTop = box.y - (elRect.top - containerRect.top) + currentScroll;
+          const boxBottom = boxTop + box.h;
+          const boxLeft = box.x - (elRect.left - containerRect.left);
+          const boxRight = boxLeft + box.w;
 
-        const boxTop = box.y + currentScroll;
-        const boxBottom = boxTop + box.h;
-        const boxLeft = box.x;
-        const boxRight = box.x + box.w;
+          console.warn("[selbox] scrollEl tag:", scrollEl2.tagName, "scrollTop:", currentScroll,
+            "elRect.top:", elRect.top, "containerRect.top:", containerRect.top,
+            "box:", box, "boxTop:", boxTop, "boxBottom:", boxBottom,
+            "boxLeft:", boxLeft, "boxRight:", boxRight);
 
-        const newSelection = new Set<string>();
-        for (const pos of positions) {
-          let itemLeft = 0;
-          let itemRight = containerRef.current?.clientWidth || 800;
+          const cols = viewMode === "grid"
+            ? Math.max(1, Math.floor((scrollWidth + 8) / (iconSize + 40)))
+            : 0;
+          const items = flattenItems(files, groupingEnabled, viewMode, cols);
+          const positions = getItemPositions(items, cols, rowHeight);
 
-          if (pos.isGrid && pos.gridCount && pos.gridCount > 1) {
-            const cellWidth = itemRight / pos.gridCount;
-            itemLeft = (pos.gridIndex || 0) * cellWidth;
-            itemRight = itemLeft + cellWidth;
+          console.warn("[selbox] items:", items.length, "positions:", positions.length,
+            "first pos:", positions[0], "last pos:", positions[positions.length - 1]);
+
+          const newSelection = new Set<string>();
+          for (const pos of positions) {
+            let itemLeft = 0;
+            let itemRight = scrollWidth;
+
+            if (pos.isGrid && pos.gridCount && pos.gridCount > 1) {
+              const cellWidth = itemRight / pos.gridCount;
+              itemLeft = (pos.gridIndex || 0) * cellWidth;
+              itemRight = itemLeft + cellWidth;
+            }
+
+            const intersects =
+              pos.top < boxBottom &&
+              pos.top + pos.height > boxTop &&
+              itemLeft < boxRight &&
+              itemRight > boxLeft;
+
+            if (intersects) {
+              newSelection.add(pos.path);
+            }
           }
 
-          const intersects =
-            pos.top < boxBottom &&
-            pos.top + pos.height > boxTop &&
-            itemLeft < boxRight &&
-            itemRight > boxLeft;
-
-          if (intersects) {
-            newSelection.add(pos.path);
+          if (newSelection.size > 0) {
+            console.warn("[selbox] selected:", newSelection.size, "files");
+            onSetSelected?.(newSelection);
+            didSelectRef.current = true;
+          } else {
+            console.warn("[selbox] no items intersected");
           }
-        }
-
-        if (newSelection.size > 0) {
-          onSetSelected?.(newSelection);
-          didSelectRef.current = true;
         }
       }
 
@@ -890,8 +983,8 @@ export const FileList: React.FC<FileListProps> = ({
       setSelectionBox(null);
     };
 
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mousemove', onMove, true);
+    document.addEventListener('mouseup', onUp, true);
   };
 
   return (
@@ -932,8 +1025,9 @@ export const FileList: React.FC<FileListProps> = ({
         }
       }}
     >
-      <AutoSizer>
-        {({ height, width }: { height: number; width: number }) => {
+      <AutoSizer
+        renderProp={({ height, width }) => {
+          if (height == null || width == null) return null;
           const columns =
             viewMode === "grid"
               ? Math.max(1, Math.floor((width + 8) / (iconSize + 40)))
@@ -969,31 +1063,34 @@ export const FileList: React.FC<FileListProps> = ({
           };
 
           return (
-            <List
-              listRef={listImperativeRef}
-              style={{ height, width, maxHeight: height }}
-              rowComponent={Row}
-              rowProps={rowPropsData}
-              rowCount={items.length}
-              rowHeight={rowHeight}
-              overscanCount={5}
-            />
+            <>
+              <List
+                listRef={listImperativeRef}
+                style={{ height, width, maxHeight: height }}
+                rowComponent={Row}
+                rowProps={rowPropsData}
+                rowCount={items.length}
+                rowHeight={rowHeight}
+                overscanCount={5}
+              />
+              {selectionBox && selectionBox.w > 0 && (
+                <div
+                  className="selection-box"
+                  style={{
+                    position: "absolute",
+                    left: selectionBox.x,
+                    top: selectionBox.y,
+                    width: selectionBox.w,
+                    height: selectionBox.h,
+                    pointerEvents: "none",
+                    zIndex: 9999,
+                  }}
+                />
+              )}
+            </>
           );
         }}
-      </AutoSizer>
-      {selectionBox && selectionBox.w > 0 && (
-        <div
-          className="selection-box"
-          style={{
-            position: "absolute",
-            left: selectionBox.x,
-            top: selectionBox.y,
-            width: selectionBox.w,
-            height: selectionBox.h,
-            pointerEvents: "none",
-          }}
-        />
-      )}
+      />
     </div>
   );
 };

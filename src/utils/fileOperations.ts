@@ -175,7 +175,8 @@ export async function copyFile(
       return;
     }
     await window.electron.copyFile(source, dest);
-    showToast(`${fileName(source)} 已复制到 ${fileName(dest)}`, 'success');
+    const destDir = dest.split('/').slice(0, -1).pop() || '';
+    showToast(`${fileName(source)} → ${destDir}/${fileName(dest)}`, 'success');
     onSuccess?.();
   } catch (e) {
     showToast(formatFileOpError('复制', `${fileName(source)} -> ${fileName(dest)}`, e), 'error');
@@ -195,7 +196,8 @@ export async function moveFile(
       return;
     }
     await window.electron.moveFile(source, dest);
-    showToast(`${fileName(source)} 已移动到 ${fileName(dest)}`, 'success');
+    const destDir = dest.split('/').slice(0, -1).pop() || '';
+    showToast(`${fileName(source)} → ${destDir}/${fileName(dest)}`, 'success');
     onSuccess?.();
   } catch (e) {
     showToast(formatFileOpError('移动', `${fileName(source)} -> ${fileName(dest)}`, e), 'error');

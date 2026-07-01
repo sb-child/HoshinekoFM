@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } from 'electron';
 import path from 'path';
-import { promises as fs, writeFileSync } from 'fs';
+import { promises as fs, writeFileSync, existsSync } from 'fs';
 import url from 'url';
 import os from 'os';
 import { spawn, exec, execFile } from 'child_process';
@@ -296,11 +296,22 @@ ipcMain.on('cache:drag-icon', (_event, iconName: string, pngBase64: string) => {
   }
 });
 
-ipcMain.on('dnd:start', async (event, filePath: string) => {
-  const icon = await getDragIcon(filePath);
+ipcMain.on('dnd:start', (event, filePath: string) => {
+  const cachedPath = getCachedDragIconPath('insert_drive_file');
+  // Ensure a cached icon exists
+  if (!existsSync(cachedPath)) {
+    try {
+      const { nativeImage } = require('electron');
+      const img = nativeImage.createFromDataURL(
+        'data:image/svg+xml;base64,' +
+        Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="16" fill="#4285F4"/></svg>').toString('base64')
+      );
+      writeFileSync(cachedPath, img.toPNG());
+    } catch {}
+  }
   event.sender.startDrag({
     file: filePath,
-    icon
+    icon: cachedPath,
   });
 });
 
