@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import dbus from 'dbus-next';
 import { setupPtyHandlers, setMainWindow, killAllPty } from './pty';
 import { detectMime, getThumbnail, getDragIcon, getCachedDragIconPath } from './fsUtils';
+import { startWatching, stopWatching, stopAllWatching } from './fsWatcher';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -156,23 +157,8 @@ ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string) => {
 });
 
 ipcMain.handle('fs:mkdir', async (_, dirPath: string) => {
-
-  ipcMain.handle('fs:create-file', async (_, filePath: string) => {
-    await fs.writeFile(filePath, '', 'utf-8');
-    return true;
-  });
   await fs.mkdir(dirPath, { recursive: true });
-
-  ipcMain.handle('fs:create-file', async (_, filePath: string) => {
-    await fs.writeFile(filePath, '', 'utf-8');
-    return true;
-  });
   return true;
-
-  ipcMain.handle('fs:create-file', async (_, filePath: string) => {
-    await fs.writeFile(filePath, '', 'utf-8');
-    return true;
-  });
 });
 
 ipcMain.handle('fs:create-file', async (_, filePath: string) => {
@@ -331,6 +317,18 @@ ipcMain.handle('fs:exists', async (_, filePath: string) => {
   } catch {
     return false;
   }
+});
+
+ipcMain.handle('fs:watch-dir', (_event, dir: string) => {
+  startWatching(dir, (changedDir) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('fs:dir-changed', changedDir);
+    }
+  });
+});
+
+ipcMain.handle('fs:unwatch-dir', (_event, dir: string) => {
+  stopWatching(dir);
 });
 
 ipcMain.handle('system:get-drives', async () => {
@@ -592,6 +590,7 @@ app.on('window-all-closed', () => {
     process.kill(terminalProcess.pid);
     terminalProcess = null;
   }
+  stopAllWatching();
   if (process.platform !== 'darwin') {
     app.quit();
   }

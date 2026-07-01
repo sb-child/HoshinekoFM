@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useToast } from './contexts/ToastContext';
 import { initDragIcons } from './utils/dragIconRenderer';
 import './index.css';
 import { ToastProvider } from './contexts/ToastContext';
 import { ClipboardProvider, useClipboard } from './contexts/ClipboardContext';
 import { ThemeService } from './services/ThemeService';
-import { FileSystemService } from './services/FileSystemService';
 import { TerminalService } from './services/TerminalService';
 import { NavigationRail } from './components/NavigationRail';
 import { Sidebar } from './components/Sidebar';
@@ -22,14 +22,24 @@ import { ExplorerTab } from './components/ExplorerTab';
 import { OpenWithDialog } from './components/OpenWithDialog';
 import { PropertiesDialog } from './components/PropertiesDialog';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import {
+  renameFile as renameFileOp,
+  trashFile,
+  pasteFiles,
+  extractFile,
+  openFile,
+} from './utils/fileOperations';
 
 interface TabState {
   id: string;
   title: string;
   path: string;
+  version: number;
 }
 
 function AppContent() {
+  const { showToast } = useToast();
+
   // Tabs State
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>('');
@@ -129,7 +139,7 @@ function AppContent() {
   const handleAddTab = useCallback((path?: string) => {
     const newTabId = Date.now().toString();
     const newPath = path || currentPath || '/'; // Default to current or root
-    const newTab: TabState = { id: newTabId, title: 'New Tab', path: newPath };
+    const newTab: TabState = { id: newTabId, title: 'New Tab', path: newPath, version: 0 };
 
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTabId);
@@ -188,7 +198,7 @@ function AppContent() {
       if (prev.length === 0) {
         // Side effect in reducer? No, handleAddTab logic duplicated here safely
         const newTabId = Date.now().toString();
-        const newTab: TabState = { id: newTabId, title: 'New Tab', path };
+        const newTab: TabState = { id: newTabId, title: 'New Tab', path, version: 0 };
         setActiveTabId(newTabId);
         return [newTab];
       }
@@ -215,33 +225,21 @@ function AppContent() {
   const handlePaste = async () => {
     if (!clipboard || clipboard.files.length === 0) return;
 
-    try {
-      let count = 0;
-      for (const file of clipboard.files) {
-        const destPath = currentPath + '/' + file.name;
-        if (clipboard.operation === 'copy') {
-          await FileSystemService.copy(file.path, destPath);
-        } else {
-          await FileSystemService.move(file.path, destPath);
-        }
-        count++;
-      }
-
-      if (clipboard.operation === 'cut') {
-        clearClipboard();
-      }
-      // Force refresh tabs
-      setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, key: Date.now() } : t));
-    } catch (err) {
-      console.error('Paste failed', err);
-    }
+    await pasteFiles(
+      clipboard.files,
+      clipboard.operation,
+      currentPath,
+      showToast,
+      clipboard.operation === 'cut' ? clearClipboard : undefined,
+      () => setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, version: t.version + 1 } : t)),
+    );
     setContextMenu(null);
   };
 
   const menuItems: ContextMenuItem[] = contextMenu?.item ? [
     {
       label: 'Open', icon: 'open_in_new', action: () => {
-        FileSystemService.open(contextMenu.item!.path);
+        openFile(contextMenu.item!.path, showToast);
         setContextMenu(null);
       }
     },
@@ -250,20 +248,18 @@ function AppContent() {
     { label: 'Copy', icon: 'content_copy', action: () => handleCopy(contextMenu.item!) },
     { label: 'Cut', icon: 'content_cut', action: () => handleCut(contextMenu.item!) },
     {
-      label: 'Delete', icon: 'delete', action: () => FileSystemService.trash(contextMenu.item!.path).then(() => {
-        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, key: Date.now() } : t));
+      label: 'Delete', icon: 'delete', action: () => trashFile(contextMenu.item!.path, showToast, () => {
+        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, version: t.version + 1 } : t));
       })
     },
     {
       label: 'Extract Here',
       icon: 'unarchive',
-      action: async () => {
+      action: () => {
         const file = contextMenu.item!;
-        const isArchive = ['.zip', '.tar', '.gz', '.xz'].some(ext => file.name.toLowerCase().endsWith(ext));
-        if (isArchive) {
-          await window.electron.extractFile(file.path);
-          setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, key: Date.now() } : t));
-        }
+        extractFile(file.path, showToast, () =>
+          setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, version: t.version + 1 } : t)),
+        );
       }
     },
     {
@@ -314,10 +310,9 @@ function AppContent() {
     if (renameFile && newName && newName !== renameFile.name) {
       const lastSlashIndex = renameFile.path.lastIndexOf('/');
       const parentDir = renameFile.path.substring(0, lastSlashIndex);
-      const newPathString = `${parentDir}/${newName}`;
-
-      await FileSystemService.rename(renameFile.path, newPathString);
-      setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, key: Date.now() } : t));
+      await renameFileOp(renameFile.path, `${parentDir}/${newName}`, showToast, () =>
+        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, version: t.version + 1 } : t)),
+      );
     }
     setRenameDialogOpen(false);
     setRenameFile(null);
@@ -411,12 +406,13 @@ function AppContent() {
                 tabId={tab.id}
                 isActive={tab.id === activeTabId}
                 initialPath={tab.path}
-                onPathChange={handleTabPathUpdate} // Stable reference
+                onPathChange={handleTabPathUpdate}
                 onContextMenu={handleContextMenu}
                 showHiddenFiles={showHiddenFiles}
                 iconSize={iconSize}
                 viewMode={viewMode}
                 filledIcons={filledIcons}
+                refreshSignal={tab.version}
               />
             </div>
           ))}

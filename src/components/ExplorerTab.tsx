@@ -1,13 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useToast } from '../contexts/ToastContext';
 import { useClipboard } from '../contexts/ClipboardContext';
 import { StatusBar } from './StatusBar';
 import { FileList } from './FileList';
-import { FileListSkeleton } from './FileListSkeleton';
 import { IconButton } from './IconButton';
 import { Icon } from './Icon';
 import { FileSystemService } from '../services/FileSystemService';
 import type { IFile } from '../types/files';
+import {
+  renameFile,
+  trashFiles,
+  pasteFiles,
+  createDirectory,
+  createFile,
+  importFiles,
+  openFile,
+  copyToClipboard,
+  cutToClipboard,
+} from '../utils/fileOperations';
 
 import { Omnibar } from './Omnibar';
 import { Dashboard } from './Dashboard';
@@ -24,13 +34,14 @@ interface ExplorerTabProps {
     iconSize: number;
     viewMode: 'grid' | 'list';
     filledIcons: boolean;
+    refreshSignal: number;
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, showHiddenFiles, iconSize, viewMode, filledIcons }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
-  const [loading, setLoading] = useState(false);
   const { showToast } = useToast();
+  const suppressWatchRef = useRef(false);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
 
   // Track recents
@@ -56,11 +67,13 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   }, [setRecentFiles]);
 
   // Search State
+  const currentPathRef = useRef(currentPath);
+  currentPathRef.current = currentPath;
+
   const [searchActive, setSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const handleSearch = async (query: string) => {
-    setLoading(true);
     setSearchActive(true);
     setSearchQuery(query);
     try {
@@ -70,9 +83,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
     } catch (e) {
       console.error(e);
-      showToast('搜索失败', 'error');
+      showToast(`搜索失败: ${(e as any)?.message || e || '未知错误'}`, 'error');
     }
-    setLoading(false);
   };
 
   const loadPath = useCallback(async (path: string) => {
@@ -85,7 +97,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       return;
     }
 
-    setLoading(true);
+    suppressWatchRef.current = true;
+    setTimeout(() => { suppressWatchRef.current = false; }, 1000);
     try {
       const items = await FileSystemService.listDir(path);
       setFiles(items);
@@ -95,7 +108,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     } catch (e) {
       console.error('Failed to load path', path, e);
     }
-    setLoading(false);
   }, [onPathChange, tabId, addToRecents]);
 
   useEffect(() => {
@@ -104,25 +116,42 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     }
   }, [initialPath, loadPath]);
 
+  // Refresh when signal changes (dialog rename, paste, delete, extract)
+  useEffect(() => {
+    if (currentPath === 'app://dashboard') return;
+    loadPath(currentPath);
+  }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Watch current directory for external filesystem changes
+  useEffect(() => {
+    if (!isActive || currentPath === 'app://dashboard') return;
+
+    window.electron?.watchDirectory?.(currentPath);
+    const cleanup = window.electron?.onDirChanged?.((dir: string) => {
+      if (suppressWatchRef.current) return;
+      if (dir === currentPathRef.current) {
+        loadPath(currentPathRef.current);
+      }
+    });
+
+    return () => {
+      cleanup?.();
+      window.electron?.unwatchDirectory?.(currentPath);
+    };
+  }, [isActive, currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleNavigate = (file: IFile) => {
     if (file.isDirectory) {
       loadPath(file.path);
     } else {
-      FileSystemService.open(file.path);
+      openFile(file.path, showToast);
     }
   };
 
   const handleRename = async (file: IFile, newName: string) => {
     const lastSlash = file.path.lastIndexOf('/');
     const parentDir = file.path.substring(0, lastSlash);
-    const newPath = `${parentDir}/${newName}`;
-    try {
-      await FileSystemService.rename(file.path, newPath);
-      showToast(`已重命名为 ${newName}`, 'success');
-      loadPath(currentPath);
-    } catch {
-      showToast('重命名失败', 'error');
-    }
+    await renameFile(file.path, `${parentDir}/${newName}`, showToast, () => loadPath(currentPath));
   };
 
   const handleUp = async () => {
@@ -210,32 +239,16 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     setSelectedFiles(newSelection);
   };
 
-  // 核心封装：执行粘贴的核心逻辑
   const executePasteAction = async () => {
     if (clipboard && clipboard.files.length > 0) {
-      let count = 0;
-      for (const file of clipboard.files) {
-        const destPath = currentPath + '/' + file.name;
-        try {
-          if (clipboard.operation === 'copy') {
-            await FileSystemService.copy(file.path, destPath);
-          } else {
-            await FileSystemService.move(file.path, destPath);
-          }
-          count++;
-        } catch (err) {
-          console.error("Paste error", err);
-        }
-      }
-
-      if (clipboard.operation === 'cut') {
-        clearClipboard();
-      }
-
-      if (count > 0) {
-        showToast(`已粘贴 ${count} 个项目`, 'success');
-        loadPath(currentPath); // 修复核心Bug：当场直接刷新列表状态
-      }
+      await pasteFiles(
+        clipboard.files,
+        clipboard.operation,
+        currentPath,
+        showToast,
+        clipboard.operation === 'cut' ? clearClipboard : undefined,
+        () => loadPath(currentPath),
+      );
     }
   };
 
@@ -261,11 +274,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         e.preventDefault();
         if (selectedFiles.size > 0) {
           if (window.confirm(`确定要删除选中的 ${selectedFiles.size} 个项目吗？`)) {
-            for (const path of selectedFiles) {
-              await FileSystemService.trash(path);
-            }
-            showToast(`已删除 ${selectedFiles.size} 个项目`, 'success');
-            loadPath(currentPath);
+            await trashFiles(Array.from(selectedFiles), showToast, () => loadPath(currentPath));
           }
         }
         return;
@@ -275,7 +284,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (selectedFiles.size > 0) {
           const filesToCopy = sortedFiles.filter(f => selectedFiles.has(f.path));
           copy(filesToCopy);
-          showToast(`已复制 ${selectedFiles.size} 个项目`, 'info');
+          copyToClipboard(selectedFiles.size, showToast);
         }
         return;
       }
@@ -284,7 +293,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (selectedFiles.size > 0) {
           const filesToCut = sortedFiles.filter(f => selectedFiles.has(f.path));
           cut(filesToCut);
-          showToast(`已剪切 ${selectedFiles.size} 个项目`, 'info');
+          cutToClipboard(selectedFiles.size, showToast);
         }
         return;
       }
@@ -326,22 +335,12 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       {
         label: 'New Folder',
         icon: 'create_new_folder',
-        action: async () => {
-          if (window.electron && window.electron.createDirectory) {
-            await window.electron.createDirectory(currentPath + '/新建文件夹');
-            loadPath(currentPath);
-          }
-        }
+        action: () => createDirectory(currentPath + '/新建文件夹', showToast, () => loadPath(currentPath)),
       },
       {
         label: 'New File',
         icon: 'note_add',
-        action: async () => {
-          if (window.electron) {
-            await window.electron.createFile(currentPath + '/新建文本文档.txt');
-            loadPath(currentPath);
-          }
-        }
+        action: () => createFile(currentPath + '/新建文本文档.txt', showToast, () => loadPath(currentPath)),
       },
       { divider: true },
       {
@@ -435,8 +434,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
           <Dashboard onNavigate={loadPath} />
         </div>
-      ) : loading ? (
-        <FileListSkeleton viewMode={viewMode} iconSize={iconSize} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
           {searchActive && (
@@ -456,25 +453,14 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             }}
             onDrop={async (e) => {
               e.preventDefault();
-              const droppedFiles = Array.from(e.dataTransfer.files);
+              const droppedFiles = Array.from(e.dataTransfer.files).filter(f => (f as any).path);
               if (droppedFiles.length > 0 && currentPath) {
-                let count = 0;
-                for (const file of droppedFiles) {
-                  // @ts-ignore
-                  const sourcePath = file.path;
-                  if (sourcePath) {
-                    const fileName = sourcePath.split(/[/\\\\]/).pop();
-                    const destPath = `${currentPath}/${fileName}`.replace(/\\+/g, '/');
-                    if (window.electron && window.electron.copyFile) {
-                      await window.electron.copyFile(sourcePath, destPath);
-                      count++;
-                    }
-                  }
-                }
-                if (count > 0) {
-                  showToast(`已导入 ${count} 个文件`, 'success');
-                  loadPath(currentPath);
-                }
+                await importFiles(
+                  droppedFiles.map(f => ({ path: (f as any).path })),
+                  currentPath,
+                  showToast,
+                  () => loadPath(currentPath),
+                );
               }
             }}
           >

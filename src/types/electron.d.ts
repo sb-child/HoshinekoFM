@@ -48,6 +48,11 @@ export interface IElectronAPI {
     createFile: (path: string) => Promise<boolean>;
     ptyOnData: (pid: number, callback: (data: string) => void) => () => void;
     ptyOnExit: (pid: number, callback: () => void) => () => void;
+
+    // File watching
+    watchDirectory: (dir: string) => Promise<void>;
+    unwatchDirectory: (dir: string) => Promise<void>;
+    onDirChanged: (callback: (dir: string) => void) => () => void;
 }
 
 declare global {

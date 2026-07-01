@@ -377,7 +377,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
                 />
               )}
             </span>
-            {isRenaming && !file.isDirectory ? (
+            {isRenaming ? (
               <input
                 className="file-rename-input"
                 type="text"
@@ -497,13 +497,11 @@ export const FileList: React.FC<FileListProps> = ({
           return;
         }
         lastClickRef.current = null;
-        if (!file.isDirectory) {
-          renameTimeoutRef.current = setTimeout(() => {
-            renameTimeoutRef.current = null;
-            setRenamingPath(file.path);
-            setRenameValue(file.name);
-          }, 0);
-        }
+        renameTimeoutRef.current = setTimeout(() => {
+          renameTimeoutRef.current = null;
+          setRenamingPath(file.path);
+          setRenameValue(file.name);
+        }, 0);
         return;
       }
 

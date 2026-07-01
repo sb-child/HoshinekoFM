@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
-import { useToast } from '../contexts/ToastContext'; // 引入气泡通知钩子
+import { useToast } from '../contexts/ToastContext';
+import { formatFileOpError } from '../utils/fileOperations';
 
 interface OpenWithDialogProps {
     open: boolean;
@@ -59,8 +60,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
         onClose();
       } catch (error: any) {
         console.error('打开方式执行失败:', error);
-        // 优雅拦截 ENOENT 等系统底层错误并气泡提醒，避免弹出原生崩溃框
-        showToast(`无法启动程序: 找不到该应用的环境变量或路径`, 'error');
+        showToast(formatFileOpError('启动程序', selectedApp.name, error), 'error');
       }
     }
   };

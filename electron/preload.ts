@@ -45,5 +45,14 @@ contextBridge.exposeInMainWorld('electron', {
     const handler = () => callback();
     ipcRenderer.on(`terminal:exit:${pid}`, handler);
     return () => ipcRenderer.removeListener(`terminal:exit:${pid}`, handler);
+  },
+
+  // File watching
+  watchDirectory: (dir: string) => ipcRenderer.invoke('fs:watch-dir', dir),
+  unwatchDirectory: (dir: string) => ipcRenderer.invoke('fs:unwatch-dir', dir),
+  onDirChanged: (callback: (dir: string) => void) => {
+    const handler = (_: any, dir: string) => callback(dir);
+    ipcRenderer.on('fs:dir-changed', handler);
+    return () => ipcRenderer.removeListener('fs:dir-changed', handler);
   }
 });
