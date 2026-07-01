@@ -44,6 +44,7 @@ export interface IElectronAPI {
     ptyWrite: (pid: number, data: string) => void;
     ptyResize: (pid: number, cols: number, rows: number) => void;
     ptyKill: (pid: number) => void;
+    createFile: (path: string) => Promise<boolean>;
     ptyOnData: (pid: number, callback: (data: string) => void) => () => void;
     ptyOnExit: (pid: number, callback: () => void) => () => void;
 }

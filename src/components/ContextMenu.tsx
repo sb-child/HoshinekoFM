@@ -89,7 +89,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
             return {
                 ...item,
                 action: () => {
-                    if (window.electron && window.electron.openTerminal) {
+                    if (window.electron) {
                         originalAction(); 
                     } else {
                         originalAction();

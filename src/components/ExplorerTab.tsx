@@ -103,8 +103,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         }
     }, [initialPath, loadPath]);
 
-
-
     const handleNavigate = (file: IFile) => {
         if (file.isDirectory) {
             loadPath(file.path);
@@ -158,8 +156,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             return sortOrder === 'asc' ? result : -result;
         });
     }, [files, showHiddenFiles, sortBy, sortOrder, groupingEnabled]);
-
-
     // Selection State
     const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
     const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
@@ -326,7 +322,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 label: 'New File',
                 icon: 'note_add',
                 action: async () => {
-                    if (window.electron && window.electron.createFile) {
+                    if (window.electron) {
                         await window.electron.createFile(currentPath + '/新建文本文档.txt');
                         loadPath(currentPath);
                     }
@@ -343,8 +339,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 label: 'Open in Terminal',
                 icon: 'terminal',
                 action: () => {
-                    if (window.electron && window.electron.openTerminal) {
-                        window.electron.openTerminal(currentPath);
+                    if (window.electron) {
+                        window.electron.terminalOpen(currentPath);
                     }
                 }
             },
@@ -368,19 +364,9 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             }
         ];
 
-        // 借用系统的原生菜单渲染机制，将定制生成的结构回馈给主窗口
-        // 通过模拟一个携带定制 items 序列的伪包装回调传递
-        const mockEvent = {
-            ...e,
-            clientX: e.clientX,
-            clientY: e.clientY,
-            preventDefault: () => {}
-        };
+        // Using native context menu handler
         
         // 自定义一个局部菜单状态结构覆盖父组件的默认列表
-        // 在本项目中，直接调用外层注入的统一上下文钩子函数最安全
-        // 通过直接利用 Props 上的 onContextMenu 并传入自定义 items 构建（部分版本可用）
-        // 统一向上级注册该节点事件
         onContextMenu(e, currentFolderAsFile); 
         
         // 如果你的项目的外部系统菜单组件不允许覆盖项，可以直接派发事件：
@@ -464,12 +450,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                         </div>
                     )}
                     <div
-                        style={{ flex: 1, overflow: 'auto' }}
-                        onClick={(e) => {
-                            if (e.target === e.currentTarget) {
-                                setSelectedFiles(new Set());
-                            }
-                        }}
+                        style={{ flex: 1, overflow: 'hidden' }}
                         onDragOver={(e) => {
                             e.preventDefault();
                             e.dataTransfer.dropEffect = 'copy';
@@ -509,8 +490,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                                 }
                                 onContextMenu(e, file);
                             }}
-                            // 绑定处理空白区域右键事件
                             onBackgroundContextMenu={handleBackgroundContextMenu}
+                            onDeselectAll={() => setSelectedFiles(new Set())}
                             iconSize={iconSize}
                             viewMode={viewMode}
                             filledIcons={filledIcons}

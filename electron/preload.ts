@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electron', {
   ptySpawn: (cwd: string) => ipcRenderer.invoke('terminal:spawn', cwd),
   ptyWrite: (pid: number, data: string) => ipcRenderer.send('terminal:write', pid, data),
   ptyResize: (pid: number, cols: number, rows: number) => ipcRenderer.send('terminal:resize', pid, cols, rows),
+  createFile: (filePath: string) => ipcRenderer.invoke('fs:create-file', filePath),
   ptyKill: (pid: number) => ipcRenderer.send('terminal:kill', pid),
   ptyOnData: (pid: number, callback: (data: string) => void) => {
     const handler = (_: any, data: string) => callback(data);

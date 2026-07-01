@@ -152,7 +152,27 @@ ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string) => {
 });
 
 ipcMain.handle('fs:mkdir', async (_, dirPath: string) => {
+
+ipcMain.handle('fs:create-file', async (_, filePath: string) => {
+    await fs.writeFile(filePath, '', 'utf-8');
+    return true;
+});
     await fs.mkdir(dirPath, { recursive: true });
+
+ipcMain.handle('fs:create-file', async (_, filePath: string) => {
+    await fs.writeFile(filePath, '', 'utf-8');
+    return true;
+});
+    return true;
+
+ipcMain.handle('fs:create-file', async (_, filePath: string) => {
+    await fs.writeFile(filePath, '', 'utf-8');
+    return true;
+});
+});
+
+ipcMain.handle('fs:create-file', async (_, filePath: string) => {
+    await fs.writeFile(filePath, '', 'utf-8');
     return true;
 });
 
