@@ -1,5 +1,5 @@
 @import './theme/fallback.css';
-@import '@fontsource/material-symbols-rounded';
+@import '@fontsource-variable/material-symbols-rounded/full.css';
 
 @keyframes fadeIn {
   from {
@@ -18,7 +18,7 @@
 }
 
 .material-symbols-rounded {
-  font-family: 'Material Symbols Rounded';
+  font-family: 'Material Symbols Rounded Variable';
   font-weight: normal;
   font-style: normal;
   font-size: 24px;

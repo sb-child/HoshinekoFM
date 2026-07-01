@@ -34,6 +34,7 @@ interface ExplorerTabProps {
     onBgMenuItems: (items: ContextMenuItem[]) => void;
     onOpenWithFile: (file: IFile) => void;
     onPropertiesFile: (file: IFile) => void;
+    onOpenTerminalAt: (path: string) => void;
     showHiddenFiles: boolean;
     iconSize: number;
     viewMode: 'grid' | 'list';
@@ -41,7 +42,7 @@ interface ExplorerTabProps {
     refreshSignal: number;
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
   const { showToast } = useToast();
@@ -354,11 +355,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       {
         label: 'Open in Terminal',
         icon: 'terminal',
-        action: () => {
-          if (window.electron) {
-            window.electron.terminalOpen(currentPath);
-          }
-        }
+        action: () => onOpenTerminalAt(currentPath)
       },
       {
         label: 'Open With...',

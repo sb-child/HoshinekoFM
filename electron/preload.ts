@@ -15,8 +15,6 @@ contextBridge.exposeInMainWorld('electron', {
   extractFile: (path: string) => ipcRenderer.invoke('fs:extract', path),
   getApps: () => ipcRenderer.invoke('system:get-apps'),
   openWith: (exec: string, path: string) => ipcRenderer.invoke('system:open-with', exec, path),
-  terminalOpen: (path: string) => ipcRenderer.invoke('terminal:open', path),
-  cdTerminal: (path: string) => ipcRenderer.invoke('terminal:cd', path),
   openFileDialog: () => ipcRenderer.invoke('dialog:open-file'),
   readFile: (path: string) => ipcRenderer.invoke('fs:read-file', path),
   startDrag: (path: string) => ipcRenderer.send('dnd:start', path),

@@ -4,8 +4,8 @@ import { initDragIcons } from './utils/dragIconRenderer';
 import './index.css';
 import { ToastProvider } from './contexts/ToastContext';
 import { ClipboardProvider, useClipboard } from './contexts/ClipboardContext';
+import { DragProvider } from './contexts/DragContext';
 import { ThemeService } from './services/ThemeService';
-import { TerminalService } from './services/TerminalService';
 import { NavigationRail } from './components/NavigationRail';
 import { Sidebar } from './components/Sidebar';
 import { Icon } from './components/Icon';
@@ -46,6 +46,12 @@ function AppContent() {
 
   // Note: loading/files state is now internal to ExplorerTab
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalCwd, setTerminalCwd] = useState<string | undefined>(undefined);
+
+  const openTerminalAt = useCallback((path: string) => {
+    setTerminalCwd(path);
+    setTerminalOpen(true);
+  }, []);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: IFile | null } | null>(null);
@@ -178,20 +184,8 @@ function AppContent() {
     }));
   }, []);
 
-  // Terminal Follows Active Tab
-  useEffect(() => {
-    if (terminalOpen && currentPath) {
-      TerminalService.cd(currentPath);
-    }
-  }, [currentPath, terminalOpen]);
-
-  const toggleTerminal = async () => {
-    if (!terminalOpen) {
-      // await TerminalService.open(); // Removed: Uses embedded terminal now
-      setTerminalOpen(true);
-    } else {
-      setTerminalOpen(!terminalOpen);
-    }
+  const toggleTerminal = () => {
+    setTerminalOpen(prev => !prev);
   };
 
   const handleSidebarNavigate = useCallback((path: string) => {
@@ -257,7 +251,7 @@ function AppContent() {
         setContextMenu(null);
       }
     },
-    { label: 'Open in Terminal', icon: 'terminal', action: () => TerminalService.cd(contextMenu.item!.path) },
+    { label: 'Open in Terminal', icon: 'terminal', action: () => openTerminalAt(contextMenu.item!.path) },
     { divider: true, label: '', action: () => { } },
     { label: 'Copy', icon: 'content_copy', action: () => handleCopy(contextMenu.item!) },
     { label: 'Cut', icon: 'content_cut', action: () => handleCut(contextMenu.item!) },
@@ -410,6 +404,7 @@ function AppContent() {
                 onBgMenuItems={handleBgMenuItems}
                 onOpenWithFile={handleOpenWithFile}
                 onPropertiesFile={handlePropertiesFile}
+                onOpenTerminalAt={openTerminalAt}
                 showHiddenFiles={showHiddenFiles}
                 iconSize={iconSize}
                 viewMode={viewMode}
@@ -440,7 +435,7 @@ function AppContent() {
               </IconButton>
             </div>
             <div style={{ flex: 1, position: 'relative' }}>
-              <TerminalPane cwd={tabs.find(t => t.id === activeTabId)?.path || undefined} />
+              <TerminalPane cwd={terminalCwd || tabs.find(t => t.id === activeTabId)?.path || undefined} />
             </div>
           </div>
         )}
@@ -534,7 +529,9 @@ function App() {
   return (
     <ToastProvider>
       <ClipboardProvider>
-        <AppContent />
+        <DragProvider>
+          <AppContent />
+        </DragProvider>
       </ClipboardProvider>
     </ToastProvider>
   );

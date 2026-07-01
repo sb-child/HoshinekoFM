@@ -61,8 +61,33 @@
     border-radius: 12px;
     cursor: pointer;
     color: var(--md-sys-color-on-surface);
-    transition: background-color 0.1s cubic-bezier(0.2, 0, 0, 1), transform 0.1s;
+    transition: background-color 0.1s cubic-bezier(0.2, 0, 0, 1);
     user-select: none;
+    position: relative;
+    overflow: hidden;
+}
+
+/* MD3 Ripple — real DOM element, created on mouseDown */
+.file-ripple {
+    position: absolute;
+    border-radius: 50%;
+    background: var(--md-sys-color-on-surface);
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.12;
+    animation: ripple-expand 0.5s cubic-bezier(0.2, 0, 0, 1) forwards;
+    z-index: 1;
+}
+
+@keyframes ripple-expand {
+    0% {
+        transform: translate(-50%, -50%) scale(0);
+        opacity: 0.12;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0;
+    }
 }
 
 .file-list-item:hover {
@@ -70,6 +95,15 @@
 }
 
 .file-list-item:active {
+    background-color: var(--md-sys-color-surface-container-highest);
+    transform: none;
+}
+
+.file-list-item.selected:active {
+    background-color: color-mix(in srgb, var(--md-sys-color-secondary-container) 85%, black);
+}
+
+.file-grid-item:active {
     transform: scale(0.98);
 }
 

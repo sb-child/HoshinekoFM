@@ -173,6 +173,28 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
     }, true);
   }, []);
 
+  const triggerRipple = useCallback((e: React.MouseEvent, el: HTMLElement | null) => {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 2;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const ripple = document.createElement('span');
+    ripple.className = 'file-ripple';
+    ripple.style.width = `${size}px`;
+    ripple.style.height = `${size}px`;
+    ripple.style.left = `${x}px`;
+    ripple.style.top = `${y}px`;
+    el.appendChild(ripple);
+
+    const cleanup = () => {
+      ripple.removeEventListener('animationend', cleanup);
+      ripple.remove();
+    };
+    ripple.addEventListener('animationend', cleanup);
+  }, []);
+
   if (item.kind === "header") {
     return (
       <div
@@ -206,14 +228,15 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             gap: "16px",
             margin: "4px 8px",
             borderRadius: "8px",
-            background: isSelected
-              ? "var(--md-sys-color-secondary-container)"
-              : "transparent",
             cursor: "pointer",
             boxSizing: "border-box",
             height: `calc(100% - 4px)`,
           }}
           className={`file-list-item ${isSelected ? "selected" : ""}`}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            triggerRipple(e, e.currentTarget as HTMLElement);
+          }}
           onClick={(e) => data.onItemClick(e, file)}
           onDoubleClick={() => data.onItemDoubleClick(file)}
           onContextMenu={(e) => {
@@ -326,7 +349,11 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
         return (
           <div
             key={file.path}
-            className={`file-list-item ${isSelected ? "selected" : ""}`}
+            className={`file-list-item file-grid-item ${isSelected ? "selected" : ""}`}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              triggerRipple(e, e.currentTarget as HTMLElement);
+            }}
             onClick={(e) => data.onItemClick(e, file)}
             onDoubleClick={() => data.onItemDoubleClick(file)}
             onContextMenu={(e) => {
@@ -346,9 +373,6 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
               padding: "4px",
               cursor: "pointer",
               borderRadius: "8px",
-              background: isSelected
-                ? "var(--md-sys-color-secondary-container)"
-                : "transparent",
               overflow: "hidden",
               width: "100%",
               height: "auto",

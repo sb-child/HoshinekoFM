@@ -25,8 +25,6 @@ export interface IElectronAPI {
     extractFile: (path: string) => Promise<boolean>;
     getApps: () => Promise<{ name: string; icon: string; exec: string; }[]>;
     openWith: (exec: string, path: string) => Promise<true | string>;
-    terminalOpen: (path?: string) => Promise<void>;
-    cdTerminal: (path: string) => Promise<void>;
     openFileDialog: () => Promise<string | null>;
     readFile: (path: string) => Promise<string | null>;
     startDrag: (path: string) => void;

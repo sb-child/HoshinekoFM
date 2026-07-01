@@ -277,39 +277,6 @@ ipcMain.handle('fs:get-home', () => {
   return os.homedir();
 });
 
-// Embedded terminal handles opening via ipcRenderer.invoke('terminal:spawn') directly in pty.ts
-// We keep terminal:open as a no-op or alias if needed, but the frontend now uses ptySpawn.
-ipcMain.handle('terminal:open', async () => {
-  // Legacy handler - no op or focus existing?
-  // Frontend handles the pane toggling.
-  return true;
-});
-
-// Embedded terminal handles opening via ipcRenderer.invoke('terminal:spawn') directly in pty.ts
-
-ipcMain.handle('terminal:cd', async (_, dirPath: string) => {
-  // Send 'cd' command to the active PTY session(s)
-  // We need a way to target the specific tab's terminal or the "global" one.
-  // For now, let's broadcast to the most recent or active one if possible, 
-  // or better yet, frontend should handle this by writing to its own PTY pid.
-  // BUT checking App.tsx, TerminalService.cd calls this. 
-  // We should probably rely on the frontend sending data to the PTY directly.
-
-  // However, to keep compatibility with TerminalService.cd implementation:
-  // We can emit an event to the renderer to tell the active terminal to cd?
-  // OR we can make TerminalService.cd just use ptyWrite.
-
-  // Simplest fix: Make this handler send the input to the PTY wrapper.
-  if (dirPath) {
-    // We'll add a helper in pty.ts to write to all sessions or a specific one.
-    // For now, let's just log or ignore, assuming App.tsx is updated to not call this? 
-    // No, App.tsx calls TerminalService.cd.
-
-    // Plan: Update TerminalService.ts to use ptyWrite instead of this IPC.
-    // For now, removing the Konsole spawning code.
-  }
-});
-
 ipcMain.handle('dialog:open-file', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile'],
