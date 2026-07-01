@@ -23,6 +23,23 @@ interface Drive {
     usb: boolean;
 }
 
+// 1. 添加英文到中文的映射字典
+const localeMap: Record<string, string> = {
+    'Places': '位置',
+    'Devices': '设备',
+    'Dashboard': '仪表盘',
+    'Home': '主页',
+    'Desktop': '桌面',
+    'Documents': '文档',
+    'Downloads': '下载',
+    'Music': '音乐',
+    'Pictures': '图片',
+    'Videos': '视频'
+};
+
+// 2. 翻译函数：如果映射表里有对应的中文就使用，没有就保持原样
+const t = (text: string): string => localeMap[text] || text;
+
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, currentPath }) => {
     const [places, setPlaces] = useState<Place[]>([]);
     const [drives, setDrives] = useState<Drive[]>([]);
@@ -49,14 +66,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, currentPath }) => 
     return (
         <aside className="sidebar">
             <div className="sidebar-section">
-                <h3 className="sidebar-title">Places</h3>
+                {/* 汉化区域标题 Places -> 位置 */}
+                <h3 className="sidebar-title">{t('Places')}</h3>
                 <div className="sidebar-list">
                     <button
                         className={`sidebar-item ${currentPath === 'app://dashboard' ? 'active' : ''}`}
                         onClick={() => onNavigate('app://dashboard')}
                     >
                         <Icon name="dashboard" className="sidebar-icon" filled={currentPath === 'app://dashboard'} />
-                        <span className="sidebar-label">Dashboard</span>
+                        {/* 汉化 Dashboard -> 仪表盘 */}
+                        <span className="sidebar-label">{t('Dashboard')}</span>
                     </button>
                     {places.map((place) => (
                         <button
@@ -65,7 +84,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, currentPath }) => 
                             onClick={() => onNavigate(place.path)}
                         >
                             <Icon name={getPlaceIcon(place.name)} className="sidebar-icon" filled={currentPath.startsWith(place.path)} />
-                            <span className="sidebar-label">{place.name}</span>
+                            {/* 汉化动态获取的系统快捷路径名称（如 Home -> 主页） */}
+                            <span className="sidebar-label">{t(place.name)}</span>
                         </button>
                     ))}
                 </div>
@@ -73,7 +93,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, currentPath }) => 
 
             {drives.length > 0 && (
                 <div className="sidebar-section">
-                    <h3 className="sidebar-title">Devices</h3>
+                    {/* 汉化区域标题 Devices -> 设备 */}
+                    <h3 className="sidebar-title">{t('Devices')}</h3>
                     <div className="sidebar-list">
                         {drives.map((drive) => (
                             <button
@@ -105,4 +126,3 @@ function getPlaceIcon(name: string): string {
         default: return 'folder';
     }
 }
-

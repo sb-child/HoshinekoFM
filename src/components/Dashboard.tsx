@@ -20,18 +20,36 @@ interface PinnedItem {
     icon?: string;
 }
 
+const localeMap: Record<string, string> = {
+    'Good Morning': '早上好',
+    'Good Afternoon': '下午好',
+    'Good Evening': '晚上好',
+    'Welcome back to your command center.': '欢迎回到您的控制中心。',
+    'System Storage': '系统存储',
+    'used': '已用',
+    'total': '总量',
+    'Loading stats...': '正在加载统计数据...',
+    'Pinned': '固定项',
+    'Home': '主页',
+    'Downloads': '下载',
+    'Documents': '文档',
+    'Add': '添加',
+    'Recent': '最近访问',
+    'No recent files yet.': '暂无最近访问的文件。'
+};
+
+const t = (text: string): string => localeMap[text] || text;
+
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const [greeting, setGreeting] = useState('');
     const [storage, setStorage] = useState<StorageStats | null>(null);
 
-    // Persisted State
     const [pinnedItems, setPinnedItems] = useLocalStorage<PinnedItem[]>('dashboard.pinned', [
         { name: 'Home', path: '/home/bhimio' },
         { name: 'Downloads', path: '/home/bhimio/Downloads' },
         { name: 'Documents', path: '/home/bhimio/Documents' }
     ]);
 
-    // Recent files
     const [recentFiles] = useLocalStorage<IFile[]>('dashboard.recent', []);
 
     useEffect(() => {
@@ -40,7 +58,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         else if (hour < 18) setGreeting('Good Afternoon');
         else setGreeting('Good Evening');
 
-        // Fetch storage
         if (window.electron) {
             window.electron.getStorageUsage().then(stats => {
                 if (stats) setStorage(stats);
@@ -78,16 +95,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     return (
         <div className="dashboard-container fade-in">
             <header className="dashboard-header">
-                <h1 className="greeting">{greeting}</h1>
-                <p className="subtitle">Welcome back to your command center.</p>
+                <h1 className="greeting">{t(greeting)}</h1>
+                <p className="subtitle">{t('Welcome back to your command center.')}</p>
             </header>
 
             <div className="dashboard-grid">
-                {/* Storage Widget */}
                 <div className="dashboard-card storage-card">
                     <div className="card-header">
                         <Icon name="hard_drive" filled />
-                        <span>System Storage</span>
+                        <span>{t('System Storage')}</span>
                     </div>
                     {storage ? (
                         <div className="storage-info">
@@ -95,20 +111,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 <div className="usage-fill" style={{ width: `${getUsagePercent()}%` }}></div>
                             </div>
                             <div className="storage-text">
-                                <span>{formatBytes(storage.used)} used</span>
-                                <span>{formatBytes(storage.total)} total</span>
+                                <span>{formatBytes(storage.used)} {t('used')}</span>
+                                <span>{formatBytes(storage.total)} {t('total')}</span>
                             </div>
                         </div>
                     ) : (
-                        <div className="storage-loading">Loading stats...</div>
+                        <div className="storage-loading">{t('Loading stats...')}</div>
                     )}
                 </div>
 
-                {/* Pinned Folders */}
                 <div className="dashboard-card pinned-card">
                     <div className="card-header">
                         <Icon name="push_pin" filled />
-                        <span>Pinned</span>
+                        <span>{t('Pinned')}</span>
                     </div>
                     <div className="pinned-grid">
                         {pinnedItems.map((item, idx) => (
@@ -116,7 +131,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 <div className="pinned-icon">
                                     <Icon name={item.name === 'Home' ? 'home' : 'folder'} size={32} />
                                 </div>
-                                <span>{item.name}</span>
+                                <span>{t(item.name)}</span>
                                 <div className="pin-remove" onClick={(e) => handleRemovePin(e, idx)} title="Unpin">
                                     <Icon name="close" size={14} />
                                 </div>
@@ -126,25 +141,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             <div className="pinned-icon">
                                 <Icon name="add" />
                             </div>
-                            <span>Add</span>
+                            <span>{t('Add')}</span>
                         </div>
                     </div>
                 </div>
 
-                {/* Recent Files */}
                 <div className="dashboard-card recent-card">
                     <div className="card-header">
                         <Icon name="history" filled />
-                        <span>Recent</span>
+                        <span>{t('Recent')}</span>
                     </div>
                     <div className="recent-list">
                         {recentFiles.length === 0 ? (
-                            <div className="recent-placeholder">No recent files yet.</div>
+                            <div className="recent-placeholder">{t('No recent files yet.')}</div>
                         ) : (
                             recentFiles.slice(0, 10).map((file, idx) => (
                                 <div key={idx} className="recent-item" onClick={() => onNavigate(file.path)}>
                                     <Icon name={file.isDirectory ? 'folder' : 'article'} size={20} />
-                                    <span className="recent-name">{file.name}</span>
+                                    <span className="recent-name">{t(file.name)}</span>
                                     <span className="recent-path">{file.path}</span>
                                 </div>
                             ))

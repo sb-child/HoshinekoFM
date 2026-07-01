@@ -18,6 +18,24 @@ interface SettingsDialogProps {
     customCssPath?: string;
 }
 
+// 统一汉化词典
+const settingsLocaleMap: Record<string, string> = {
+    'Settings': '设置',
+    'Done': '完成',
+    'Show Hidden Files': '显示隐藏文件',
+    'Appearance': '外观',
+    'View Mode': '视图模式',
+    'Grid': '网格',
+    'List': '列表',
+    'Icon Size': '图标大小',
+    'Filled Icons': '实心图标',
+    'Customization': '个性化',
+    'Custom CSS': '自定义 CSS',
+    'Import CSS': '导入 CSS'
+};
+
+const tSettings = (text: string) => settingsLocaleMap[text] || text;
+
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     open, onClose,
     showHiddenFiles, onToggleHiddenFiles,
@@ -28,11 +46,11 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 }) => {
     return (
         <Dialog
-            title="Settings"
+            title={tSettings('Settings')}
             open={open}
             onClose={onClose}
             actions={
-                <Button onClick={onClose} variant="filled">Done</Button>
+                <Button onClick={onClose} variant="filled">{tSettings('Done')}</Button>
             }
         >
             <div style={{ padding: '0 8px', minWidth: '300px' }}>
@@ -45,7 +63,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <Icon name={showHiddenFiles ? 'visibility' : 'visibility_off'} />
-                        <div style={{ fontSize: '16px' }}>Show Hidden Files</div>
+                        <div style={{ fontSize: '16px' }}>{tSettings('Show Hidden Files')}</div>
                     </div>
                     {/* Material 3 Switch */}
                     <div style={{
@@ -64,23 +82,23 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 </div>
 
                 <div style={{ padding: '12px 0', borderTop: '1px solid var(--md-sys-color-outline-variant)' }}>
-                    <div style={{ fontSize: '14px', color: 'var(--md-sys-color-primary)', fontWeight: 500, marginBottom: '8px' }}>Appearance</div>
+                    <div style={{ fontSize: '14px', color: 'var(--md-sys-color-primary)', fontWeight: 500, marginBottom: '8px' }}>{tSettings('Appearance')}</div>
 
                     {/* View Mode */}
                     <div style={{ marginBottom: '16px' }}>
-                        <div style={{ marginBottom: '8px' }}>View Mode</div>
+                        <div style={{ marginBottom: '8px' }}>{tSettings('View Mode')}</div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <Button
                                 variant={viewMode === 'grid' ? 'filled' : 'outlined'}
                                 onClick={() => onViewModeChange('grid')}
                             >
-                                <Icon name="grid_view" /> Grid
+                                <Icon name="grid_view" /> {tSettings('Grid')}
                             </Button>
                             <Button
                                 variant={viewMode === 'list' ? 'filled' : 'outlined'}
                                 onClick={() => onViewModeChange('list')}
                             >
-                                <Icon name="view_list" /> List
+                                <Icon name="view_list" /> {tSettings('List')}
                             </Button>
                         </div>
                     </div>
@@ -88,7 +106,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     {/* Icon Size */}
                     <div style={{ marginBottom: '16px' }}>
                         <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Icon Size</span>
+                            <span>{tSettings('Icon Size')}</span>
                             <span>{iconSize}px</span>
                         </div>
                         <input
@@ -112,7 +130,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                             <Icon name="favorite" filled={filledIcons} />
-                            <div style={{ fontSize: '16px' }}>Filled Icons</div>
+                            <div style={{ fontSize: '16px' }}>{tSettings('Filled Icons')}</div>
                         </div>
                         <div style={{
                             width: '52px', height: '32px',
@@ -131,17 +149,17 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 </div>
 
                 <div style={{ padding: '12px 0', borderTop: '1px solid var(--md-sys-color-outline-variant)' }}>
-                    <div style={{ fontSize: '14px', color: 'var(--md-sys-color-primary)', fontWeight: 500, marginBottom: '8px' }}>Customization</div>
+                    <div style={{ fontSize: '14px', color: 'var(--md-sys-color-primary)', fontWeight: 500, marginBottom: '8px' }}>{tSettings('Customization')}</div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div>
-                            <div style={{ fontSize: '16px' }}>Custom CSS</div>
+                            <div style={{ fontSize: '16px' }}>{tSettings('Custom CSS')}</div>
                             {customCssPath && <div style={{ fontSize: '12px', color: 'var(--md-sys-color-on-surface-variant)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{customCssPath}</div>}
                         </div>
                         <Button
                             variant="outlined"
                             onClick={onImportCss}
                         >
-                            Import CSS
+                            {tSettings('Import CSS')}
                         </Button>
                     </div>
                 </div>
@@ -149,4 +167,3 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         </Dialog>
     );
 };
-

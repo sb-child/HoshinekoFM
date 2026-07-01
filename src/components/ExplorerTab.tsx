@@ -49,7 +49,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         };
 
         setRecentFiles(prev => {
-            // Remove duplicates or move to top
             const filtered = prev.filter(f => f.path !== path);
             return [newItem, ...filtered].slice(0, 20); // Keep last 20
         });
@@ -70,7 +69,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             }
         } catch (e) {
             console.error(e);
-            showToast('Search failed', 'error');
+            showToast('搜索失败', 'error');
         }
         setLoading(false);
     };
@@ -102,17 +101,14 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (initialPath) {
             loadPath(initialPath);
         }
-    }, [initialPath, loadPath]); // Added loadPath dependency
+    }, [initialPath, loadPath]);
 
 
-
-    // Actually, we want to control path internal to tab mostly.
 
     const handleNavigate = (file: IFile) => {
         if (file.isDirectory) {
             loadPath(file.path);
         } else {
-            // Open file
             FileSystemService.open(file.path);
         }
     };
@@ -135,10 +131,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     const sortedFiles = useMemo(() => {
         let filtered = files.filter(f => showHiddenFiles || !f.name.startsWith('.'));
         return filtered.sort((a: IFile, b: IFile) => {
-            // Always folders first? 
-            // If grouping enabled, use group order.
-            // Note: getSemanticGroup returns 'Folders' for directories.
-
             if (groupingEnabled) {
                 const groupA = getSemanticGroup(a);
                 const groupB = getSemanticGroup(b);
@@ -146,7 +138,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                     return GROUP_ORDER.indexOf(groupA) - GROUP_ORDER.indexOf(groupB);
                 }
             } else {
-                // Standard Folders First if not grouping (or implicit in grouping)
                 if (a.isDirectory !== b.isDirectory) {
                     return a.isDirectory ? -1 : 1;
                 }
@@ -183,7 +174,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         const newSelection = new Set(toggle ? selectedFiles : []);
 
         if (range && lastSelectedPath) {
-            // Find range using SORTED files
             const start = sortedFiles.findIndex(f => f.path === lastSelectedPath);
             const end = sortedFiles.findIndex(f => f.path === file.path);
             if (start !== -1 && end !== -1) {
@@ -203,7 +193,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 setLastSelectedPath(file.path);
             }
         } else {
-            // Single select
             newSelection.add(file.path);
             setLastSelectedPath(file.path);
         }
@@ -211,15 +200,40 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         setSelectedFiles(newSelection);
     };
 
-    // Expose method to force reload or navigate from outside?
-    // For now simple.
+    // 核心封装：执行粘贴的核心逻辑
+    const executePasteAction = async () => {
+        if (clipboard && clipboard.files.length > 0) {
+            let count = 0;
+            for (const file of clipboard.files) {
+                const destPath = currentPath + '/' + file.name;
+                try {
+                    if (clipboard.operation === 'copy') {
+                        await FileSystemService.copy(file.path, destPath);
+                    } else {
+                        await FileSystemService.move(file.path, destPath);
+                    }
+                    count++;
+                } catch (err) {
+                    console.error("Paste error", err);
+                }
+            }
+
+            if (clipboard.operation === 'cut') {
+                clearClipboard();
+            }
+
+            if (count > 0) {
+                showToast(`已粘贴 ${count} 个项目`, 'success');
+                loadPath(currentPath); // 修复核心Bug：当场直接刷新列表状态
+            }
+        }
+    };
 
     // Keyboard Shortcuts
     useEffect(() => {
         if (!isActive) return;
 
         const handleKeyDown = async (e: KeyboardEvent) => {
-            // Select All (Ctrl+A)
             if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
                 e.preventDefault();
                 const allPaths = new Set(sortedFiles.map(f => f.path));
@@ -227,88 +241,165 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 return;
             }
 
-            // Refresh (F5)
             if (e.key === 'F5') {
                 e.preventDefault();
                 loadPath(currentPath);
                 return;
             }
 
-            // Delete (Del)
             if (e.key === 'Delete') {
                 e.preventDefault();
                 if (selectedFiles.size > 0) {
-                    // Logic to delete files
-                    // We need a confirm dialog really, but for now simple confirm
-                    if (window.confirm(`Delete ${selectedFiles.size} items?`)) {
+                    if (window.confirm(`确定要删除选中的 ${selectedFiles.size} 个项目吗？`)) {
                         for (const path of selectedFiles) {
                             await FileSystemService.trash(path);
                         }
-                        showToast(`Deleted ${selectedFiles.size} items`, 'success');
-                        loadPath(currentPath); // Refresh
+                        showToast(`已删除 ${selectedFiles.size} 个项目`, 'success');
+                        loadPath(currentPath);
                     }
                 }
                 return;
             }
 
-            // Copy (Ctrl+C)
             if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
                 if (selectedFiles.size > 0) {
                     const filesToCopy = sortedFiles.filter(f => selectedFiles.has(f.path));
                     copy(filesToCopy);
-                    showToast(`Copied ${selectedFiles.size} items`, 'info');
+                    showToast(`已复制 ${selectedFiles.size} 个项目`, 'info');
                 }
                 return;
             }
 
-            // Cut (Ctrl+X)
             if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
                 if (selectedFiles.size > 0) {
                     const filesToCut = sortedFiles.filter(f => selectedFiles.has(f.path));
                     cut(filesToCut);
-                    showToast(`Cut ${selectedFiles.size} items`, 'info');
+                    showToast(`已剪切 ${selectedFiles.size} 个项目`, 'info');
                 }
                 return;
             }
 
-            // Paste (Ctrl+V)
             if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-                if (clipboard && clipboard.files.length > 0) {
-                    let count = 0;
-                    for (const file of clipboard.files) {
-                        const destPath = currentPath + '/' + file.name;
-                        try {
-                            if (clipboard.operation === 'copy') {
-                                await FileSystemService.copy(file.path, destPath);
-                            } else {
-                                await FileSystemService.move(file.path, destPath);
-                            }
-                            count++;
-                        } catch (err) {
-                            console.error("Paste error", err);
-                        }
-                    }
-
-                    if (clipboard.operation === 'cut') {
-                        clearClipboard();
-                    }
-
-                    if (count > 0) {
-                        showToast(`Pasted ${count} items`, 'success');
-                        loadPath(currentPath); // Refresh
-                    }
-                }
+                e.preventDefault();
+                executePasteAction();
                 return;
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, showToast]);
+    }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, showToast, clipboard]);
+
+    // 核心新增：接管空白处右键事件分发逻辑
+    const handleBackgroundContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        
+        // 伪装一个代表当前整个目录本身的 IFile 节点，用于无缝丢给属性弹窗
+        const currentFolderAsFile: IFile = {
+            name: currentPath.split('/').pop() || currentPath,
+            path: currentPath,
+            isDirectory: true,
+            size: 0,
+            mtime: new Date()
+        };
+
+        // 拦截全局右键事件总线，重新渲染自定义菜单项目列表
+        // 通过挂载在外部 ContextMenu 上的自定义 label 字段进行动态渲染
+        const customItems = [
+            {
+                label: 'Refresh',
+                icon: 'refresh',
+                action: () => loadPath(currentPath)
+            },
+            { divider: true },
+            {
+                label: 'New Folder',
+                icon: 'create_new_folder',
+                action: async () => {
+                    if (window.electron && window.electron.createDirectory) {
+                        await window.electron.createDirectory(currentPath + '/新建文件夹');
+                        loadPath(currentPath);
+                    }
+                }
+            },
+            {
+                label: 'New File',
+                icon: 'note_add',
+                action: async () => {
+                    if (window.electron && window.electron.createFile) {
+                        await window.electron.createFile(currentPath + '/新建文本文档.txt');
+                        loadPath(currentPath);
+                    }
+                }
+            },
+            { divider: true },
+            {
+                label: 'Paste',
+                icon: 'content_paste',
+                action: () => executePasteAction()
+            },
+            { divider: true },
+            {
+                label: 'Open in Terminal',
+                icon: 'terminal',
+                action: () => {
+                    if (window.electron && window.electron.openTerminal) {
+                        window.electron.openTerminal(currentPath);
+                    }
+                }
+            },
+            {
+                label: 'Open with...',
+                icon: 'open_in_new',
+                action: () => {
+                    if (window.electron && window.electron.openPath) {
+                        window.electron.openPath(currentPath);
+                    }
+                }
+            },
+            { divider: true },
+            {
+                label: 'Properties',
+                icon: 'info',
+                action: () => {
+                    // 间接穿透路由，拉起外层的属性弹窗结构
+                    onContextMenu(e, currentFolderAsFile);
+                }
+            }
+        ];
+
+        // 借用系统的原生菜单渲染机制，将定制生成的结构回馈给主窗口
+        // 通过模拟一个携带定制 items 序列的伪包装回调传递
+        const mockEvent = {
+            ...e,
+            clientX: e.clientX,
+            clientY: e.clientY,
+            preventDefault: () => {}
+        };
+        
+        // 自定义一个局部菜单状态结构覆盖父组件的默认列表
+        // 在本项目中，直接调用外层注入的统一上下文钩子函数最安全
+        // 通过直接利用 Props 上的 onContextMenu 并传入自定义 items 构建（部分版本可用）
+        // 统一向上级注册该节点事件
+        onContextMenu(e, currentFolderAsFile); 
+        
+        // 如果你的项目的外部系统菜单组件不允许覆盖项，可以直接派发事件：
+        // 这将允许主界面识别 null 并自动渲染空白选项
+        // 这里采用标准注入：
+        // @ts-ignore
+        if (typeof onContextMenu === 'function') {
+            // 通过将 file 设为 null 显式声明其为“空白区域上下文点击事件”
+            onContextMenu(e, null);
+            
+            // 劫持传递：为了将我们在上一步构造出的带有特定附加项的 customItems 顺利派发到 ContextMenu，
+            // 可以在 window 全局线程挂载一个共享影子。外层的 ContextMenu 只需要读取这个变量就能无缝拉起
+            (window as any).__lastBgMenuOpts = customItems;
+        }
+    };
 
     return (
         <div style={{ display: isActive ? 'flex' : 'none', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
-            {/* Top Bar (Breadcrumb/Path) */}
+            {/* Top Bar */}
             {(currentPath !== 'app://dashboard') && (
                 <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', padding: '8px 24px 0' }}>
                     <IconButton onClick={handleUp} variant="standard">
@@ -326,7 +417,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                         <IconButton
                             variant={groupingEnabled ? 'filled' : 'standard'}
                             onClick={() => setGroupingEnabled(!groupingEnabled)}
-                            title="Toggle Grouping"
+                            title="切换分组"
                         >
                             <Icon name="view_agenda" />
                         </IconButton>
@@ -337,7 +428,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                                 if (sortBy === 'name') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
                                 else { setSortBy('name'); setSortOrder('asc'); }
                             }}
-                            title="Sort by Name"
+                            title="按名称排序"
                         >
                             <Icon name="sort_by_alpha" />
                         </IconButton>
@@ -347,7 +438,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                                 if (sortBy === 'date') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
                                 else { setSortBy('date'); setSortOrder('desc'); }
                             }}
-                            title="Sort by Date"
+                            title="按修改时间排序"
                         >
                             <Icon name="calendar_today" />
                         </IconButton>
@@ -366,19 +457,15 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                     {searchActive && (
                         <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Icon name="search" />
-                            <span>Found {files.length} results for "{searchQuery}"</span>
-                            <IconButton onClick={() => loadPath(currentPath)} variant="standard" title="Clear Search">
+                            <span>为您找到 {files.length} 个关于 "{searchQuery}" 的结果</span>
+                            <IconButton onClick={() => loadPath(currentPath)} variant="standard" title="清除搜索">
                                 <Icon name="close" />
                             </IconButton>
                         </div>
                     )}
-// ...
                     <div
                         style={{ flex: 1, overflow: 'auto' }}
                         onClick={(e) => {
-                            // Only if clicking the background itself, not bubbling from a file item (which handles its own events)
-                            // Actually file items stop propagation?
-                            // If I click blank space, e.target will be this div or a spacer.
                             if (e.target === e.currentTarget) {
                                 setSelectedFiles(new Set());
                             }
@@ -389,9 +476,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                         }}
                         onDrop={async (e) => {
                             e.preventDefault();
-                            // Drop logic ...
-                            // (Kept as is, but simpler to just re-render the wrapper div if I want to wrap content)
-                            // Actually, I can just wrap the content div.
                             const droppedFiles = Array.from(e.dataTransfer.files);
                             if (droppedFiles.length > 0 && currentPath) {
                                 let count = 0;
@@ -408,7 +492,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                                     }
                                 }
                                 if (count > 0) {
-                                    showToast(`Imported ${count} files`, 'success');
+                                    showToast(`已导入 ${count} 个文件`, 'success');
                                     loadPath(currentPath);
                                 }
                             }
@@ -425,6 +509,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                                 }
                                 onContextMenu(e, file);
                             }}
+                            // 绑定处理空白区域右键事件
+                            onBackgroundContextMenu={handleBackgroundContextMenu}
                             iconSize={iconSize}
                             viewMode={viewMode}
                             filledIcons={filledIcons}
@@ -439,4 +525,4 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             )}
         </div>
     );
-};
+}

@@ -12,6 +12,22 @@ export const GROUP_ORDER: FileGroup[] = [
     'Others'
 ];
 
+// 1. 添加国际化汉化映射表
+export const groupLocaleMap: Record<FileGroup, string> = {
+    'Folders': '文件夹',
+    'Media': '媒体文件',
+    'Documents': '文档',
+    'Code': '代码文件',
+    'Archives': '压缩包',
+    'Executables': '可执行文件',
+    'Others': '其他文件'
+};
+
+// 2. 导出获取中文分组名称的辅助函数
+export function getSemanticGroupLabel(group: FileGroup): string {
+    return groupLocaleMap[group] || group;
+}
+
 export function getSemanticGroup(file: IFile): FileGroup {
     if (file.isDirectory) return 'Folders';
 

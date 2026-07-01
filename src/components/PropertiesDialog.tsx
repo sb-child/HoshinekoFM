@@ -10,6 +10,23 @@ interface PropertiesDialogProps {
     onClose: () => void;
 }
 
+// 统一属性面板汉化词典
+const propLocaleMap: Record<string, string> = {
+    'Properties': '属性',
+    'Close': '关闭',
+    'Folder': '文件夹',
+    'File': '文件',
+    'Location:': '位置:',
+    'Size:': '大小:',
+    'Calculating...': '计算中...',
+    ' bytes': ' 字节',
+    'Modified:': '修改时间:',
+    'Type:': '类型:',
+    'Directory': '文件夹'
+};
+
+const tProp = (text: string) => propLocaleMap[text] || text;
+
 export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, onClose }) => {
     const [calculatedSize, setCalculatedSize] = useState<number | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
@@ -44,11 +61,11 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, 
 
     return (
         <Dialog
-            title="Properties"
+            title={tProp('Properties')}
             open={open}
             onClose={onClose}
             actions={
-                <Button onClick={onClose}>Close</Button>
+                <Button onClick={onClose}>{tProp('Close')}</Button>
             }
         >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: '350px' }}>
@@ -69,36 +86,36 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, 
                     <div>
                         <div style={{ fontSize: '18px', fontWeight: 500, wordBreak: 'break-all' }}>{file.name}</div>
                         <div style={{ fontSize: '14px', color: 'var(--md-sys-color-on-surface-variant)' }}>
-                            {file.isDirectory ? 'Folder' : 'File'}
+                            {file.isDirectory ? tProp('Folder') : tProp('File')}
                         </div>
                     </div>
                 </div>
 
                 <div className="properties-grid" style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '12px', fontSize: '14px' }}>
 
-                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Location:</div>
+                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Location:')}</div>
                     <div style={{ wordBreak: 'break-all', userSelect: 'text' }}>{file.path}</div>
 
-                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Size:</div>
+                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Size:')}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {isCalculating ? (
-                            <span style={{ fontStyle: 'italic', color: 'var(--md-sys-color-primary)' }}>Calculating...</span>
+                            <span style={{ fontStyle: 'italic', color: 'var(--md-sys-color-primary)' }}>{tProp('Calculating...')}</span>
                         ) : (
                             <span>
                                 {calculatedSize !== null ? formatSize(calculatedSize) : '-'}
                                 <span style={{ color: 'var(--md-sys-color-on-surface-variant)', marginLeft: '4px' }}>
-                                    ({calculatedSize?.toLocaleString()} bytes)
+                                    ({calculatedSize?.toLocaleString()}{tProp(' bytes')})
                                 </span>
                             </span>
                         )}
                     </div>
 
-                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Modified:</div>
+                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Modified:')}</div>
                     <div>{new Date(file.mtime).toLocaleString()}</div>
 
                     {/* Placeholder for Perms or Type details */}
-                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>Type:</div>
-                    <div>{file.isDirectory ? 'Directory' : file.name.split('.').pop()?.toUpperCase() || 'File'}</div>
+                    <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Type:')}</div>
+                    <div>{file.isDirectory ? tProp('Directory') : file.name.split('.').pop()?.toUpperCase() || tProp('File')}</div>
 
                 </div>
             </div>

@@ -17,6 +17,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ cwd }) => {
     useEffect(() => {
         if (!containerRef.current) return;
 
+        // 保持你原本完全正确的同步初始化逻辑
         const term = new Terminal({
             cursorBlink: true,
             fontFamily: 'Consolas, monospace',
@@ -35,9 +36,12 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ cwd }) => {
         terminalRef.current = term;
         fitAddonRef.current = fitAddon;
 
-        // Spawn PTY
+        // 保持你原本完全打通提示符的 Promise 底层链式结构不变
         window.electron.ptySpawn(cwd || '').then((pid) => {
             pidRef.current = pid;
+
+            // 进程就绪后，立刻聚焦终端
+            term.focus();
 
             // Handle incoming data
             const cleanup = window.electron.ptyOnData(pid, (data: string) => {
@@ -88,25 +92,43 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ cwd }) => {
             };
         });
 
-        return () => {
-            // Cleanup checked within the promise chain above, 
-            // but for safety if unmount happens before spawn completes:
-            // logic is tricky here with async spawn. 
-            // Simplified: spawn is fast enough, or we check ref.
-        };
+        return () => {};
     }, []); // Only mount once
 
     useEffect(() => {
         if (cwd && pidRef.current) {
-            // Escape path for shell safety - simple version
-            // For bash/zsh, wrapping in single quotes is usually safe, replacing single quotes with '\\''
             const safePath = cwd.replace(/'/g, "'\\''");
-            const cmd = `cd '${safePath}'\r`; // && clear\r`; 
+            const cmd = `cd '${safePath}'\r`; 
             window.electron.ptyWrite(pidRef.current, cmd);
         }
     }, [cwd]);
 
     return (
-        <div style={{ width: '100%', height: '100%', background: '#1e1e1e', overflow: 'hidden' }} ref={containerRef} />
+        <div 
+            style={{ 
+                width: '100%', 
+                height: '100%', 
+                background: '#1e1e1e', 
+                overflow: 'hidden',
+                position: 'relative',
+                zIndex: 10 // 提高层级，防止点击事件穿透到下方的文件列表背景上
+            }} 
+            ref={containerRef} 
+            // 在鼠标按下阶段截击，阻止事件向上传播给文件浏览器背景，从而保住焦点
+            onMouseDown={(e) => {
+                e.stopPropagation();
+            }}
+            // 点击黑框的任意地方时，强制让 xterm.js 内部的隐藏输入域重新获取焦点
+            onClick={(e) => {
+                e.stopPropagation();
+                if (terminalRef.current) {
+                    terminalRef.current.focus();
+                }
+            }}
+            // 阻止键盘输入事件向外泄露，防止触发文件浏览器的全局快捷键
+            onKeyDown={(e) => {
+                e.stopPropagation();
+            }}
+        />
     );
 };

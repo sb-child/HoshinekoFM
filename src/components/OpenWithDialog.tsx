@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
+import { useToast } from '../contexts/ToastContext'; // 引入气泡通知钩子
 
 interface OpenWithDialogProps {
     open: boolean;
@@ -15,11 +16,24 @@ interface AppEntry {
     exec: string;
 }
 
+// 统一汉化词典
+const openWithLocaleMap: Record<string, string> = {
+    'Open With...': '打开方式',
+    'Cancel': '取消',
+    'Open': '打开',
+    'Search applications...': '搜索应用程序...',
+    'Recommended': '推荐程序',
+    'All Applications': '所有应用程序'
+};
+
+const tOpenWith = (text: string) => openWithLocaleMap[text] || text;
+
 export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = ({ open, onClose, onSelect, path }) => {
     const [allApps, setAllApps] = useState<AppEntry[]>([]);
     const [recommendedApps, setRecommendedApps] = useState<AppEntry[]>([]);
     const [search, setSearch] = useState('');
     const [selectedApp, setSelectedApp] = useState<AppEntry | null>(null);
+    const { showToast } = useToast(); // 声明气泡提示方法
 
     useEffect(() => {
         if (open) {
@@ -36,9 +50,18 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
         return allApps.filter(app => app.name.toLowerCase().includes(search.toLowerCase()));
     }, [allApps, search]);
 
-    const handleConfirm = () => {
+    // 核心修复：加入容错捕获，防止后端 spawn 找不到执行文件时主进程抛错崩溃
+    const handleConfirm = async () => {
         if (selectedApp) {
-            onSelect(selectedApp.exec);
+            try {
+                // 执行打开操作
+                await onSelect(selectedApp.exec);
+                onClose();
+            } catch (error: any) {
+                console.error('打开方式执行失败:', error);
+                // 优雅拦截 ENOENT 等系统底层错误并气泡提醒，避免弹出原生崩溃框
+                showToast(`无法启动程序: 找不到该应用的环境变量或路径`, 'error');
+            }
         }
     };
 
@@ -63,20 +86,20 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
 
     return (
         <Dialog
-            title="Open With..."
+            title={tOpenWith('Open With...')}
             open={open}
             onClose={onClose}
             actions={
                 <>
-                    <Button onClick={onClose} variant="text">Cancel</Button>
-                    <Button onClick={handleConfirm} variant="filled" disabled={!selectedApp}>Open</Button>
+                    <Button onClick={onClose} variant="text">{tOpenWith('Cancel')}</Button>
+                    <Button onClick={handleConfirm} variant="filled" disabled={!selectedApp}>{tOpenWith('Open')}</Button>
                 </>
             }
         >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '500px', width: '400px' }}>
                 <input
                     type="text"
-                    placeholder="Search applications..."
+                    placeholder={tOpenWith('Search applications...')}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="md3-text-field"
@@ -94,12 +117,12 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
                     {recommendedApps.length > 0 && !search && (
                         <>
                             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--md-sys-color-primary)', marginTop: '8px', paddingLeft: '12px' }}>
-                                Recommended
+                                {tOpenWith('Recommended')}
                             </div>
                             {recommendedApps.map((app, idx) => renderAppItem(app, idx))}
                             <div style={{ height: '1px', background: 'var(--md-sys-color-outline-variant)', margin: '8px 0' }} />
                             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--md-sys-color-primary)', paddingLeft: '12px' }}>
-                                All Applications
+                                {tOpenWith('All Applications')}
                             </div>
                         </>
                     )}
