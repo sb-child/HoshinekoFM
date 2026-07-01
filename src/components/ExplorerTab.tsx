@@ -15,6 +15,8 @@ import {
   createFile,
   importFiles,
   openFile,
+  copyFile,
+  moveFile,
   copyToClipboard,
   cutToClipboard,
 } from '../utils/fileOperations';
@@ -475,6 +477,20 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               }}
               onBackgroundContextMenu={handleBackgroundContextMenu}
               onDeselectAll={() => setSelectedFiles(new Set())}
+              onSetSelected={setSelectedFiles}
+              onDropOnFolder={async (draggedFiles, targetPath, operation) => {
+                for (const file of draggedFiles) {
+                  if (file.path === targetPath) continue;
+                  const destPath = targetPath + '/' + file.name;
+                  if (operation === 'copy') {
+                    await copyFile(file.path, destPath, showToast, () => loadPath(currentPath));
+                  } else {
+                    await moveFile(file.path, destPath, showToast, () => loadPath(currentPath));
+                  }
+                }
+                loadPath(currentPath);
+              }}
+              currentPath={currentPath}
               iconSize={iconSize}
               viewMode={viewMode}
               filledIcons={filledIcons}

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { IFile } from '../types/files';
 
@@ -8,7 +8,7 @@ interface DragState {
 }
 
 interface DragContextType {
-  dragState: DragState | null;
+  getDragState: () => DragState | null;
   startDrag: (files: IFile[], sourcePath: string) => void;
   endDrag: () => void;
 }
@@ -16,18 +16,20 @@ interface DragContextType {
 const DragContext = createContext<DragContextType | undefined>(undefined);
 
 export const DragProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [dragState, setDragState] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+
+  const getDragState = useCallback(() => dragRef.current, []);
 
   const startDrag = useCallback((files: IFile[], sourcePath: string) => {
-    setDragState({ files, sourcePath });
+    dragRef.current = { files, sourcePath };
   }, []);
 
   const endDrag = useCallback(() => {
-    setDragState(null);
+    dragRef.current = null;
   }, []);
 
   return (
-    <DragContext.Provider value={{ dragState, startDrag, endDrag }}>
+    <DragContext.Provider value={{ getDragState, startDrag, endDrag }}>
       {children}
     </DragContext.Provider>
   );

@@ -235,7 +235,7 @@ export function getCachedDragIconPath(iconName: string): string {
  * - For non-images: Material Symbols icon pre-rendered by the frontend
  *   and cached on disk.  Falls back to a visible generic colored square.
  */
-export async function getDragIcon(filePath: string): Promise<string> {
+export async function getDragIcon(filePath: string, filled = false): Promise<string> {
   const mime = await detectMime(filePath);
   if (mime && mime.startsWith('image/')) {
     const thumb = await getThumbnail(filePath, 96, true);
@@ -244,8 +244,12 @@ export async function getDragIcon(filePath: string): Promise<string> {
   // Check if a pre-cached Material icon exists
   if (!mime) return getGenericFileIcon('Others');
   const iconName = getIconNameForMime(mime, false);
-  const cached = getCachedDragIconPath(iconName);
+  const cacheKey = filled ? `${iconName}:filled` : iconName;
+  const cached = getCachedDragIconPath(cacheKey);
   if (existsSync(cached)) return cached;
+  // Try unfilled fallback
+  const fallback = getCachedDragIconPath(iconName);
+  if (existsSync(fallback)) return fallback;
   return getGenericFileIcon(mime);
 }
 
@@ -283,16 +287,15 @@ function getIconNameForMime(mime: string | null, isDirectory: boolean): string {
 async function getGenericFileIcon(mime: string): Promise<string> {
   const cat = mime.split('/')[0];
   let color: string;
-  let char: string;
   switch (cat) {
-  case 'image':  color = '#4A90D9'; char = 'I'; break;
-  case 'audio':  color = '#9B59B6'; char = '\u266B'; break;
-  case 'video':  color = '#E74C3C'; char = '\u25B6'; break;
-  case 'text':   color = '#1ABC9C'; char = 'T'; break;
-  case 'inode':  color = '#3498DB'; char = '\uD83D\uDCC1'; break;
+  case 'image':  color = '#4A90D9'; break;
+  case 'audio':  color = '#9B59B6'; break;
+  case 'video':  color = '#E74C3C'; break;
+  case 'text':   color = '#1ABC9C'; break;
+  case 'inode':  color = '#3498DB'; break;
   default:
     switch (mime) {
-    case 'application/pdf':        color = '#E74C3C'; char = 'P'; break;
+    case 'application/pdf':                     color = '#E74C3C'; break;
     case 'application/zip':
     case 'application/gzip':
     case 'application/x-bzip2':
@@ -301,27 +304,24 @@ async function getGenericFileIcon(mime: string): Promise<string> {
     case 'application/vnd.rar':
     case 'application/x-rar-compressed':
     case 'application/x-tar':
-      color = '#F39C12'; char = 'Z'; break;
+      color = '#F39C12'; break;
     case 'application/x-elf':
     case 'application/x-executable':
     case 'application/x-sharedlib':
-      color = '#2C3E50'; char = '\u2699'; break;
-    default:                       color = '#7F8C8D'; char = '?'; break;
+      color = '#2C3E50'; break;
+    default:                                    color = '#7F8C8D'; break;
     }
   }
 
+  const { nativeImage } = await import('electron');
   const outPath = path.join(os.tmpdir(), `material3-generic-${Date.now()}.png`);
   try {
-    await execFileAsync('convert', [
-      '-size', '96x96',
-      `xc:${color}`,
-      '-fill', 'white',
-      '-font', 'DejaVu-Sans-Bold',
-      '-pointsize', '48',
-      '-gravity', 'center',
-      '-annotate', '0', char,
-      'png:' + outPath,
-    ]);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">
+      <rect width="96" height="96" fill="${color}"/>
+    </svg>`;
+    const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    const colored = nativeImage.createFromDataURL(dataUrl);
+    writeFileSync(outPath, colored.toPNG());
     if (existsSync(outPath)) return outPath;
   } catch { /* fall through */ }
   return getFallbackIcon();

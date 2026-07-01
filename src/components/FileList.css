@@ -1,57 +1,3 @@
-/* Base List Styles */
-.file-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-/* Grid Mode Styles */
-.file-list.grid {
-    display: grid;
-    /* Columns set inline dynamically */
-    grid-auto-rows: min-content;
-    gap: 16px;
-    padding: 16px;
-}
-
-.file-list.grid .file-list-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    padding: 16px 8px;
-    height: auto;
-    /* Let content define height */
-    text-align: center;
-    gap: 8px;
-}
-
-.file-list.grid .file-name {
-    white-space: normal;
-    /* Wrap text in grid */
-    word-break: break-word;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-align: center;
-    width: 100%;
-}
-
-.file-list.grid .file-size {
-    display: none;
-    /* Hide size in grid for cleaner look */
-}
-
-.file-list.grid .file-thumbnail {
-    width: 100% !important;
-    height: 100% !important;
-    /* Controlled by container font-size/px from inline style */
-    object-fit: contain;
-    /* Or cover, depending on pref */
-    border-radius: 8px;
-}
-
 .file-list-item {
     display: grid;
     grid-template-columns: 48px 1fr 100px;
@@ -183,4 +129,31 @@
     margin: 0;
     user-select: text;
     -webkit-user-select: text;
+}
+
+/* Rubber-band selection box */
+/* Prevent text selection during rubber-band drag */
+.file-list-container {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.selection-box {
+    background: color-mix(in srgb, var(--md-sys-color-primary) 15%, transparent);
+    border: 1px solid var(--md-sys-color-primary);
+    border-radius: 2px;
+    z-index: 100;
+}
+
+/* Folder drop target highlight */
+.file-list-item.drag-over {
+    background-color: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent) !important;
+    outline: 2px dashed var(--md-sys-color-primary);
+    outline-offset: -2px;
+}
+
+.file-list-item.drag-over .folder-icon {
+    color: var(--md-sys-color-primary);
+    transform: scale(1.1);
+    transition: transform 0.15s ease;
 }
