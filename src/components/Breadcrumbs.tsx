@@ -1,5 +1,6 @@
 import React from 'react';
 import './Breadcrumbs.css';
+import { Button } from './Button';
 import { Icon } from './Icon';
 
 interface BreadcrumbsProps {
@@ -27,13 +28,14 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ currentPath, onNavigat
         return (
           <React.Fragment key={path}>
             <span className="breadcrumb-separator">/</span>
-            <span
+            <Button
+              variant="text"
               onClick={() => onNavigate(path)}
               className="breadcrumb-item"
               style={{ fontWeight: i === parts.length - 1 ? 600 : 400 }}
             >
               {p}
-            </span>
+            </Button>
           </React.Fragment>
         )
       })}
