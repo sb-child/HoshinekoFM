@@ -267,6 +267,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
                 }
               }}
               onBlur={() => data.onRenameSubmit()}
+              onContextMenu={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
               onDoubleClick={(e) => e.stopPropagation()}
               style={{ flex: 1, minWidth: 0 }}
@@ -393,6 +394,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
                   }
                 }}
                 onBlur={() => data.onRenameSubmit()}
+                onContextMenu={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 onDoubleClick={(e) => e.stopPropagation()}
                 style={{
