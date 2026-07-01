@@ -1,13 +1,13 @@
 import { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } from 'electron';
 import path from 'path';
-import { promises as fs } from 'fs';
-import { writeFileSync, existsSync } from 'fs';
+import { promises as fs, writeFileSync } from 'fs';
 import url from 'url';
 import os from 'os';
 import { spawn, exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import dbus from 'dbus-next';
 import { setupPtyHandlers, setMainWindow, killAllPty } from './pty';
+import { detectMime, getThumbnail, getDragIcon, getCachedDragIconPath } from './fsUtils';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -98,13 +98,16 @@ ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
     const entries = await fs.readdir(targetPath, { withFileTypes: true });
     const results = await Promise.all(entries.map(async (entry) => {
       try {
-        const stats = await fs.stat(path.join(targetPath, entry.name));
+        const fullPath = path.join(targetPath, entry.name);
+        const stats = await fs.stat(fullPath);
+        const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
         return {
           name: entry.name,
-          path: path.join(targetPath, entry.name),
+          path: fullPath,
           isDirectory: entry.isDirectory(),
           size: stats.size,
-          mtime: stats.mtime
+          mtime: stats.mtime,
+          mime
         };
       } catch (e) {
         return null;
@@ -303,30 +306,21 @@ ipcMain.handle('dialog:open-file', async () => {
   return filePaths[0];
 });
 
-// Generate a 1×1 transparent PNG and cache it
-let _fallbackIconPath: string | null = null;
-function getFallbackIcon(): string {
-  if (_fallbackIconPath && existsSync(_fallbackIconPath)) return _fallbackIconPath;
-  // Minimal valid 1×1 transparent PNG
-  const png = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
-    'base64',
-  );
-  _fallbackIconPath = path.join(os.tmpdir(), 'material3-fallback-icon.png');
-  writeFileSync(_fallbackIconPath, png);
-  return _fallbackIconPath;
-}
-
-ipcMain.on('dnd:start', (event, filePath: string, iconPath?: string) => {
-  // startDrag requires a valid PNG path for the icon.
-  let resolvedIcon = iconPath || filePath;
-  const ext = path.extname(resolvedIcon).toLowerCase();
-  if (ext !== '.png' || !existsSync(resolvedIcon)) {
-    resolvedIcon = getFallbackIcon();
+ipcMain.on('cache:drag-icon', (_event, iconName: string, pngBase64: string) => {
+  const target = getCachedDragIconPath(iconName);
+  try {
+    const buf = Buffer.from(pngBase64, 'base64');
+    writeFileSync(target, buf);
+  } catch {
+    // Silently skip — fallback will be used
   }
+});
+
+ipcMain.on('dnd:start', async (event, filePath: string) => {
+  const icon = await getDragIcon(filePath);
   event.sender.startDrag({
     file: filePath,
-    icon: resolvedIcon
+    icon
   });
 });
 
@@ -577,10 +571,17 @@ ipcMain.handle('system:search', async (_, directory: string, query: string, opti
 // --- App Lifecycle ---
 
 app.whenReady().then(() => {
-  protocol.handle('media', (request) => {
+  protocol.handle('media', async (request) => {
     const filePath = request.url.slice('media://'.length);
-    // Decode URI component (handle spaces etc)
     const decodedPath = decodeURIComponent(filePath);
+
+    // Try to serve a cached/generated thumbnail (returns null for non-images)
+    const thumbPath = await getThumbnail(decodedPath, 256);
+    if (thumbPath) {
+      return net.fetch(url.pathToFileURL(thumbPath).toString());
+    }
+
+    // Not an image — serve the original file
     return net.fetch(url.pathToFileURL(decodedPath).toString());
   });
   createWindow();

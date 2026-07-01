@@ -29,7 +29,8 @@ export interface IElectronAPI {
     cdTerminal: (path: string) => Promise<void>;
     openFileDialog: () => Promise<string | null>;
     readFile: (path: string) => Promise<string | null>;
-    startDrag: (path: string, iconPath?: string) => void;
+    startDrag: (path: string) => void;
+    cacheDragIcon: (name: string, pngBase64: string) => void;
     getStartupPath: () => Promise<string | null>;
     search: (directory: string, query: string, options?: { type?: 'f' | 'd', minSize?: string, maxSize?: string }) => Promise<IFile[]>;
     getDirectorySize: (path: string) => Promise<number>;

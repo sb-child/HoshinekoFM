@@ -4,6 +4,7 @@ export interface IFile {
     isDirectory: boolean;
     size: number;
     mtime: Date;
+    mime: string | null;
 }
 
 export interface IFileSystemAPI {

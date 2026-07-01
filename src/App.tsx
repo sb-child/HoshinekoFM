@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { initDragIcons } from './utils/dragIconRenderer';
 import './index.css';
 import { ToastProvider } from './contexts/ToastContext';
 import { ClipboardProvider, useClipboard } from './contexts/ClipboardContext';
@@ -104,6 +105,8 @@ function AppContent() {
     // Check for startup args
     const init = async () => {
       if (window.electron) {
+        initDragIcons();
+
         const startupPath = await window.electron.getStartupPath();
         if (startupPath) {
           handleAddTab(startupPath);

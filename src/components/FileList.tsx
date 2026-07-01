@@ -41,50 +41,43 @@ const groupLocaleMap: Record<string, string> = {
 const tGroup = (groupName: string): string =>
   groupLocaleMap[groupName] || groupName;
 
-function getFileIcon(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  switch (ext) {
-  case "png":
-  case "jpg":
-  case "jpeg":
-  case "gif":
-  case "webp":
-  case "svg":
-  case "bmp":
-    return "image";
-  case "mp3":
-  case "wav":
-  case "flac":
-  case "ogg":
-    return "audio_file";
-  case "mp4":
-  case "mkv":
-  case "avi":
-  case "mov":
-    return "movie";
-  case "pdf":
-    return "picture_as_pdf";
-  case "txt":
-  case "md":
-  case "json":
-  case "conf":
-    return "article";
-  case "zip":
-  case "tar":
-  case "gz":
-  case "7z":
-  case "rar":
-    return "folder_zip";
-  default:
-    return "insert_drive_file";
+function getFileIconFromMime(
+  mime: string | null,
+  isDirectory: boolean,
+): string {
+  if (isDirectory) return "folder";
+  if (!mime) return "insert_drive_file";
+  const cat = mime.split("/")[0];
+  switch (cat) {
+    case "image":
+      return "image";
+    case "audio":
+      return "audio_file";
+    case "video":
+      return "movie";
+    case "text":
+      return "article";
+    case "inode":
+      return "folder";
   }
-}
-
-function isImage(filename: string): boolean {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  return ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(
-    ext || "",
-  );
+  switch (mime) {
+    case "application/pdf":
+      return "picture_as_pdf";
+    case "application/zip":
+    case "application/gzip":
+    case "application/x-bzip2":
+    case "application/x-xz":
+    case "application/x-7z-compressed":
+    case "application/vnd.rar":
+    case "application/x-rar-compressed":
+    case "application/x-tar":
+      return "folder_zip";
+    case "application/x-elf":
+    case "application/x-executable":
+    case "application/x-sharedlib":
+      return "terminal";
+  }
+  return "insert_drive_file";
 }
 
 function formatSize(bytes: number) {
@@ -166,7 +159,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
       <div
         style={{
           ...style,
-          padding: "24px 24px 8px",
+          padding: "20px 2px 8px",
           fontWeight: 500,
           color: "var(--md-sys-color-primary)",
           borderBottom: "1px solid var(--md-sys-color-outline-variant)",
@@ -181,7 +174,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
   if (item.kind === "file") {
     const { file } = item;
     const isSelected = data.selectedFiles.has(file.path);
-    const isImg = isImage(file.name);
+    const isImg = file.mime?.startsWith("image/") ?? false;
     const hasFailed = data.failedImages.has(file.path);
 
     return (
@@ -220,7 +213,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
           onDragStart={(e) => {
             e.preventDefault();
             if (window.electron?.startDrag) {
-              window.electron.startDrag(file.path, file.path);
+              window.electron.startDrag(file.path);
             }
           }}
           tabIndex={0}
@@ -251,7 +244,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             )}
             {(!isImg || hasFailed) && (
               <Icon
-                name={file.isDirectory ? "folder" : getFileIcon(file.name)}
+                name={getFileIconFromMime(file.mime, file.isDirectory)}
                 filled={data.filledIcons}
                 className={file.isDirectory ? "folder-icon" : "doc-icon"}
                 style={{ fontSize: `${data.iconSize}px` }}
@@ -295,7 +288,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
     >
       {files.map((file) => {
         const isSelected = data.selectedFiles.has(file.path);
-        const isImg = isImage(file.name);
+        const isImg = file.mime?.startsWith("image/") ?? false;
         const hasFailed = data.failedImages.has(file.path);
         return (
           <div
@@ -320,7 +313,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             onDragStart={(e) => {
               e.preventDefault();
               if (window.electron?.startDrag) {
-                window.electron.startDrag(file.path, file.path);
+                window.electron.startDrag(file.path);
               }
             }}
             tabIndex={0}
@@ -366,7 +359,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
               )}
               {(!isImg || hasFailed) && (
                 <Icon
-                  name={file.isDirectory ? "folder" : getFileIcon(file.name)}
+                  name={getFileIconFromMime(file.mime, file.isDirectory)}
                   filled={data.filledIcons}
                   className={file.isDirectory ? "folder-icon" : "doc-icon"}
                   style={{ fontSize: `${data.iconSize}px` }}

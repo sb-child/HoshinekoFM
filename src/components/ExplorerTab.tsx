@@ -43,9 +43,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     const newItem: IFile = {
       name,
       path,
-      isDirectory: true, // Assumed if navigating to it
+      isDirectory: true,
       size: 0,
-      mtime: new Date()
+      mtime: new Date(),
+      mime: null
     };
 
     setRecentFiles(prev => {
@@ -296,7 +297,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       path: currentPath,
       isDirectory: true,
       size: 0,
-      mtime: new Date()
+      mtime: new Date(),
+      mime: null
     };
 
     // 拦截全局右键事件总线，重新渲染自定义菜单项目列表

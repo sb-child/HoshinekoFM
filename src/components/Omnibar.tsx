@@ -78,13 +78,9 @@ export const Omnibar: React.FC<OmnibarProps> = ({ currentPath, onNavigate, onSea
           />
         </div>
       ) : (
-        <div
-          className="omnibar-breadcrumbs"
-          onClick={() => setIsEditing(true)}
-          title="Click to edit path or search"
-        >
+        <div className="omnibar-breadcrumbs">
           <Breadcrumbs currentPath={currentPath} onNavigate={onNavigate} />
-          <div className="omnibar-trigger">
+          <div className="omnibar-trigger" onClick={() => setIsEditing(true)} title="Click to edit path or search">
             <Icon name="edit" className="edit-icon" />
           </div>
         </div>
