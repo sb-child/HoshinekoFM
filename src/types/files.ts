@@ -12,6 +12,7 @@ export interface IFile {
     devicePath?: string;
     isMountable?: boolean;
     parentDisk?: string;
+    isExternal?: boolean;
 }
 
 export interface AllDevice {

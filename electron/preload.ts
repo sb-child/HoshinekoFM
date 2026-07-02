@@ -59,5 +59,13 @@ contextBridge.exposeInMainWorld('electron', {
     const handler = (_: any, dir: string) => callback(dir);
     ipcRenderer.on('fs:dir-changed', handler);
     return () => ipcRenderer.removeListener('fs:dir-changed', handler);
-  }
+  },
+
+  // Device event push
+  onDeviceChange: (callback: (devices: any[]) => void) => {
+    const handler = (_: any, devices: any[]) => callback(devices);
+    ipcRenderer.on('system:devices-changed', handler);
+    return () => ipcRenderer.removeListener('system:devices-changed', handler);
+  },
+  hasDeviceWatcher: () => ipcRenderer.invoke('system:has-device-watcher'),
 });

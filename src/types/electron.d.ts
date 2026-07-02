@@ -58,6 +58,10 @@ export interface IElectronAPI {
     watchDirectory: (dir: string) => Promise<void>;
     unwatchDirectory: (dir: string) => Promise<void>;
     onDirChanged: (callback: (dir: string) => void) => () => void;
+
+    // Device event push
+    onDeviceChange: (callback: (devices: AllDevice[]) => void) => () => void;
+    hasDeviceWatcher: () => Promise<boolean>;
 }
 
 declare global {

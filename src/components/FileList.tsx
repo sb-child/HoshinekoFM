@@ -821,8 +821,11 @@ export const FileList: React.FC<FileListProps> = ({
   // Scroll to file when scrollToFileName changes and files are loaded
   const prevScrollTargetRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!scrollToFileName || scrollToFileName === prevScrollTargetRef.current) return;
-    prevScrollTargetRef.current = scrollToFileName;
+    if (!scrollToFileName) return;
+
+    const scrollKey = scrollToFileName + '|' + (currentPath || '');
+    if (scrollKey === prevScrollTargetRef.current) return;
+    prevScrollTargetRef.current = scrollKey;
 
     const idx = files.findIndex(f => f.name === scrollToFileName);
     if (idx === -1) return;
@@ -861,7 +864,7 @@ export const FileList: React.FC<FileListProps> = ({
     if (targetFile && onSelect) {
       onSelect(targetFile, false, false);
     }
-  }, [scrollToFileName, files, viewMode, iconSize, groupingEnabled, onSelect]);
+  }, [scrollToFileName, files, viewMode, iconSize, groupingEnabled, onSelect, currentPath]);
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {

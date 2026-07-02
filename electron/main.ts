@@ -133,7 +133,7 @@ async function getMountMap(): Promise<Map<string, { source: string; fstype: stri
 
 async function listDirectoryContents(targetPath: string): Promise<{
   name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
-  symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string;
+  symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean;
 }[]> {
   const entries = await fs.readdir(targetPath, { withFileTypes: true });
   const results = await Promise.all(entries.map(async (entry) => {
@@ -154,17 +154,35 @@ async function listDirectoryContents(targetPath: string): Promise<{
         else mime = 'inode/socket';
         let isMountable: boolean | undefined;
         let parentDisk: string | undefined;
+        let isExternal: boolean | undefined;
         if (isBlock) {
           const hasPartition = await fs.access(`/sys/class/block/${entry.name}/partition`).then(() => true).catch(() => false);
           const hasDm = await fs.access(`/sys/class/block/${entry.name}/dm/`).then(() => true).catch(() => false);
           isMountable = hasPartition || hasDm;
+
+          let diskNameForExternal = entry.name;
           if (hasPartition) {
             try {
               const linkTarget = await fs.readlink(`/sys/class/block/${entry.name}`);
-              const parentName = linkTarget.split('/').filter(Boolean).pop();
-              if (parentName && parentName !== entry.name) {
-                parentDisk = `/dev/${parentName}`;
+              const segments = linkTarget.split('/').filter(Boolean);
+              if (segments.length >= 2) {
+                const parentName = segments[segments.length - 2];
+                if (parentName && parentName !== entry.name) {
+                  parentDisk = `/dev/${parentName}`;
+                  diskNameForExternal = parentName;
+                }
               }
+            } catch {}
+          }
+
+          try {
+            const removable = await fs.readFile(`/sys/block/${diskNameForExternal}/removable`, 'utf-8');
+            isExternal = removable.trim() === '1';
+          } catch {}
+          if (!isExternal) {
+            try {
+              const link = await fs.readlink(`/sys/block/${diskNameForExternal}`);
+              isExternal = link.includes('usb');
             } catch {}
           }
         }
@@ -178,6 +196,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
           devicePath: isBlock ? fullPath : undefined,
           isMountable,
           parentDisk,
+          isExternal,
         };
       }
 
@@ -246,7 +265,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
   }));
   const filtered = results.filter(r => r !== null) as {
     name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
-    symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string;
+    symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean;
   }[];
 
   const mountMap = await getMountMap();
@@ -576,7 +595,7 @@ ipcMain.handle('system:get-storage-usage', async () => {
   }
 });
 
-ipcMain.handle('system:get-all-devices', async () => {
+async function getAllDevices(): Promise<any[]> {
   try {
     const { stdout } = await execAsync('lsblk --json -o NAME,KNAME,LABEL,MOUNTPOINT,SIZE,TYPE,TRAN,RM,FSTYPE,MODEL,HOTPLUG,RO');
     const data = JSON.parse(stdout);
@@ -603,7 +622,53 @@ ipcMain.handle('system:get-all-devices', async () => {
     console.error('Failed to get all devices', e);
     return [];
   }
-});
+}
+
+ipcMain.handle('system:get-all-devices', async () => getAllDevices());
+
+// --- Device Monitoring ---
+
+let udisks2Available = false;
+let deviceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let previousExternalDevicesJson = '';
+
+function scheduleExternalDevicesRefresh() {
+  if (deviceRefreshTimer) clearTimeout(deviceRefreshTimer);
+  deviceRefreshTimer = setTimeout(async () => {
+    deviceRefreshTimer = null;
+    try {
+      const allDevices = await getAllDevices();
+      const externalDevices = allDevices.filter(d => d.isExternal);
+      const json = JSON.stringify(externalDevices);
+      if (json !== previousExternalDevicesJson) {
+        previousExternalDevicesJson = json;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('system:devices-changed', externalDevices);
+        }
+      }
+    } catch (e) {
+      console.error('Device refresh error:', e);
+    }
+  }, 300);
+}
+
+async function setupUdisks2Monitor() {
+  try {
+    const bus = dbus.systemBus();
+    const obj = await bus.getProxyObject('org.freedesktop.UDisks2', '/org/freedesktop/UDisks2');
+    const objectManager = obj.getInterface('org.freedesktop.DBus.ObjectManager');
+    udisks2Available = true;
+    console.log('udisks2 monitor active');
+
+    objectManager.on('InterfacesAdded', scheduleExternalDevicesRefresh);
+    objectManager.on('InterfacesRemoved', scheduleExternalDevicesRefresh);
+  } catch (e) {
+    console.warn('udisks2 not available, device polling will be used');
+    udisks2Available = false;
+  }
+}
+
+ipcMain.handle('system:has-device-watcher', async () => udisks2Available);
 
 ipcMain.handle('system:get-mount-map', async () => {
   const map = await getMountMap();
@@ -884,6 +949,7 @@ app.whenReady().then(() => {
     return net.fetch(url.pathToFileURL(decodedPath).toString());
   });
   createWindow();
+  setupUdisks2Monitor();
 });
 
 app.on('window-all-closed', () => {

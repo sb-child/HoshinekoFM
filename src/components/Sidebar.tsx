@@ -15,20 +15,20 @@ interface SidebarProps {
 }
 
 const isExternalDevice = (d: AllDevice): boolean =>
-  d.hotplug || d.rm || d.tran === 'usb';
+  d.hotplug || d.rm || d.tran === "usb";
 
 const getDeviceIcon = (d: AllDevice): string => {
-  if (d.tran === 'usb') return 'usb';
-  if (d.rm) return 'sd_card';
-  if (d.type === 'crypt') return 'encrypted';
-  return 'hard_drive';
+  if (d.tran === "usb") return "usb";
+  if (d.rm) return "sd_card";
+  if (d.type === "crypt") return "encrypted";
+  return "hard_drive";
 };
 
 const getDiskIcon = (d: AllDevice): string => {
-  if (d.tran === 'usb') return 'usb';
-  if (d.rm) return 'sd_card';
-  if (d.tran === 'nvme') return 'memory';
-  return 'hard_drive';
+  if (d.tran === "usb") return "usb";
+  if (d.rm) return "sd_card";
+  if (d.tran === "nvme") return "memory";
+  return "hard_drive";
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -51,15 +51,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   useEffect(() => {
-    const fetchDevices = async () => {
-      if (window.electron.getAllDevices) {
-        const d = await window.electron.getAllDevices();
-        setDevices(d);
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let cleanup: (() => void) | null = null;
+
+    const init = async () => {
+      if (!window.electron.getAllDevices) return;
+      const d = await window.electron.getAllDevices();
+      setDevices(d);
+
+      const hasWatcher = await window.electron.hasDeviceWatcher();
+      if (hasWatcher) {
+        cleanup = window.electron.onDeviceChange(setDevices);
+      } else {
+        interval = setInterval(async () => {
+          const d = await window.electron.getAllDevices();
+          setDevices(d);
+        }, 5000);
       }
     };
-    fetchDevices();
-    const interval = setInterval(fetchDevices, 5000);
-    return () => clearInterval(interval);
+    init();
+
+    return () => {
+      if (interval) clearInterval(interval);
+      if (cleanup) cleanup();
+    };
   }, []);
 
   const externalDisks = devices.filter(isExternalDevice);
@@ -67,7 +82,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handlePartitionClick = (device: AllDevice) => {
     if (device.mounted && device.mountpoint) {
       onNavigate(device.mountpoint);
-    } else if (onDeviceMount && (device.type === 'part' || (device.type === 'disk' && device.fstype))) {
+    } else if (
+      onDeviceMount &&
+      (device.type === "part" || (device.type === "disk" && device.fstype))
+    ) {
       onDeviceMount(device.devicePath);
     }
   };
@@ -83,32 +101,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const parts = [d.label || d.name];
     if (d.fstype) parts.push(d.fstype);
     if (d.size) parts.push(d.size);
-    const base = parts.join(' · ');
+    const base = parts.join(" · ");
     if (d.mounted && d.mountpoint) {
-      return base + '\n→ ' + d.mountpoint;
+      return base + "\n" + d.devicePath + "\n→ " + d.mountpoint;
     }
-    return base;
+    return base + "\n" + d.devicePath;
   };
 
   return (
     <aside className="sidebar">
       <div className="sidebar-section">
-        <h3 className="sidebar-title">{t('sidebar.places')}</h3>
+        <h3 className="sidebar-title">{t("sidebar.places")}</h3>
         <div className="sidebar-list">
           <button
-            className={`sidebar-item ${currentPath === 'app://dashboard' ? 'active' : ''}`}
-            onClick={() => onNavigate('app://dashboard')}
+            className={`sidebar-item ${currentPath === "app://dashboard" ? "active" : ""}`}
+            onClick={() => onNavigate("app://dashboard")}
           >
-            <Icon name="dashboard" className="sidebar-icon" filled={currentPath === 'app://dashboard'} />
-            <span className="sidebar-label">{t('sidebar.dashboard')}</span>
+            <Icon
+              name="dashboard"
+              className="sidebar-icon"
+              filled={currentPath === "app://dashboard"}
+            />
+            <span className="sidebar-label">{t("sidebar.dashboard")}</span>
           </button>
           {places.map((place) => (
             <button
               key={place.path}
-              className={`sidebar-item ${currentPath === place.path ? 'active' : ''}`}
+              className={`sidebar-item ${currentPath === place.path ? "active" : ""}`}
               onClick={() => onNavigate(place.path)}
             >
-              <Icon name={getPlaceIcon(place.name)} className="sidebar-icon" filled={currentPath.startsWith(place.path)} />
+              <Icon
+                name={getPlaceIcon(place.name)}
+                className="sidebar-icon"
+                filled={currentPath.startsWith(place.path)}
+              />
               <span className="sidebar-label">{getPlaceLabel(place.name)}</span>
             </button>
           ))}
@@ -117,33 +143,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {externalDisks.length > 0 && (
         <div className="sidebar-section">
-          <h3 className="sidebar-title">{t('sidebar.devices')}</h3>
+          <h3 className="sidebar-title">{t("sidebar.devices")}</h3>
           <div className="sidebar-list">
             {externalDisks.map((disk) => (
               <div key={disk.name} className="sidebar-device-group">
                 {disk.children && disk.children.length > 0 ? (
                   <>
-                    <div className="sidebar-device-header" title={`${disk.model || disk.label || disk.name} · ${disk.devicePath}`}>
+                    <div
+                      className="sidebar-device-header"
+                      title={`${disk.model || disk.label || disk.name} · ${disk.devicePath}`}
+                    >
                       <Icon name={getDiskIcon(disk)} className="sidebar-icon" />
                       <span className="sidebar-label">
                         {disk.model || disk.label || disk.name}
                       </span>
                       <div style={{ flex: 1 }} />
-                      {isExternalDevice(disk) && disk.children?.every(part => !part.mounted) && (
-                        <IconButton
-                          variant="standard"
-                          onClick={(e) => handleEjectClick(e, disk)}
-                          className="sidebar-disk-eject"
-                          title={t('device.eject')}
-                        >
-                          <Icon name="eject" style={{ fontSize: '18px' }} />
-                        </IconButton>
-                      )}
+                      {isExternalDevice(disk) &&
+                        disk.children?.every((part) => !part.mounted) && (
+                          <IconButton
+                            variant="standard"
+                            onClick={(e) => handleEjectClick(e, disk)}
+                            className="sidebar-disk-eject"
+                            title={t("device.eject")}
+                          >
+                            <Icon name="eject" style={{ fontSize: "18px" }} />
+                          </IconButton>
+                        )}
                     </div>
                     {disk.children.map((part) => (
                       <div
                         key={part.name}
-                        className={`sidebar-item sidebar-partition ${!part.mounted ? 'unmounted' : ''} ${part.mounted && part.mountpoint && currentPath.startsWith(part.mountpoint) ? 'active' : ''}`}
+                        className={`sidebar-item sidebar-partition ${!part.mounted ? "unmounted" : ""} ${part.mounted && part.mountpoint && currentPath.startsWith(part.mountpoint) ? "active" : ""}`}
                         role="button"
                         tabIndex={0}
                         onClick={() => handlePartitionClick(part)}
@@ -152,21 +182,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           onDeviceContextMenu?.(e, part);
                         }}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
+                          if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             handlePartitionClick(part);
                           }
                         }}
                         title={getDeviceTitle(part)}
                       >
-                        <Icon name={getDeviceIcon(part)} className="sidebar-icon" />
+                        <Icon
+                          name={getDeviceIcon(part)}
+                          className="sidebar-icon"
+                        />
                         <div className="sidebar-partition-info">
-                          <span className="sidebar-label">{part.label || part.name}</span>
+                          <span className="sidebar-label">
+                            {part.label || part.name}
+                          </span>
                           {part.mounted && part.mountpoint ? (
-                            <span className="sidebar-subtitle">{part.mountpoint}</span>
+                            <span className="sidebar-subtitle">
+                              {part.mountpoint}
+                            </span>
                           ) : (
                             <span className="sidebar-subtitle">
-                              {part.fstype ? `${part.fstype} · ` : ''}{part.size}
+                              {part.fstype ? `${part.fstype} · ` : ""}
+                              {part.size}
                             </span>
                           )}
                         </div>
@@ -178,9 +216,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               onDeviceUnmount?.(part.devicePath);
                             }}
                             className="sidebar-eject-btn"
-                            title={t('device.unmount')}
+                            title={t("device.unmount")}
                           >
-                            <Icon name="eject" style={{ fontSize: '18px' }} />
+                            <Icon name="eject" style={{ fontSize: "18px" }} />
                           </IconButton>
                         )}
                       </div>
@@ -188,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </>
                 ) : (
                   <div
-                    className={`sidebar-item sidebar-partition ${!disk.mounted ? 'unmounted' : ''} ${disk.mounted && disk.mountpoint && currentPath.startsWith(disk.mountpoint) ? 'active' : ''}`}
+                    className={`sidebar-item sidebar-partition ${!disk.mounted ? "unmounted" : ""} ${disk.mounted && disk.mountpoint && currentPath.startsWith(disk.mountpoint) ? "active" : ""}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => handlePartitionClick(disk)}
@@ -197,7 +235,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onDeviceContextMenu?.(e, disk);
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
+                      if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         handlePartitionClick(disk);
                       }
@@ -206,16 +244,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   >
                     <Icon name={getDeviceIcon(disk)} className="sidebar-icon" />
                     <div className="sidebar-partition-info">
-                      <span className="sidebar-label">{disk.label || disk.name}</span>
+                      <span className="sidebar-label">
+                        {disk.label || disk.name}
+                      </span>
                       {disk.mounted && disk.mountpoint ? (
-                        <span className="sidebar-subtitle">{disk.mountpoint}</span>
+                        <span className="sidebar-subtitle">
+                          {disk.mountpoint}
+                        </span>
                       ) : (
                         <span className="sidebar-subtitle">
-                          {disk.fstype ? `${disk.fstype} · ` : ''}{disk.size}
+                          {disk.fstype ? `${disk.fstype} · ` : ""}
+                          {disk.size}
                         </span>
                       )}
                     </div>
-                    <div style={{ display: 'flex', gap: '4px' }}>
+                    <div style={{ display: "flex", gap: "4px" }}>
                       {disk.mounted && (
                         <IconButton
                           variant="standard"
@@ -224,9 +267,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onDeviceUnmount?.(disk.devicePath);
                           }}
                           className="sidebar-eject-btn"
-                          title={t('device.unmount')}
+                          title={t("device.unmount")}
                         >
-                          <Icon name="eject" style={{ fontSize: '18px' }} />
+                          <Icon name="eject" style={{ fontSize: "18px" }} />
                         </IconButton>
                       )}
                       {isExternalDevice(disk) && (
@@ -234,9 +277,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           variant="standard"
                           onClick={(e) => handleEjectClick(e, disk)}
                           className="sidebar-disk-eject"
-                          title={t('device.eject')}
+                          title={t("device.eject")}
                         >
-                          <Icon name="power_settings_new" style={{ fontSize: '18px' }} />
+                          <Icon
+                            name="power_settings_new"
+                            style={{ fontSize: "18px" }}
+                          />
                         </IconButton>
                       )}
                     </div>
@@ -253,26 +299,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
 function getPlaceIcon(name: string): string {
   switch (name) {
-  case 'Home': return 'home';
-  case 'Desktop': return 'desktop_windows';
-  case 'Documents': return 'description';
-  case 'Downloads': return 'download';
-  case 'Music': return 'music_note';
-  case 'Pictures': return 'image';
-  case 'Videos': return 'movie';
-  default: return 'folder';
+    case "Home":
+      return "home";
+    case "Desktop":
+      return "desktop_windows";
+    case "Documents":
+      return "description";
+    case "Downloads":
+      return "download";
+    case "Music":
+      return "music_note";
+    case "Pictures":
+      return "image";
+    case "Videos":
+      return "movie";
+    default:
+      return "folder";
   }
 }
 
 function getPlaceLabel(name: string): string {
   const map: Record<string, string> = {
-    'Home': t('sidebar.home'),
-    'Desktop': t('sidebar.desktop'),
-    'Documents': t('sidebar.documents'),
-    'Downloads': t('sidebar.downloads'),
-    'Music': t('sidebar.music'),
-    'Pictures': t('sidebar.pictures'),
-    'Videos': t('sidebar.videos'),
+    Home: t("sidebar.home"),
+    Desktop: t("sidebar.desktop"),
+    Documents: t("sidebar.documents"),
+    Downloads: t("sidebar.downloads"),
+    Music: t("sidebar.music"),
+    Pictures: t("sidebar.pictures"),
+    Videos: t("sidebar.videos"),
   };
   return map[name] || name;
 }

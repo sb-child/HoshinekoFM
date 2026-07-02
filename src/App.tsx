@@ -283,7 +283,7 @@ function AppContent() {
     const folderName = path.split("/").pop() || path;
     setTabs((prev) =>
       prev.map((t) => {
-        if (t.id === id) return { ...t, path, title: folderName, pendingSelectFile: undefined };
+        if (t.id === id) return { ...t, path, title: folderName };
         return t;
       }),
     );
@@ -483,7 +483,8 @@ function AppContent() {
               handleSidebarNavigate(item.symlinkTarget!, targetFileName);
             } else {
               const parent = item.symlinkTarget!.substring(0, item.symlinkTarget!.lastIndexOf("/"));
-              handleSidebarNavigate(parent || "/");
+              const targetFileName = item.symlinkTarget!.split("/").pop() || "";
+              handleSidebarNavigate(parent || "/", targetFileName);
             }
             setContextMenu(null);
           },
@@ -507,36 +508,38 @@ function AppContent() {
           });
         }
       }
-      if (item.mime === 'inode/blockdevice' && item.isMountable) {
+      if (item.mime === 'inode/blockdevice' && item.isExternal) {
         const devPath = item.devicePath || item.path;
-        // Don't show unmount for root filesystem
-        const isRootSource = item.isMountpoint && item.mountSource === '/';
-        if (item.isMountpoint && item.mountSource && !isRootSource) {
-          specialItems.push({
-            label: t("device.unmount"),
-            icon: "eject",
-            action: () => {
-              handleDeviceUnmount(devPath);
-              setContextMenu(null);
-            },
-          });
-        } else if (!item.isMountpoint) {
-          specialItems.push({
-            label: t("device.mount"),
-            icon: "hard_drive",
-            action: () => {
-              handleDeviceMount(devPath);
-              setContextMenu(null);
-            },
-          });
+        // Mount/unmount for mountable devices (partitions, dm)
+        if (item.isMountable) {
+          const isRootSource = item.isMountpoint && item.mountSource === '/';
+          if (item.isMountpoint && item.mountSource && !isRootSource) {
+            specialItems.push({
+              label: t("device.unmount"),
+              icon: "eject",
+              action: () => {
+                handleDeviceUnmount(devPath);
+                setContextMenu(null);
+              },
+            });
+          } else if (!item.isMountpoint) {
+            specialItems.push({
+              label: t("device.mount"),
+              icon: "hard_drive",
+              action: () => {
+                handleDeviceMount(devPath);
+                setContextMenu(null);
+              },
+            });
+          }
         }
-        // Eject on parent disk
-        if (item.parentDisk) {
+        // Eject for disk-level external devices (e.g. /dev/sda, not partitions)
+        if (!item.parentDisk && !item.isMountable) {
           specialItems.push({
             label: t("device.eject"),
             icon: "power_settings_new",
             action: () => {
-              handleDeviceEject(item.parentDisk!);
+              handleDeviceEject(devPath);
               setContextMenu(null);
             },
           });
@@ -819,6 +822,14 @@ function AppContent() {
             items={(() => {
               const d = deviceContextMenu.device;
               const items: ContextMenuItem[] = [];
+              items.push({
+                label: t("device.go_to_source"),
+                icon: "hard_drive",
+                action: () => {
+                  handleSidebarNavigate("/dev", d.name);
+                  setDeviceContextMenu(null);
+                },
+              });
               if (d.mounted) {
                 items.push({
                   label: t("device.unmount"),
@@ -828,7 +839,7 @@ function AppContent() {
                     setDeviceContextMenu(null);
                   },
                 });
-                if (d.hotplug || d.rm || d.tran === 'usb') {
+                if (d.type !== 'part' && (d.hotplug || d.rm || d.tran === 'usb')) {
                   items.push({
                     label: t("device.eject"),
                     icon: "power_settings_new",

@@ -223,7 +223,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const handleNavigate = async (file: IFile) => {
     if (file.isDirectory) {
       loadPath(file.path);
-    } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
+    } else if (file.mime === 'inode/blockdevice' && file.isMountable && file.isExternal) {
       const devPath = file.devicePath || file.path;
       if (file.isMountpoint && file.mountSource) {
         loadPath(file.mountSource);
@@ -462,11 +462,13 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, []);
 
-  // Clear selection on path change
+  // Clear selection on path change (unless we have a pending scroll-to-file target)
   useEffect(() => {
-    setSelectedFiles(new Set());
-    setLastSelectedPath(null);
-  }, [currentPath]);
+    if (!scrollToFileName) {
+      setSelectedFiles(new Set());
+      setLastSelectedPath(null);
+    }
+  }, [currentPath, scrollToFileName]);
 
   const handleSelect = (file: IFile, toggle: boolean, range: boolean) => {
     const newSelection = new Set(toggle ? selectedFiles : []);
