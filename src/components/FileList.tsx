@@ -17,7 +17,11 @@ interface FileListProps {
   onContextMenu?: (e: React.MouseEvent, file: IFile) => void;
   onBackgroundContextMenu?: (e: React.MouseEvent) => void;
   onDeselectAll?: () => void;
-  onDropOnFolder?: (files: IFile[], targetPath: string, operation: "move" | "copy") => void;
+  onDropOnFolder?: (
+    files: IFile[],
+    targetPath: string,
+    operation: "move" | "copy",
+  ) => void;
   onSetSelected?: (paths: Set<string>) => void;
   viewMode: "grid" | "list";
   iconSize: number;
@@ -58,33 +62,33 @@ function getFileIconFromMime(
   if (!mime) return "insert_drive_file";
   const cat = mime.split("/")[0];
   switch (cat) {
-  case "image":
-    return "image";
-  case "audio":
-    return "audio_file";
-  case "video":
-    return "movie";
-  case "text":
-    return "article";
-  case "inode":
-    return "folder";
+    case "image":
+      return "image";
+    case "audio":
+      return "audio_file";
+    case "video":
+      return "movie";
+    case "text":
+      return "article";
+    case "inode":
+      return "folder";
   }
   switch (mime) {
-  case "application/pdf":
-    return "picture_as_pdf";
-  case "application/zip":
-  case "application/gzip":
-  case "application/x-bzip2":
-  case "application/x-xz":
-  case "application/x-7z-compressed":
-  case "application/vnd.rar":
-  case "application/x-rar-compressed":
-  case "application/x-tar":
-    return "folder_zip";
-  case "application/x-elf":
-  case "application/x-executable":
-  case "application/x-sharedlib":
-    return "terminal";
+    case "application/pdf":
+      return "picture_as_pdf";
+    case "application/zip":
+    case "application/gzip":
+    case "application/x-bzip2":
+    case "application/x-xz":
+    case "application/x-7z-compressed":
+    case "application/vnd.rar":
+    case "application/x-rar-compressed":
+    case "application/x-tar":
+      return "folder_zip";
+    case "application/x-elf":
+    case "application/x-executable":
+    case "application/x-sharedlib":
+      return "terminal";
   }
   return "insert_drive_file";
 }
@@ -171,37 +175,90 @@ const LIST_ROW_HEIGHT = (iconSize: number) => Math.max(52, iconSize + 16) + 8;
 const GRID_ROW_HEIGHT = (iconSize: number) => iconSize + 38;
 const HEADER_HEIGHT = 48;
 
+interface ItemBox {
+  path: string;
+  top: number;
+  height: number;
+  left: number;
+  width: number;
+}
+
+function computeItemBoxes(
+  items: ListItem[],
+  columns: number,
+  containerWidth: number,
+  iconSize: number,
+): ItemBox[] {
+  const boxes: ItemBox[] = [];
+  let y = 0;
+  for (const item of items) {
+    if (item.kind === "header") {
+      y += HEADER_HEIGHT;
+    } else if (item.kind === "file") {
+      boxes.push({
+        path: item.file.path,
+        top: y,
+        height: LIST_ROW_HEIGHT(iconSize),
+        left: 0,
+        width: containerWidth,
+      });
+      y += LIST_ROW_HEIGHT(iconSize);
+    } else {
+      const h = GRID_ROW_HEIGHT(iconSize);
+      const cw = containerWidth / item.files.length;
+      for (let gi = 0; gi < item.files.length; gi++) {
+        boxes.push({
+          path: item.files[gi].path,
+          top: y,
+          height: h,
+          left: gi * cw,
+          width: cw,
+        });
+      }
+      y += h;
+    }
+  }
+  return boxes;
+}
+
 function Row({ index, style, ...data }: RowComponentProps<RowData>) {
   const item = data.items[index];
 
   const renameInputRef = useCallback((el: HTMLInputElement | null) => {
     if (!el) return;
-    el.addEventListener('dragstart', (e) => {
-      e.stopImmediatePropagation();
-    }, true);
+    el.addEventListener(
+      "dragstart",
+      (e) => {
+        e.stopImmediatePropagation();
+      },
+      true,
+    );
   }, []);
 
-  const triggerRipple = useCallback((e: React.MouseEvent, el: HTMLElement | null) => {
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height) * 2;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  const triggerRipple = useCallback(
+    (e: React.MouseEvent, el: HTMLElement | null) => {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) * 2;
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
 
-    const ripple = document.createElement('span');
-    ripple.className = 'file-ripple';
-    ripple.style.width = `${size}px`;
-    ripple.style.height = `${size}px`;
-    ripple.style.left = `${x}px`;
-    ripple.style.top = `${y}px`;
-    el.appendChild(ripple);
+      const ripple = document.createElement("span");
+      ripple.className = "file-ripple";
+      ripple.style.width = `${size}px`;
+      ripple.style.height = `${size}px`;
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+      el.appendChild(ripple);
 
-    const cleanup = () => {
-      ripple.removeEventListener('animationend', cleanup);
-      ripple.remove();
-    };
-    ripple.addEventListener('animationend', cleanup);
-  }, []);
+      const cleanup = () => {
+        ripple.removeEventListener("animationend", cleanup);
+        ripple.remove();
+      };
+      ripple.addEventListener("animationend", cleanup);
+    },
+    [],
+  );
 
   if (item.kind === "header") {
     return (
@@ -235,11 +292,11 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             display: "flex",
             alignItems: "center",
             gap: "16px",
-            margin: "4px 8px",
+            margin: "8px 8px",
             borderRadius: "8px",
             cursor: "pointer",
             boxSizing: "border-box",
-            height: `calc(100% - 4px)`,
+            height: `calc(100% - 8px)`,
           }}
           className={`file-list-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
           onMouseDown={(e) => {
@@ -249,16 +306,23 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
           onClick={(e) => data.onItemClick(e, file)}
           onDoubleClick={() => data.onItemDoubleClick(file)}
           onContextMenu={(e) => {
-            if ((e.target as HTMLElement).closest?.('.file-rename-input')) return;
+            if ((e.target as HTMLElement).closest?.(".file-rename-input"))
+              return;
             e.preventDefault();
             e.stopPropagation();
             data.onContextMenu?.(e, file);
           }}
           draggable={!isRenaming}
           onDragStart={(e) => data.onFileDragStart(e, file)}
-          onDragOver={file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined}
-          onDragLeave={file.isDirectory ? () => data.onFolderDragLeave() : undefined}
-          onDrop={file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined}
+          onDragOver={
+            file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined
+          }
+          onDragLeave={
+            file.isDirectory ? () => data.onFolderDragLeave() : undefined
+          }
+          onDrop={
+            file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
+          }
           tabIndex={0}
           role="button"
         >
@@ -346,7 +410,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
         ...style,
         display: "grid",
         gridTemplateColumns: `repeat(${data.columns}, 1fr)`,
-        gap: "10px",
+        gap: "16px",
         padding: "4px 10px",
         boxSizing: "border-box",
         overflow: "hidden",
@@ -370,16 +434,25 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             onClick={(e) => data.onItemClick(e, file)}
             onDoubleClick={() => data.onItemDoubleClick(file)}
             onContextMenu={(e) => {
-              if ((e.target as HTMLElement).closest?.('.file-rename-input')) return;
+              if ((e.target as HTMLElement).closest?.(".file-rename-input"))
+                return;
               e.preventDefault();
               e.stopPropagation();
               data.onContextMenu?.(e, file);
             }}
             draggable={!isRenaming}
             onDragStart={(e) => data.onFileDragStart(e, file)}
-            onDragOver={file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined}
-            onDragLeave={file.isDirectory ? () => data.onFolderDragLeave() : undefined}
-            onDrop={file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined}
+            onDragOver={
+              file.isDirectory
+                ? (e) => data.onFolderDragOver(e, file)
+                : undefined
+            }
+            onDragLeave={
+              file.isDirectory ? () => data.onFolderDragLeave() : undefined
+            }
+            onDrop={
+              file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
+            }
             tabIndex={0}
             role="button"
             style={{
@@ -507,7 +580,10 @@ export const FileList: React.FC<FileListProps> = ({
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
 
   const [selectionBox, setSelectionBox] = useState<{
-    x: number; y: number; w: number; h: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
   } | null>(null);
 
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
@@ -517,12 +593,20 @@ export const FileList: React.FC<FileListProps> = ({
   // Selection state refs
   const isSelectingRef = useRef(false);
   const didSelectRef = useRef(false);
-  const selectStartRef = useRef<{ x: number; y: number } | null>(null);
-  const selectionBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const contentStartRef = useRef<{ x: number; y: number } | null>(null);
+  const contentEndRef = useRef<{ x: number; y: number } | null>(null);
+  const selectionBoxRef = useRef<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
   const autoScrollRafRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listImperativeRef = useListRef(null);
   const lastDragOverFolderRef = useRef<IFile | null>(null);
+  const itemBoxesRef = useRef<ItemBox[]>([]);
+  const lastScreenRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const { startDrag, endDrag, getDragState } = useDrag();
 
@@ -532,7 +616,8 @@ export const FileList: React.FC<FileListProps> = ({
       if (isSelectingRef.current) {
         isSelectingRef.current = false;
         selectionBoxRef.current = null;
-        selectStartRef.current = null;
+        contentStartRef.current = null;
+        contentEndRef.current = null;
         if (autoScrollRafRef.current !== null) {
           cancelAnimationFrame(autoScrollRafRef.current);
           autoScrollRafRef.current = null;
@@ -540,9 +625,9 @@ export const FileList: React.FC<FileListProps> = ({
         setSelectionBox(null);
       }
     };
-    document.addEventListener('mouseup', handleDocMouseUp);
+    document.addEventListener("mouseup", handleDocMouseUp);
     return () => {
-      document.removeEventListener('mouseup', handleDocMouseUp);
+      document.removeEventListener("mouseup", handleDocMouseUp);
     };
   }, []);
 
@@ -556,47 +641,6 @@ export const FileList: React.FC<FileListProps> = ({
       }
     };
   }, []);
-
-  const getScrollElement = useCallback((): HTMLDivElement | null => {
-    const el = listImperativeRef.current?.element as HTMLDivElement | undefined;
-    if (!el) {
-      console.warn("[selbox] listImperativeRef.element is null/undefined");
-      if (containerRef.current) {
-        const allDivs = containerRef.current.querySelectorAll('div');
-        for (const div of allDivs) {
-          const cs = window.getComputedStyle(div);
-          if (cs.overflow === 'auto' || cs.overflow === 'scroll' ||
-              cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
-            console.warn("[selbox] fallback found div with overflow, classes:", div.className, "scrollTop:", div.scrollTop);
-            return div as HTMLDivElement;
-          }
-        }
-      }
-      return null;
-    }
-    console.warn("[selbox] listImperativeRef.element:", el.tagName,
-      "classes:", el.className,
-      "overflowY:", window.getComputedStyle(el).overflowY,
-      "scrollTop:", el.scrollTop);
-    // Try: is the element itself scrollable?
-    const cs = window.getComputedStyle(el);
-    if (cs.overflow === 'auto' || cs.overflow === 'scroll' ||
-        cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
-      console.warn("[selbox] element itself is scrollable (scrollTop:", el.scrollTop, ")");
-      return el;
-    }
-    // Try firstElementChild
-    const inner = el.firstElementChild;
-    if (inner instanceof HTMLDivElement) {
-      const ics = window.getComputedStyle(inner);
-      console.warn("[selbox] firstElementChild:", inner.tagName,
-        "classes:", inner.className,
-        "overflowY:", ics.overflowY,
-        "scrollTop:", inner.scrollTop);
-      return inner;
-    }
-    return el;
-  }, [listImperativeRef]);
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {
@@ -626,7 +670,10 @@ export const FileList: React.FC<FileListProps> = ({
 
       const now = Date.now();
 
-      if (lastDragRef.current?.path === file.path && now - lastDragRef.current.time < 100) {
+      if (
+        lastDragRef.current?.path === file.path &&
+        now - lastDragRef.current.time < 100
+      ) {
         lastDragRef.current = null;
         return;
       }
@@ -655,36 +702,45 @@ export const FileList: React.FC<FileListProps> = ({
   );
 
   // --- Drag start (HTML5 DnD for internal, native file drag for external) ---
-  const handleFileDragStart = useCallback((e: React.DragEvent, file: IFile) => {
-    console.warn("[drag] dragstart entered:", file.name);
+  const handleFileDragStart = useCallback(
+    (e: React.DragEvent, file: IFile) => {
+      console.warn("[drag] dragstart entered:", file.name);
 
-    lastDragRef.current = { path: file.path, time: Date.now() };
-    lastClickRef.current = null;
+      lastDragRef.current = { path: file.path, time: Date.now() };
+      lastClickRef.current = null;
 
-    const filesToDrag = selectedFiles.has(file.path)
-      ? files.filter((f) => selectedFiles.has(f.path))
-      : [file];
+      const filesToDrag = selectedFiles.has(file.path)
+        ? files.filter((f) => selectedFiles.has(f.path))
+        : [file];
 
-    _draggedPaths = new Set(filesToDrag.map(f => f.path));
-    startDrag(filesToDrag, currentPath || "");
-    lastDragOverFolderRef.current = null;
+      _draggedPaths = new Set(filesToDrag.map((f) => f.path));
+      startDrag(filesToDrag, currentPath || "");
+      lastDragOverFolderRef.current = null;
 
-    // HTML5 DnD for internal drops
-    e.dataTransfer.effectAllowed = "copyMove";
-    if (filesToDrag.length === 1) {
-      e.dataTransfer.setData('text/uri-list', 'file://' + filesToDrag[0].path);
-      e.dataTransfer.setData('text/plain', filesToDrag[0].path);
-    } else {
-      const uris = filesToDrag.map(f => 'file://' + f.path).join('\r\n');
-      e.dataTransfer.setData('text/uri-list', uris);
-      e.dataTransfer.setData('text/plain', filesToDrag.map(f => f.path).join('\n'));
-    }
+      // HTML5 DnD for internal drops
+      e.dataTransfer.effectAllowed = "copyMove";
+      if (filesToDrag.length === 1) {
+        e.dataTransfer.setData(
+          "text/uri-list",
+          "file://" + filesToDrag[0].path,
+        );
+        e.dataTransfer.setData("text/plain", filesToDrag[0].path);
+      } else {
+        const uris = filesToDrag.map((f) => "file://" + f.path).join("\r\n");
+        e.dataTransfer.setData("text/uri-list", uris);
+        e.dataTransfer.setData(
+          "text/plain",
+          filesToDrag.map((f) => f.path).join("\n"),
+        );
+      }
 
-    // Native file drag for external apps (Localsend, etc.)
-    if (window.electron?.startDrag && filesToDrag.length === 1) {
-      window.electron.startDrag(filesToDrag[0].path);
-    }
-  }, [selectedFiles, files, currentPath, startDrag]);
+      // Native file drag for external apps (Localsend, etc.)
+      if (window.electron?.startDrag && filesToDrag.length === 1) {
+        window.electron.startDrag(filesToDrag[0].path);
+      }
+    },
+    [selectedFiles, files, currentPath, startDrag],
+  );
 
   // Cleanup drag state on dragend
   useEffect(() => {
@@ -695,20 +751,25 @@ export const FileList: React.FC<FileListProps> = ({
       _draggedPaths = new Set();
       endDrag();
     };
-    document.addEventListener('dragend', onDragEnd, true);
-    return () => document.removeEventListener('dragend', onDragEnd, true);
+    document.addEventListener("dragend", onDragEnd, true);
+    return () => document.removeEventListener("dragend", onDragEnd, true);
   }, [endDrag]);
 
   // Debug: catch ALL drop events (capture phase, document level)
   useEffect(() => {
     const onDocDrop = (e: Event) => {
       const de = e as DragEvent;
-      console.warn("[drag] DOCUMENT capture drop:", (e.target as HTMLElement)?.tagName,
-        "class:", (e.target as HTMLElement)?.className?.slice(0, 40),
-        "types:", de.dataTransfer?.types);
+      console.warn(
+        "[drag] DOCUMENT capture drop:",
+        (e.target as HTMLElement)?.tagName,
+        "class:",
+        (e.target as HTMLElement)?.className?.slice(0, 40),
+        "types:",
+        de.dataTransfer?.types,
+      );
     };
-    document.addEventListener('drop', onDocDrop, true);
-    return () => document.removeEventListener('drop', onDocDrop, true);
+    document.addEventListener("drop", onDocDrop, true);
+    return () => document.removeEventListener("drop", onDocDrop, true);
   }, []);
 
   const handleItemDoubleClick = useCallback(
@@ -743,50 +804,61 @@ export const FileList: React.FC<FileListProps> = ({
 
   // --- Folder drop handlers ---
 
-  const handleFolderDragOver = useCallback((e: React.DragEvent, file: IFile) => {
-    console.warn("[drag] dragover on folder:", file.name, "types:", e.dataTransfer.types);
-    if (_draggedPaths.has(file.path)) {
-      e.dataTransfer.dropEffect = "none";
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = e.shiftKey ? "copy" : "move";
-    setDragOverPath(file.path);
-    // Track for internal drop (native drag kills HTML5 drop events)
-    lastDragOverFolderRef.current = file;
-  }, []);
+  const handleFolderDragOver = useCallback(
+    (e: React.DragEvent, file: IFile) => {
+      console.warn(
+        "[drag] dragover on folder:",
+        file.name,
+        "types:",
+        e.dataTransfer.types,
+      );
+      if (_draggedPaths.has(file.path)) {
+        e.dataTransfer.dropEffect = "none";
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = e.shiftKey ? "copy" : "move";
+      setDragOverPath(file.path);
+      // Track for internal drop (native drag kills HTML5 drop events)
+      lastDragOverFolderRef.current = file;
+    },
+    [],
+  );
 
   const handleFolderDragLeave = useCallback(() => {
     setDragOverPath(null);
   }, []);
 
-  const handleFolderDrop = useCallback((e: React.DragEvent, targetFile: IFile) => {
-    console.warn("[drag] drop on folder:", targetFile.name);
-    const dragState = getDragState();
-    console.warn("[drag] drop getDragState:", dragState);
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOverPath(null);
+  const handleFolderDrop = useCallback(
+    (e: React.DragEvent, targetFile: IFile) => {
+      console.warn("[drag] drop on folder:", targetFile.name);
+      const dragState = getDragState();
+      console.warn("[drag] drop getDragState:", dragState);
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverPath(null);
 
-    if (!dragState || !onDropOnFolder) {
-      console.warn("[drag] drop NO dragState or NO onDropOnFolder");
+      if (!dragState || !onDropOnFolder) {
+        console.warn("[drag] drop NO dragState or NO onDropOnFolder");
+        _draggedPaths = new Set();
+        endDrag();
+        return;
+      }
+
+      if (_draggedPaths.has(targetFile.path)) {
+        _draggedPaths = new Set();
+        endDrag();
+        return;
+      }
+
+      const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
+      onDropOnFolder(dragState.files, targetFile.path, operation);
       _draggedPaths = new Set();
       endDrag();
-      return;
-    }
-
-    if (_draggedPaths.has(targetFile.path)) {
-      _draggedPaths = new Set();
-      endDrag();
-      return;
-    }
-
-    const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
-    onDropOnFolder(dragState.files, targetFile.path, operation);
-    _draggedPaths = new Set();
-    endDrag();
-  }, [getDragState, onDropOnFolder, endDrag]);
+    },
+    [getDragState, onDropOnFolder, endDrag],
+  );
 
   // --- Rubber-band selection ---
 
@@ -798,193 +870,169 @@ export const FileList: React.FC<FileListProps> = ({
     return GRID_ROW_HEIGHT(rowProps.iconSize);
   }, []);
 
-  const getItemPositions = useCallback((
-    items: ListItem[],
-    columns: number,
-    rowHeightFn: (index: number, data: RowData) => number,
-  ) => {
-    const rowProps = { iconSize, viewMode, columns, items } as RowData;
-    const positions: { path: string; top: number; height: number; isGrid: boolean; gridIndex?: number; gridCount?: number }[] = [];
-    let y = 0;
-
-    for (let i = 0; i < items.length; i++) {
-      const h = rowHeightFn(i, rowProps);
-      const item = items[i];
-
-      if (item.kind === "file") {
-        positions.push({ path: item.file.path, top: y, height: h, isGrid: false });
-      } else if (item.kind === "grid-row") {
-        for (let gi = 0; gi < item.files.length; gi++) {
-          positions.push({
-            path: item.files[gi].path,
-            top: y,
-            height: h,
-            isGrid: true,
-            gridIndex: gi,
-            gridCount: item.files.length,
-          });
-        }
-      }
-      y += h;
-    }
-    return positions;
-  }, [iconSize, viewMode]);
-
-  // Selection: container-relative coordinates for accurate item intersection
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest(".file-list-item, .file-group-header")) return;
 
     e.preventDefault();
-    const scrollEl = getScrollElement();
-    if (!scrollEl) return;
-
     const container = containerRef.current;
     if (!container) return;
 
+    const scrollEl = listImperativeRef.current?.element;
+    if (!scrollEl) return;
+
     const containerRect = container.getBoundingClientRect();
+    const startScroll = scrollEl.scrollTop;
     const sx = e.clientX - containerRect.left;
-    const sy = e.clientY - containerRect.top;
+    const sy = e.clientY - containerRect.top + startScroll;
 
-    selectStartRef.current = { x: sx, y: sy };
+    contentStartRef.current = { x: sx, y: sy };
+    contentEndRef.current = { x: sx, y: sy };
     isSelectingRef.current = true;
-    selectionBoxRef.current = { x: sx, y: sy, w: 0, h: 0 };
-    setSelectionBox({ x: sx, y: sy, w: 0, h: 0 });
+    selectionBoxRef.current = { x: sx, y: sy - startScroll, w: 0, h: 0 };
+    setSelectionBox({ x: 0, y: 0, w: 0, h: 0 });
 
-    const onMove = (ev: MouseEvent) => {
-      if (!selectStartRef.current) return;
-      const hasStart = selectStartRef.current;
-      let cx = ev.clientX - containerRect.left;
-      let cy = ev.clientY - containerRect.top;
+    lastScreenRef.current = {
+      x: e.clientX - containerRect.left,
+      y: e.clientY - containerRect.top,
+    };
 
-      // Auto-scroll
-      const el = getScrollElement();
-      if (!el) return;
-      const r = el.getBoundingClientRect();
+    const contW = containerRect.width;
+    const contH = containerRect.height;
 
-      // Clip cursor to scrollable area (in container-relative coords)
-      cx = Math.max(r.left - containerRect.left, Math.min(cx, r.right - containerRect.left));
-      cy = Math.max(r.top - containerRect.top, Math.min(cy, r.bottom - containerRect.top));
+    const updateSelection = (
+      screenX: number,
+      screenY: number,
+      scroll: number,
+    ) => {
+      const contentX = screenX;
+      const contentY = screenY + scroll;
+      contentEndRef.current = { x: contentX, y: contentY };
 
-      const x = Math.min(hasStart.x, cx);
-      const y = Math.min(hasStart.y, cy);
-      const w = Math.abs(cx - hasStart.x);
-      const h = Math.abs(cy - hasStart.y);
+      const start = contentStartRef.current!;
+      const cLeft = Math.min(start.x, contentX);
+      const cTop = Math.min(start.y, contentY);
+      const cRight = Math.max(start.x, contentX);
+      const cBottom = Math.max(start.y, contentY);
 
-      const box = { x, y, w, h };
+      const vx = Math.max(0, cLeft);
+      const vy = Math.max(0, cTop - scroll);
+      const visualRight = Math.min(contW, cRight);
+      const visualBottom = Math.min(contH, cBottom - scroll);
+      const vw = Math.max(0, visualRight - vx);
+      const vh = Math.max(0, visualBottom - vy);
+
+      const box = { x: vx, y: vy, w: vw, h: vh };
       selectionBoxRef.current = box;
       setSelectionBox(box);
+
+      const cw = cRight - cLeft;
+      const ch = cBottom - cTop;
+      if (cw > 2 && ch > 2) {
+        const sel = new Set<string>();
+        for (const ib of itemBoxesRef.current) {
+          if (
+            ib.top < cBottom &&
+            ib.top + ib.height > cTop &&
+            ib.left < cRight &&
+            ib.left + ib.width > cLeft
+          ) {
+            sel.add(ib.path);
+          }
+        }
+        if (sel.size > 0) {
+          onSetSelected?.(sel);
+          didSelectRef.current = true;
+        }
+      }
+    };
+
+    const onScroll = () => {
+      const el = listImperativeRef.current?.element;
+      if (!el) return;
+      updateSelection(
+        lastScreenRef.current.x,
+        lastScreenRef.current.y,
+        el.scrollTop,
+      );
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      const el = listImperativeRef.current?.element;
+      if (!el) return;
+
+      let cx = ev.clientX - containerRect.left;
+      let cy = ev.clientY - containerRect.top;
+      cx = Math.max(0, Math.min(cx, contW));
+      cy = Math.max(0, Math.min(cy, contH));
+
+      lastScreenRef.current = { x: cx, y: cy };
+      updateSelection(cx, cy, el.scrollTop);
 
       if (autoScrollRafRef.current !== null) {
         cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
       }
 
+      const elRect = el.getBoundingClientRect();
       const clientY = ev.clientY;
-      const topEdge = r.top;
-      const bottomEdge = r.bottom;
 
-      if (clientY - topEdge < AUTO_SCROLL_ZONE) {
+      if (clientY - elRect.top < AUTO_SCROLL_ZONE) {
         const doScroll = () => {
-          const el2 = getScrollElement();
+          const el2 = listImperativeRef.current?.element;
           if (!el2 || el2.scrollTop <= 0) return;
           el2.scrollTop = Math.max(0, el2.scrollTop - AUTO_SCROLL_SPEED);
+          updateSelection(
+            lastScreenRef.current.x,
+            lastScreenRef.current.y,
+            el2.scrollTop,
+          );
           autoScrollRafRef.current = requestAnimationFrame(doScroll);
         };
         autoScrollRafRef.current = requestAnimationFrame(doScroll);
-      } else if (bottomEdge - clientY < AUTO_SCROLL_ZONE) {
+      } else if (elRect.bottom - clientY < AUTO_SCROLL_ZONE) {
         const doScroll = () => {
-          const el2 = getScrollElement();
+          const el2 = listImperativeRef.current?.element;
           if (!el2) return;
           const maxScroll = el2.scrollHeight - el2.clientHeight;
           if (el2.scrollTop >= maxScroll) return;
-          el2.scrollTop = Math.min(maxScroll, el2.scrollTop + AUTO_SCROLL_SPEED);
+          el2.scrollTop = Math.min(
+            maxScroll,
+            el2.scrollTop + AUTO_SCROLL_SPEED,
+          );
+          updateSelection(
+            lastScreenRef.current.x,
+            lastScreenRef.current.y,
+            el2.scrollTop,
+          );
           autoScrollRafRef.current = requestAnimationFrame(doScroll);
         };
         autoScrollRafRef.current = requestAnimationFrame(doScroll);
       }
     };
 
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+
     const onUp = () => {
-      console.warn("[selbox] onUp FIRED, selectionBoxRef:", selectionBoxRef.current,
-        "isSelectingRef:", isSelectingRef.current);
-      document.removeEventListener('mousemove', onMove, true);
-      document.removeEventListener('mouseup', onUp, true);
+      scrollEl.removeEventListener("scroll", onScroll);
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
 
       if (autoScrollRafRef.current !== null) {
         cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
-      }
-
-      const box = selectionBoxRef.current;
-      if (box && box.w > 2 && box.h > 2) {
-        const scrollEl2 = getScrollElement();
-        if (scrollEl2) {
-          const elRect = scrollEl2.getBoundingClientRect();
-          const currentScroll = scrollEl2.scrollTop;
-          const scrollWidth = scrollEl2.clientWidth;
-
-          // Container-relative box, convert to content-relative for item intersection
-          const boxTop = box.y - (elRect.top - containerRect.top) + currentScroll;
-          const boxBottom = boxTop + box.h;
-          const boxLeft = box.x - (elRect.left - containerRect.left);
-          const boxRight = boxLeft + box.w;
-
-          console.warn("[selbox] scrollEl tag:", scrollEl2.tagName, "scrollTop:", currentScroll,
-            "elRect.top:", elRect.top, "containerRect.top:", containerRect.top,
-            "box:", box, "boxTop:", boxTop, "boxBottom:", boxBottom,
-            "boxLeft:", boxLeft, "boxRight:", boxRight);
-
-          const cols = viewMode === "grid"
-            ? Math.max(1, Math.floor((scrollWidth + 8) / (iconSize + 40)))
-            : 0;
-          const items = flattenItems(files, groupingEnabled, viewMode, cols);
-          const positions = getItemPositions(items, cols, rowHeight);
-
-          console.warn("[selbox] items:", items.length, "positions:", positions.length,
-            "first pos:", positions[0], "last pos:", positions[positions.length - 1]);
-
-          const newSelection = new Set<string>();
-          for (const pos of positions) {
-            let itemLeft = 0;
-            let itemRight = scrollWidth;
-
-            if (pos.isGrid && pos.gridCount && pos.gridCount > 1) {
-              const cellWidth = itemRight / pos.gridCount;
-              itemLeft = (pos.gridIndex || 0) * cellWidth;
-              itemRight = itemLeft + cellWidth;
-            }
-
-            const intersects =
-              pos.top < boxBottom &&
-              pos.top + pos.height > boxTop &&
-              itemLeft < boxRight &&
-              itemRight > boxLeft;
-
-            if (intersects) {
-              newSelection.add(pos.path);
-            }
-          }
-
-          if (newSelection.size > 0) {
-            console.warn("[selbox] selected:", newSelection.size, "files");
-            onSetSelected?.(newSelection);
-            didSelectRef.current = true;
-          } else {
-            console.warn("[selbox] no items intersected");
-          }
-        }
       }
 
       isSelectingRef.current = false;
       selectionBoxRef.current = null;
-      selectStartRef.current = null;
+      contentStartRef.current = null;
+      contentEndRef.current = null;
       setSelectionBox(null);
     };
 
-    document.addEventListener('mousemove', onMove, true);
-    document.addEventListener('mouseup', onUp, true);
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
   };
 
   return (
@@ -994,7 +1042,7 @@ export const FileList: React.FC<FileListProps> = ({
       style={{ width: "100%", height: "100%", position: "relative" }}
       onMouseDown={handleBackgroundMouseDown}
       onContextMenu={(e) => {
-        if ((e.target as HTMLElement).closest?.('.file-rename-input')) return;
+        if ((e.target as HTMLElement).closest?.(".file-rename-input")) return;
         e.preventDefault();
         if (
           !(e.target as HTMLElement).closest(
@@ -1035,6 +1083,13 @@ export const FileList: React.FC<FileListProps> = ({
 
           const items = flattenItems(files, groupingEnabled, viewMode, columns);
 
+          itemBoxesRef.current = computeItemBoxes(
+            items,
+            columns,
+            width,
+            iconSize,
+          );
+
           const rowPropsData: RowData = {
             items,
             selectedFiles,
@@ -1063,34 +1118,32 @@ export const FileList: React.FC<FileListProps> = ({
           };
 
           return (
-            <>
-              <List
-                listRef={listImperativeRef}
-                style={{ height, width, maxHeight: height }}
-                rowComponent={Row}
-                rowProps={rowPropsData}
-                rowCount={items.length}
-                rowHeight={rowHeight}
-                overscanCount={5}
-              />
-              {selectionBox && selectionBox.w > 0 && (
-                <div
-                  className="selection-box"
-                  style={{
-                    position: "absolute",
-                    left: selectionBox.x,
-                    top: selectionBox.y,
-                    width: selectionBox.w,
-                    height: selectionBox.h,
-                    pointerEvents: "none",
-                    zIndex: 9999,
-                  }}
-                />
-              )}
-            </>
+            <List
+              listRef={listImperativeRef}
+              style={{ height, width, maxHeight: height }}
+              rowComponent={Row}
+              rowProps={rowPropsData}
+              rowCount={items.length}
+              rowHeight={rowHeight}
+              overscanCount={5}
+            />
           );
         }}
       />
+      {selectionBox && selectionBox.w > 0 && (
+        <div
+          className="selection-box"
+          style={{
+            position: "absolute",
+            left: selectionBox.x,
+            top: selectionBox.y,
+            width: selectionBox.w,
+            height: selectionBox.h,
+            pointerEvents: "none",
+            zIndex: 9999,
+          }}
+        />
+      )}
     </div>
   );
 };
