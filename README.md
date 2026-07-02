@@ -1,5 +1,9 @@
 [简体中文](README-zh.md)
 
+<p align="center">
+  <img src="你的图片链接" alt="图片描述" width="50%">
+</p>
+
 # Hoshineko File Manager
 
 Hoshineko File Manager is a modern, "Performance-First" file manager built using Material 3 Design, Electron, and React.
