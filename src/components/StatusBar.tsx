@@ -3,9 +3,10 @@ import React from 'react';
 interface StatusBarProps {
     totalItems: number;
     selectedCount: number;
+    selectionHint?: string | null;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount }) => {
+export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount, selectionHint }) => {
   return (
     <div style={{
       height: '24px',
@@ -22,6 +23,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount 
       <span>{totalItems} items</span>
       {selectedCount > 0 && (
         <span>{selectedCount} selected</span>
+      )}
+      {selectionHint && (
+        <span>{selectionHint}</span>
       )}
     </div>
   );

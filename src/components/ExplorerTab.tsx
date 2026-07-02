@@ -209,6 +209,81 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     // Selection State
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState<string | null>(null);
+  const [modifiers, setModifiers] = useState({ ctrl: false, shift: false });
+  const [suppressClickHint, setSuppressClickHint] = useState(false);
+  const mouseDownRef = useRef(false);
+
+  const handleSelectionModeChange = useCallback((mode: "replace" | "union" | "intersection" | "difference" | null) => {
+    setSelectionMode(mode);
+    if (mode !== null) {
+      setSuppressClickHint(true);
+    }
+  }, []);
+
+  const selectionHint = useMemo(() => {
+    if (selectionMode) {
+      const labelMap: Record<string, string> = {
+        replace: "框选(替换)",
+        union: "框选(并集)",
+        intersection: "框选(交集)",
+        difference: "框选(差集)",
+      };
+      return labelMap[selectionMode] || selectionMode;
+    }
+    if (suppressClickHint) return null;
+    if (!modifiers.ctrl && !modifiers.shift) return null;
+    if (modifiers.ctrl && modifiers.shift) return "点选(范围加选)";
+    if (modifiers.ctrl) return "点选(加选/减选)";
+    return "点选(范围)";
+  }, [selectionMode, modifiers, suppressClickHint]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (e.key === "Control" || e.key === "Shift") {
+        setModifiers((prev) => ({
+          ctrl: e.key === "Control" ? true : prev.ctrl,
+          shift: e.key === "Shift" ? true : prev.shift,
+        }));
+        if (mouseDownRef.current) {
+          setSuppressClickHint(true);
+        } else {
+          setSuppressClickHint(false);
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Control" || e.key === "Shift") {
+        setModifiers((prev) => {
+          const next = {
+            ctrl: e.key === "Control" ? false : prev.ctrl,
+            shift: e.key === "Shift" ? false : prev.shift,
+          };
+          if (!next.ctrl && !next.shift) {
+            setSuppressClickHint(false);
+          }
+          return next;
+        });
+      }
+    };
+    const onMouseDown = () => {
+      mouseDownRef.current = true;
+    };
+    const onMouseUp = () => {
+      mouseDownRef.current = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   // Clear selection on path change
   useEffect(() => {
@@ -478,6 +553,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               onBackgroundContextMenu={handleBackgroundContextMenu}
               onDeselectAll={() => setSelectedFiles(new Set())}
               onSetSelected={setSelectedFiles}
+              onSelectionModeChange={handleSelectionModeChange}
               onDropOnFolder={async (draggedFiles, targetPath, operation) => {
                 for (const file of draggedFiles) {
                   if (file.path === targetPath) continue;
@@ -501,7 +577,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       )}
 
       {currentPath !== 'app://dashboard' && (
-        <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} />
+        <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} selectionHint={selectionHint} />
       )}
     </div>
   );

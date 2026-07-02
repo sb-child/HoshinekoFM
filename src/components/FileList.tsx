@@ -23,6 +23,7 @@ interface FileListProps {
     operation: "move" | "copy",
   ) => void;
   onSetSelected?: (paths: Set<string>) => void;
+  onSelectionModeChange?: (mode: "replace" | "union" | "intersection" | "difference" | null) => void;
   viewMode: "grid" | "list";
   iconSize: number;
   filledIcons: boolean;
@@ -219,7 +220,7 @@ function computeItemBoxes(
       y += LIST_ROW_HEIGHT(iconSize);
     } else {
       const h = GRID_ROW_HEIGHT(iconSize);
-      const cw = containerWidth / item.files.length;
+      const cw = containerWidth / columns;
       for (let gi = 0; gi < item.files.length; gi++) {
         boxes.push({
           path: item.files[gi].path,
@@ -399,6 +400,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
           ) : (
             <span
               className="file-name"
+              title={file.name}
               style={{
                 flex: 1,
                 overflow: "hidden",
@@ -548,6 +550,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             ) : (
               <span
                 className="file-name"
+                title={file.name}
                 style={{
                   textAlign: "center",
                   fontSize: "12px",
@@ -585,6 +588,7 @@ export const FileList: React.FC<FileListProps> = ({
   onDeselectAll,
   onDropOnFolder,
   onSetSelected,
+  onSelectionModeChange,
   viewMode,
   iconSize,
   filledIcons,
@@ -681,6 +685,7 @@ export const FileList: React.FC<FileListProps> = ({
       const isModifier = e.ctrlKey || e.metaKey;
       const isRange = e.shiftKey;
       if (isModifier || isRange) {
+        lastClickRef.current = { path: file.path, time: Date.now() };
         onSelect(file, isModifier, isRange);
         return;
       }
@@ -893,6 +898,17 @@ export const FileList: React.FC<FileListProps> = ({
     if (target.closest(".file-list-item, .file-group-header")) return;
 
     e.preventDefault();
+    const ctrlHeld = e.ctrlKey;
+    const shiftHeld = e.shiftKey;
+    const prevSet = new Set(selectedFiles);
+
+    const mode: "replace" | "union" | "intersection" | "difference" =
+      ctrlHeld && shiftHeld ? "difference"
+        : ctrlHeld ? "union"
+          : shiftHeld ? "intersection"
+            : "replace";
+    onSelectionModeChange?.(mode);
+
     const container = containerRef.current;
     if (!container) return;
 
@@ -947,7 +963,7 @@ export const FileList: React.FC<FileListProps> = ({
       const cw = cRight - cLeft;
       const ch = cBottom - cTop;
       if (cw > 2 && ch > 2) {
-        const sel = new Set<string>();
+        const boxPaths = new Set<string>();
         for (const ib of itemBoxesRef.current) {
           if (
             ib.top < cBottom &&
@@ -955,12 +971,37 @@ export const FileList: React.FC<FileListProps> = ({
             ib.left < cRight &&
             ib.left + ib.width > cLeft
           ) {
-            sel.add(ib.path);
+            boxPaths.add(ib.path);
           }
         }
-        if (sel.size > 0) {
-          onSetSelected?.(sel);
-          didSelectRef.current = true;
+        if (ctrlHeld && shiftHeld) {
+          if (boxPaths.size > 0) {
+            const ns = new Set(prevSet);
+            for (const p of boxPaths) ns.delete(p);
+            onSetSelected?.(ns);
+            didSelectRef.current = true;
+          }
+        } else if (ctrlHeld) {
+          if (boxPaths.size > 0) {
+            const ns = new Set(prevSet);
+            for (const p of boxPaths) ns.add(p);
+            onSetSelected?.(ns);
+            didSelectRef.current = true;
+          }
+        } else if (shiftHeld) {
+          const ns = new Set<string>();
+          for (const p of prevSet) {
+            if (boxPaths.has(p)) ns.add(p);
+          }
+          if (ns.size > 0 || prevSet.size > 0) {
+            onSetSelected?.(ns);
+            didSelectRef.current = true;
+          }
+        } else {
+          if (boxPaths.size > 0) {
+            onSetSelected?.(boxPaths);
+            didSelectRef.current = true;
+          }
         }
       }
     };
@@ -1046,6 +1087,7 @@ export const FileList: React.FC<FileListProps> = ({
       contentStartRef.current = null;
       contentEndRef.current = null;
       setSelectionBox(null);
+      onSelectionModeChange?.(null);
     };
 
     document.addEventListener("mousemove", onMove, true);
@@ -1087,6 +1129,10 @@ export const FileList: React.FC<FileListProps> = ({
           }
           if (renamingPath) setRenamingPath(null);
           onDeselectAll?.();
+          const activeEl = document.activeElement;
+          if (activeEl instanceof HTMLElement && containerRef.current?.contains(activeEl)) {
+            activeEl.blur();
+          }
         }
       }}
     >

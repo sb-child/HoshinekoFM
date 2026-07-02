@@ -30,3 +30,5 @@ test_large_dir
 *.pkg.tar.xz
 pkg/
 src-pkg/
+
+*.bundle
