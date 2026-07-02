@@ -865,35 +865,31 @@ export const FileList: React.FC<FileListProps> = ({
       startDrag(filesToDrag, currentPath || "");
       lastDragOverFolderRef.current = null;
 
-      // HTML5 DnD for internal drops
-      e.dataTransfer.effectAllowed = "copyMove";
-      if (filesToDrag.length === 1) {
-        e.dataTransfer.setData(
-          "text/uri-list",
-          "file://" + filesToDrag[0].path,
-        );
-        e.dataTransfer.setData("text/plain", filesToDrag[0].path);
-      } else {
-        const uris = filesToDrag.map((f) => "file://" + f.path).join("\r\n");
-        e.dataTransfer.setData("text/uri-list", uris);
-        e.dataTransfer.setData(
-          "text/plain",
-          filesToDrag.map((f) => f.path).join("\n"),
-        );
-      }
-
-      // Native file drag for external apps (deferred: only when cursor leaves the window)
+      // Native file drag — deferred to dragend so internal HTML5 drops still work.
+      // On dragend, if _pendingNativeDragPaths is still set (no internal drop consumed it),
+      // we call startDrag to hand over to the OS compositor for external drop targets.
       if (window.electron?.startDrag) {
         _pendingNativeDragPaths = filesToDrag.map((f) => f.path);
       }
+
+      // HTML5 DnD for internal drops
+      e.dataTransfer.effectAllowed = "copyMove";
+      const uris = filesToDrag.map((f) => "file://" + encodeURI(f.path)).join("\r\n");
+      e.dataTransfer.setData("text/uri-list", uris);
+      e.dataTransfer.setData("text/plain", uris);
     },
     [selectedFiles, files, currentPath, startDrag],
   );
 
-  // Cleanup drag state on dragend
+  // Cleanup drag state on dragend.
+  // If _pendingNativeDragPaths is still set (no internal drop consumed it),
+  // fire the native drag for external apps before cleaning up.
   useEffect(() => {
     const onDragEnd = () => {
       console.warn("[drag] dragend fired, cleaning up");
+      if (_pendingNativeDragPaths && window.electron?.startDrag) {
+        window.electron.startDrag(_pendingNativeDragPaths);
+      }
       setDragOverPath(null);
       lastDragOverFolderRef.current = null;
       _draggedPaths = new Set();
@@ -903,31 +899,6 @@ export const FileList: React.FC<FileListProps> = ({
     document.addEventListener("dragend", onDragEnd, true);
     return () => document.removeEventListener("dragend", onDragEnd, true);
   }, [endDrag]);
-
-  // Start native file drag when cursor leaves the window (for external apps)
-  useEffect(() => {
-    let dragCounter = 0;
-
-    const onDragEnter = (e: DragEvent) => {
-      e.preventDefault();
-      dragCounter++;
-    };
-    const onDragLeave = () => {
-      dragCounter--;
-      if (dragCounter <= 0 && _pendingNativeDragPaths && window.electron?.startDrag) {
-        const paths = _pendingNativeDragPaths;
-        _pendingNativeDragPaths = null;
-        window.electron.startDrag(paths);
-      }
-    };
-
-    document.addEventListener("dragenter", onDragEnter, true);
-    document.addEventListener("dragleave", onDragLeave, true);
-    return () => {
-      document.removeEventListener("dragenter", onDragEnter, true);
-      document.removeEventListener("dragleave", onDragLeave, true);
-    };
-  }, []);
 
   // Debug: catch ALL drop events (capture phase, document level)
   useEffect(() => {
