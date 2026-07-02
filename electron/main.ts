@@ -100,6 +100,18 @@ ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
     const results = await Promise.all(entries.map(async (entry) => {
       try {
         const fullPath = path.join(targetPath, entry.name);
+        const isSpecial = entry.isBlockDevice() || entry.isCharacterDevice()
+                       || entry.isFIFO() || entry.isSocket();
+        if (isSpecial) {
+          return {
+            name: entry.name,
+            path: fullPath,
+            isDirectory: false,
+            size: 0,
+            mtime: new Date(0),
+            mime: 'application/octet-stream'
+          };
+        }
         const stats = await fs.stat(fullPath);
         const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
         return {

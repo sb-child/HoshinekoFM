@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "./contexts/ToastContext";
 import { initDragIcons } from "./utils/dragIconRenderer";
 import "./index.css";
@@ -133,7 +133,12 @@ function AppContent() {
 
   // -- Effects --
 
+  const hasInitialized = useRef(false);
+
   useEffect(() => {
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+
     ThemeService.loadTheme();
     ThemeService.init();
 

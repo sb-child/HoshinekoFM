@@ -114,6 +114,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       addToRecents(path); // Track it
     } catch (e) {
       console.error('Failed to load path', path, e);
+      showToast(`无法打开目录: ${(e as any)?.message || e || '未知错误'}`, 'error');
     }
   }, [onPathChange, tabId, addToRecents]);
 
