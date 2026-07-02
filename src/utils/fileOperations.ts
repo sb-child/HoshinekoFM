@@ -1,4 +1,4 @@
-import type { ToastType } from '../components/Toast';
+import { showToast } from './toast';
 
 export function formatFileOpError(operation: string, fileRef: string, error: any): string {
   let code: string = error?.code || '';
@@ -10,16 +10,16 @@ export function formatFileOpError(operation: string, fileRef: string, error: any
   }
 
   switch (code) {
-    case 'EEXIST':  return `${operation} ${fileRef}: 存在重名文件`;
-    case 'ENOENT':  return `${operation} ${fileRef}: 文件或目录不存在`;
-    case 'EACCES':
-    case 'EPERM':   return `${operation} ${fileRef}: 权限不足`;
-    case 'ENOSPC':  return `${operation} ${fileRef}: 磁盘空间不足`;
-    case 'EROFS':   return `${operation} ${fileRef}: 文件系统只读`;
-    case 'EISDIR':  return `${operation} ${fileRef}: 路径是一个目录`;
-    case 'ENOTDIR': return `${operation} ${fileRef}: 路径不是一个目录`;
-    case 'EXDEV':   return `${operation} ${fileRef}: 无法跨设备移动文件`;
-    case 'EBUSY':   return `${operation} ${fileRef}: 文件被占用，请关闭后重试`;
+  case 'EEXIST':  return `${operation} ${fileRef}: 存在重名文件`;
+  case 'ENOENT':  return `${operation} ${fileRef}: 文件或目录不存在`;
+  case 'EACCES':
+  case 'EPERM':   return `${operation} ${fileRef}: 权限不足`;
+  case 'ENOSPC':  return `${operation} ${fileRef}: 磁盘空间不足`;
+  case 'EROFS':   return `${operation} ${fileRef}: 文件系统只读`;
+  case 'EISDIR':  return `${operation} ${fileRef}: 路径是一个目录`;
+  case 'ENOTDIR': return `${operation} ${fileRef}: 路径不是一个目录`;
+  case 'EXDEV':   return `${operation} ${fileRef}: 无法跨设备移动文件`;
+  case 'EBUSY':   return `${operation} ${fileRef}: 文件被占用，请关闭后重试`;
   }
 
   if (msg.includes('same file') || msg.includes('same path') || msg.includes('source and destination')) {
@@ -70,7 +70,6 @@ function normalizePath(path: string): string {
 
 export async function createFile(
   filePath: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -84,7 +83,6 @@ export async function createFile(
 
 export async function createDirectory(
   dirPath: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -99,7 +97,6 @@ export async function createDirectory(
 export async function renameFile(
   oldPath: string,
   newPath: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   const oldParent = oldPath.substring(0, oldPath.lastIndexOf('/'));
@@ -126,7 +123,6 @@ export async function renameFile(
 
 export async function trashFile(
   filePath: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -140,7 +136,6 @@ export async function trashFile(
 
 export async function trashFiles(
   paths: string[],
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   let success = 0;
@@ -165,7 +160,6 @@ export async function trashFiles(
 export async function copyFile(
   source: string,
   dest: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -186,7 +180,6 @@ export async function copyFile(
 export async function moveFile(
   source: string,
   dest: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -206,7 +199,6 @@ export async function moveFile(
 
 export async function extractFile(
   filePath: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   try {
@@ -231,7 +223,6 @@ export async function pasteFiles(
   entries: PasteEntry[],
   operation: 'copy' | 'cut',
   destDir: string,
-  showToast: (msg: string, type: ToastType) => void,
   clearClipboard?: () => void,
   onSuccess?: () => void,
 ): Promise<void> {
@@ -263,7 +254,6 @@ export async function pasteFiles(
 
 export async function openFile(
   filePath: string,
-  showToast: (msg: string, type: ToastType) => void,
 ): Promise<void> {
   try {
     const err = await window.electron.openPath(filePath);
@@ -278,7 +268,6 @@ export async function openFile(
 export async function importFiles(
   fileEntries: { path: string }[],
   destDir: string,
-  showToast: (msg: string, type: ToastType) => void,
   onSuccess?: () => void,
 ): Promise<void> {
   let count = 0;
@@ -300,14 +289,12 @@ export async function importFiles(
 
 export function copyToClipboard(
   count: number,
-  showToast: (msg: string, type: ToastType) => void,
 ): void {
   showToast(`已复制 ${count} 个项目`, 'info');
 }
 
 export function cutToClipboard(
   count: number,
-  showToast: (msg: string, type: ToastType) => void,
 ): void {
   showToast(`已剪切 ${count} 个项目`, 'info');
 }

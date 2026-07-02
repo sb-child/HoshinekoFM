@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useToast } from "./contexts/ToastContext";
+import { showToast } from "./utils/toast";
 import { initDragIcons } from "./utils/dragIconRenderer";
 import "./index.css";
-import { ToastProvider } from "./contexts/ToastContext";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+import "./utils/toast.css";
 import { ClipboardProvider, useClipboard } from "./contexts/ClipboardContext";
 import { DragProvider } from "./contexts/DragContext";
 import { ThemeService } from "./services/ThemeService";
@@ -38,8 +40,6 @@ interface TabState {
 }
 
 function AppContent() {
-  const { showToast } = useToast();
-
   // Tabs State
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("");
@@ -284,7 +284,6 @@ function AppContent() {
       clipboard.files,
       clipboard.operation,
       currentPath,
-      showToast,
       clipboard.operation === "cut" ? clearClipboard : undefined,
       () =>
         setTabs((prev) =>
@@ -302,7 +301,7 @@ function AppContent() {
           label: "Open",
           icon: "open_in_new",
           action: () => {
-            openFile(contextMenu.item!.path, showToast);
+            openFile(contextMenu.item!.path);
             setContextMenu(null);
           },
         },
@@ -326,7 +325,7 @@ function AppContent() {
           label: "Delete",
           icon: "delete",
           action: () =>
-            trashFile(contextMenu.item!.path, showToast, () => {
+            trashFile(contextMenu.item!.path, () => {
               setTabs((prev) =>
                 prev.map((t) =>
                   t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
@@ -339,7 +338,7 @@ function AppContent() {
           icon: "unarchive",
           action: () => {
             const file = contextMenu.item!;
-            extractFile(file.path, showToast, () =>
+            extractFile(file.path, () =>
               setTabs((prev) =>
                 prev.map((t) =>
                   t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
@@ -393,16 +392,12 @@ function AppContent() {
     if (renameFile && newName && newName !== renameFile.name) {
       const lastSlashIndex = renameFile.path.lastIndexOf("/");
       const parentDir = renameFile.path.substring(0, lastSlashIndex);
-      await renameFileOp(
-        renameFile.path,
-        `${parentDir}/${newName}`,
-        showToast,
-        () =>
-          setTabs((prev) =>
-            prev.map((t) =>
-              t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
-            ),
+      await renameFileOp(renameFile.path, `${parentDir}/${newName}`, () =>
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
           ),
+        ),
       );
     }
     setRenameDialogOpen(false);
@@ -655,11 +650,12 @@ function AppContent() {
             open={!!openWithFile}
             path={openWithFile.path}
             onClose={() => setOpenWithFile(null)}
-            onSelect={async (exec) => {
+            onSelect={async (exec, desktopFile) => {
               if (openWithFile) {
                 const result = await window.electron.openWith(
                   exec,
                   openWithFile.path,
+                  desktopFile,
                 );
                 if (result !== true) {
                   showToast(`打开方式：${exec} 启动失败（${result}）`, "error");
@@ -691,13 +687,24 @@ function AppContent() {
 
 function App() {
   return (
-    <ToastProvider>
+    <>
       <ClipboardProvider>
         <DragProvider>
           <AppContent />
         </DragProvider>
       </ClipboardProvider>
-    </ToastProvider>
+      <ToastContainer
+        position="bottom-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        pauseOnHover
+        theme="colored"
+        limit={5}
+        style={{ zIndex: 2000 }}
+      />
+    </>
   );
 }
 

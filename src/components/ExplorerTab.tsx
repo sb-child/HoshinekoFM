@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useToast } from '../contexts/ToastContext';
+import { showToast } from '../utils/toast';
 import { useClipboard } from '../contexts/ClipboardContext';
 import { StatusBar } from './StatusBar';
 import { FileList } from './FileList';
@@ -47,7 +47,7 @@ interface ExplorerTabProps {
 export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
-  const { showToast } = useToast();
+  const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
   const suppressWatchRef = useRef(false);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
 
@@ -152,14 +152,14 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     if (file.isDirectory) {
       loadPath(file.path);
     } else {
-      openFile(file.path, showToast);
+      openFile(file.path);
     }
   };
 
   const handleRename = async (file: IFile, newName: string) => {
     const lastSlash = file.path.lastIndexOf('/');
     const parentDir = file.path.substring(0, lastSlash);
-    await renameFile(file.path, `${parentDir}/${newName}`, showToast, () => loadPath(currentPath));
+    await renameFile(file.path, `${parentDir}/${newName}`, () => loadPath(currentPath));
   };
 
   const handleUp = async () => {
@@ -220,6 +220,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     if (mode !== null) {
       setSuppressClickHint(true);
     }
+  }, []);
+
+  const handleHoverFile = useCallback((file: IFile | null) => {
+    setHoveredFile(file);
   }, []);
 
   const selectionHint = useMemo(() => {
@@ -328,7 +332,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         clipboard.files,
         clipboard.operation,
         currentPath,
-        showToast,
         clipboard.operation === 'cut' ? clearClipboard : undefined,
         () => loadPath(currentPath),
       );
@@ -357,7 +360,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         e.preventDefault();
         if (selectedFiles.size > 0) {
           if (window.confirm(`确定要删除选中的 ${selectedFiles.size} 个项目吗？`)) {
-            await trashFiles(Array.from(selectedFiles), showToast, () => loadPath(currentPath));
+            await trashFiles(Array.from(selectedFiles), () => loadPath(currentPath));
           }
         }
         return;
@@ -367,7 +370,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (selectedFiles.size > 0) {
           const filesToCopy = sortedFiles.filter(f => selectedFiles.has(f.path));
           copy(filesToCopy);
-          copyToClipboard(selectedFiles.size, showToast);
+          copyToClipboard(selectedFiles.size);
         }
         return;
       }
@@ -376,7 +379,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (selectedFiles.size > 0) {
           const filesToCut = sortedFiles.filter(f => selectedFiles.has(f.path));
           cut(filesToCut);
-          cutToClipboard(selectedFiles.size, showToast);
+          cutToClipboard(selectedFiles.size);
         }
         return;
       }
@@ -390,7 +393,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, showToast, clipboard]);
+  }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, clipboard]);
 
   // 核心新增：接管空白处右键事件分发逻辑
   const handleBackgroundContextMenu = (e: React.MouseEvent) => {
@@ -416,12 +419,12 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       {
         label: 'New Folder',
         icon: 'create_new_folder',
-        action: () => createDirectory(currentPath + '/新建文件夹', showToast, () => loadPath(currentPath)),
+        action: () => createDirectory(currentPath + '/新建文件夹', () => loadPath(currentPath)),
       },
       {
         label: 'New File',
         icon: 'note_add',
-        action: () => createFile(currentPath + '/新建文本文档.txt', showToast, () => loadPath(currentPath)),
+        action: () => createFile(currentPath + '/新建文本文档.txt', () => loadPath(currentPath)),
       },
       { label: '', divider: true, action: () => {} },
       {
@@ -533,7 +536,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 await importFiles(
                   droppedFiles.map(f => ({ path: (f as any).path })),
                   currentPath,
-                  showToast,
                   () => loadPath(currentPath),
                 );
               }
@@ -555,14 +557,15 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               onDeselectAll={() => setSelectedFiles(new Set())}
               onSetSelected={setSelectedFiles}
               onSelectionModeChange={handleSelectionModeChange}
+              onHoverFile={handleHoverFile}
               onDropOnFolder={async (draggedFiles, targetPath, operation) => {
                 for (const file of draggedFiles) {
                   if (file.path === targetPath) continue;
                   const destPath = targetPath + '/' + file.name;
                   if (operation === 'copy') {
-                    await copyFile(file.path, destPath, showToast, () => loadPath(currentPath));
+                    await copyFile(file.path, destPath, () => loadPath(currentPath));
                   } else {
-                    await moveFile(file.path, destPath, showToast, () => loadPath(currentPath));
+                    await moveFile(file.path, destPath, () => loadPath(currentPath));
                   }
                 }
                 loadPath(currentPath);
@@ -578,7 +581,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       )}
 
       {currentPath !== 'app://dashboard' && (
-        <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} selectionHint={selectionHint} />
+        <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} selectionHint={selectionHint} hoveredFile={hoveredFile} />
       )}
     </div>
   );

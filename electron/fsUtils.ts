@@ -131,8 +131,26 @@ export async function detectMime(filePath: string): Promise<string | null> {
 
   let mime = await detectMimeByMagic(filePath);
 
-  // Fall back to `file --mime-type`
-  if (!mime) {
+  if (mime) {
+    // Container types may have a more specific inner format (e.g. ODT inside ZIP)
+    const containerTypes = new Set([
+      'application/zip', 'application/gzip', 'application/x-bzip2',
+      'application/x-xz', 'application/x-7z-compressed',
+      'application/vnd.rar', 'application/x-rar-compressed',
+    ]);
+    if (containerTypes.has(mime)) {
+      try {
+        const { stdout } = await execFileAsync('file', ['--mime-type', '--brief', filePath]);
+        const specific = stdout.trim() || null;
+        if (specific && specific !== 'application/octet-stream' && !containerTypes.has(specific)) {
+          mime = specific;
+        }
+      } catch {
+        // Keep magic-detected mime
+      }
+    }
+  } else {
+    // Fall back to `file --mime-type`
     try {
       const { stdout } = await execFileAsync('file', ['--mime-type', '--brief', filePath]);
       mime = stdout.trim() || null;

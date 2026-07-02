@@ -23,11 +23,11 @@ export interface IElectronAPI {
     createDirectory: (path: string) => Promise<boolean>;
     openPath: (path: string) => Promise<string>;
     extractFile: (path: string) => Promise<boolean>;
-    getApps: () => Promise<{ name: string; icon: string; exec: string; }[]>;
-    openWith: (exec: string, path: string) => Promise<true | string>;
+    getApps: () => Promise<{ name: string; icon: string; exec: string; desktopFile: string; }[]>;
+    openWith: (exec: string, path: string, desktopFile?: string) => Promise<true | string>;
     openFileDialog: () => Promise<string | null>;
     readFile: (path: string) => Promise<string | null>;
-    startDrag: (path: string) => void;
+    startDrag: (paths: string | string[]) => void;
     cacheDragIcon: (name: string, pngBase64: string) => void;
     getStartupPath: () => Promise<string | null>;
     search: (directory: string, query: string, options?: { type?: 'f' | 'd', minSize?: string, maxSize?: string }) => Promise<IFile[]>;

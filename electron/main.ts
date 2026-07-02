@@ -100,18 +100,53 @@ ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
     const results = await Promise.all(entries.map(async (entry) => {
       try {
         const fullPath = path.join(targetPath, entry.name);
-        const isSpecial = entry.isBlockDevice() || entry.isCharacterDevice()
-                       || entry.isFIFO() || entry.isSocket();
+        const isSymlink = entry.isSymbolicLink();
+        const isBlock = entry.isBlockDevice();
+        const isChar = entry.isCharacterDevice();
+        const isFIFO = entry.isFIFO();
+        const isSock = entry.isSocket();
+        const isSpecial = isBlock || isChar || isFIFO || isSock;
+
         if (isSpecial) {
+          let mime: string;
+          if (isBlock) mime = 'inode/blockdevice';
+          else if (isChar) mime = 'inode/chardevice';
+          else if (isFIFO) mime = 'inode/fifo';
+          else mime = 'inode/socket';
           return {
             name: entry.name,
             path: fullPath,
             isDirectory: false,
             size: 0,
             mtime: new Date(0),
-            mime: 'application/octet-stream'
+            mime
           };
         }
+
+        if (isSymlink) {
+          try {
+            await fs.readlink(fullPath);
+            const stats = await fs.stat(fullPath);
+            return {
+              name: entry.name,
+              path: fullPath,
+              isDirectory: stats.isDirectory(),
+              size: stats.size,
+              mtime: stats.mtime,
+              mime: stats.isDirectory() ? 'inode/directory' : await detectMime(fullPath)
+            };
+          } catch {
+            return {
+              name: entry.name,
+              path: fullPath,
+              isDirectory: false,
+              size: 0,
+              mtime: new Date(0),
+              mime: 'inode/symlink'
+            };
+          }
+        }
+
         const stats = await fs.stat(fullPath);
         const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
         return {
@@ -204,32 +239,32 @@ ipcMain.handle('fs:extract', async (_, filePath: string) => {
 });
 
 // Cache for apps
-let appsCache: { name: string; icon: string; exec: string; }[] | null = null;
+let appsCache: { name: string; icon: string; exec: string; desktopFile: string; }[] | null = null;
 
 ipcMain.handle('system:get-apps', async () => {
   if (appsCache) return appsCache;
 
-  const apps: { name: string; icon: string; exec: string; }[] = [];
+  const apps: { name: string; icon: string; exec: string; desktopFile: string; }[] = [];
   const dirs = ['/usr/share/applications', '/usr/local/share/applications', path.join(os.homedir(), '.local/share/applications')];
 
   for (const dir of dirs) {
     try {
-      const files = await fs.readdir(dir); // This acts on directory path
+      const files = await fs.readdir(dir);
       for (const file of files) {
         if (file.endsWith('.desktop')) {
           try {
-            const content = await fs.readFile(path.join(dir, file), 'utf-8');
+            const desktopPath = path.join(dir, file);
+            const content = await fs.readFile(desktopPath, 'utf-8');
             const nameMatch = content.match(/^Name=(.*)$/m);
             const iconMatch = content.match(/^Icon=(.*)$/m);
             const execMatch = content.match(/^Exec=(.*)$/m);
 
             if (nameMatch && execMatch) {
               const name = nameMatch[1];
-              const execCmd = execMatch[1].split(' ')[0]; // Take command, ignore args like %u
+              const execCmd = execMatch[1].replace(/%[fFuUikc]/g, '').trim();
               const icon = iconMatch ? iconMatch[1] : '';
 
-              // Naive check to ignore repeats?
-              apps.push({ name, icon, exec: execCmd });
+              apps.push({ name, icon, exec: execCmd, desktopFile: desktopPath });
             }
           } catch { }
         }
@@ -241,10 +276,20 @@ ipcMain.handle('system:get-apps', async () => {
   return appsCache;
 });
 
-ipcMain.handle('system:open-with', async (_, execPath: string, filePath: string) => {
+ipcMain.handle('system:open-with', async (_, execPath: string, filePath: string, desktopFile?: string) => {
+  let cwd: string | undefined;
+
+  if (desktopFile) {
+    try {
+      const content = await fs.readFile(desktopFile, 'utf-8');
+      const pathMatch = content.match(/^Path=(.*)$/m);
+      if (pathMatch && pathMatch[1].trim()) {
+        cwd = pathMatch[1].trim();
+      }
+    } catch { }
+  }
+
   return new Promise((resolve) => {
-    // Insert file path where field codes were stripped.
-    // Flatpak --file-forwarding uses @@u %u @@ → after %u removal → @@u  @@
     let cmdLine = execPath;
     if (cmdLine.includes('@@')) {
       cmdLine = cmdLine.replace(/@@u\s*@@/g, `@@u ${filePath} @@`);
@@ -253,23 +298,14 @@ ipcMain.handle('system:open-with', async (_, execPath: string, filePath: string)
       cmdLine += ` "${filePath}"`;
     }
 
-    const parts: string[] = [];
-    let current = '';
-    let inQuote = false;
-    for (const ch of cmdLine) {
-      if (ch === '"') { inQuote = !inQuote; continue; }
-      if (ch === ' ' && !inQuote) {
-        if (current) { parts.push(current); current = ''; }
-        continue;
-      }
-      current += ch;
-    }
-    if (current) parts.push(current);
-    const cmd = parts[0];
-    const args = parts.slice(1);
-
     try {
-      const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      const child = spawn(cmdLine, [], {
+        detached: true,
+        stdio: 'ignore',
+        shell: true,
+        cwd: cwd,
+        env: { ...process.env }
+      });
       child.on('error', (err: any) => {
         resolve((err?.message || err) as string);
       });
@@ -308,9 +344,9 @@ ipcMain.on('cache:drag-icon', (_event, iconName: string, pngBase64: string) => {
   }
 });
 
-ipcMain.on('dnd:start', (event, filePath: string) => {
+ipcMain.on('dnd:start', (event, filePaths: string | string[]) => {
+  const files = Array.isArray(filePaths) ? filePaths : [filePaths];
   const cachedPath = getCachedDragIconPath('insert_drive_file');
-  // Ensure a cached icon exists
   if (!existsSync(cachedPath)) {
     try {
       const { nativeImage } = require('electron');
@@ -322,7 +358,8 @@ ipcMain.on('dnd:start', (event, filePath: string) => {
     } catch {}
   }
   event.sender.startDrag({
-    file: filePath,
+    file: files[0],
+    files,
     icon: cachedPath,
   });
 });

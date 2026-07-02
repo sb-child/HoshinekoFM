@@ -2,19 +2,20 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
-import { useToast } from '../contexts/ToastContext';
+import { showToast } from '../utils/toast';
 import { formatFileOpError } from '../utils/fileOperations';
 
 interface OpenWithDialogProps {
     open: boolean;
     onClose: () => void;
-    onSelect: (exec: string) => void;
+    onSelect: (exec: string, desktopFile?: string) => void;
 }
 
 interface AppEntry {
     name: string;
     icon: string | null;
     exec: string;
+    desktopFile?: string;
 }
 
 // 统一汉化词典
@@ -34,13 +35,14 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
   const [recommendedApps, setRecommendedApps] = useState<AppEntry[]>([]);
   const [search, setSearch] = useState('');
   const [selectedApp, setSelectedApp] = useState<AppEntry | null>(null);
-  const { showToast } = useToast(); // 声明气泡提示方法
 
   useEffect(() => {
     if (open) {
       window.electron.getApps().then(setAllApps);
       if (path) {
-        window.electron.getRecommendedApps(path).then(setRecommendedApps);
+        window.electron.getRecommendedApps(path).then(apps =>
+          setRecommendedApps(apps.map(a => ({ name: a.name, icon: a.icon, exec: a.exec, desktopFile: a.path })))
+        );
       } else {
         setRecommendedApps([]);
       }
@@ -56,7 +58,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
     if (selectedApp) {
       try {
         // 执行打开操作
-        await onSelect(selectedApp.exec);
+        await onSelect(selectedApp.exec, selectedApp.desktopFile);
         onClose();
       } catch (error: any) {
         console.error('打开方式执行失败:', error);

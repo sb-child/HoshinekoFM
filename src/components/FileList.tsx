@@ -24,6 +24,7 @@ interface FileListProps {
   ) => void;
   onSetSelected?: (paths: Set<string>) => void;
   onSelectionModeChange?: (mode: "replace" | "union" | "intersection" | "difference" | null) => void;
+  onHoverFile?: (file: IFile | null) => void;
   viewMode: "grid" | "list";
   iconSize: number;
   filledIcons: boolean;
@@ -61,6 +62,13 @@ function getFileIconFromMime(
 ): string {
   if (isDirectory) return "folder";
   if (!mime) return "insert_drive_file";
+
+  if (mime === "inode/symlink") return "link";
+  if (mime === "inode/blockdevice") return "hard_drive";
+  if (mime === "inode/chardevice") return "keyboard";
+  if (mime === "inode/fifo") return "swap_vert";
+  if (mime === "inode/socket") return "hub";
+
   const cat = mime.split("/")[0];
   switch (cat) {
   case "image":
@@ -165,6 +173,7 @@ interface RowData {
   onFolderDragOver: (e: React.DragEvent, file: IFile) => void;
   onFolderDragLeave: () => void;
   onFolderDrop: (e: React.DragEvent, file: IFile) => void;
+  onHoverFile?: (file: IFile | null) => void;
   dragOverPath: string | null;
   iconSize: number;
   filledIcons: boolean;
@@ -306,6 +315,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
       <div style={style}>
         <div
           className={`file-list-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+          title={file.name}
           style={{
             display: "flex",
             alignItems: "center",
@@ -317,6 +327,8 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             cursor: "pointer",
             boxSizing: "border-box",
           }}
+          onMouseEnter={() => data.onHoverFile?.(file)}
+          onMouseLeave={() => data.onHoverFile?.(null)}
           onMouseDown={(e) => {
             if (e.button !== 0) return;
             triggerRipple(e, e.currentTarget as HTMLElement);
@@ -400,7 +412,6 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
           ) : (
             <span
               className="file-name"
-              title={file.name}
               style={{
                 flex: 1,
                 overflow: "hidden",
@@ -446,6 +457,9 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
           <div
             key={file.path}
             className={`file-list-item file-grid-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+            title={file.name}
+            onMouseEnter={() => data.onHoverFile?.(file)}
+            onMouseLeave={() => data.onHoverFile?.(null)}
             onMouseDown={(e) => {
               if (e.button !== 0) return;
               triggerRipple(e, e.currentTarget as HTMLElement);
@@ -550,7 +564,6 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
             ) : (
               <span
                 className="file-name"
-                title={file.name}
                 style={{
                   textAlign: "center",
                   fontSize: "12px",
@@ -576,6 +589,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
 // --- Main component ---
 
 let _draggedPaths: Set<string> = new Set();
+let _pendingNativeDragPaths: string[] | null = null;
 
 export const FileList: React.FC<FileListProps> = ({
   files,
@@ -589,6 +603,7 @@ export const FileList: React.FC<FileListProps> = ({
   onDropOnFolder,
   onSetSelected,
   onSelectionModeChange,
+  onHoverFile,
   viewMode,
   iconSize,
   filledIcons,
@@ -756,9 +771,9 @@ export const FileList: React.FC<FileListProps> = ({
         );
       }
 
-      // Native file drag for external apps (Localsend, etc.)
-      if (window.electron?.startDrag && filesToDrag.length === 1) {
-        window.electron.startDrag(filesToDrag[0].path);
+      // Native file drag for external apps (deferred: only when cursor leaves the window)
+      if (window.electron?.startDrag) {
+        _pendingNativeDragPaths = filesToDrag.map((f) => f.path);
       }
     },
     [selectedFiles, files, currentPath, startDrag],
@@ -771,11 +786,37 @@ export const FileList: React.FC<FileListProps> = ({
       setDragOverPath(null);
       lastDragOverFolderRef.current = null;
       _draggedPaths = new Set();
+      _pendingNativeDragPaths = null;
       endDrag();
     };
     document.addEventListener("dragend", onDragEnd, true);
     return () => document.removeEventListener("dragend", onDragEnd, true);
   }, [endDrag]);
+
+  // Start native file drag when cursor leaves the window (for external apps)
+  useEffect(() => {
+    let dragCounter = 0;
+
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter++;
+    };
+    const onDragLeave = () => {
+      dragCounter--;
+      if (dragCounter <= 0 && _pendingNativeDragPaths && window.electron?.startDrag) {
+        const paths = _pendingNativeDragPaths;
+        _pendingNativeDragPaths = null;
+        window.electron.startDrag(paths);
+      }
+    };
+
+    document.addEventListener("dragenter", onDragEnter, true);
+    document.addEventListener("dragleave", onDragLeave, true);
+    return () => {
+      document.removeEventListener("dragenter", onDragEnter, true);
+      document.removeEventListener("dragleave", onDragLeave, true);
+    };
+  }, []);
 
   // Debug: catch ALL drop events (capture phase, document level)
   useEffect(() => {
@@ -855,6 +896,7 @@ export const FileList: React.FC<FileListProps> = ({
   const handleFolderDrop = useCallback(
     (e: React.DragEvent, targetFile: IFile) => {
       console.warn("[drag] drop on folder:", targetFile.name);
+      _pendingNativeDragPaths = null;
       const dragState = getDragState();
       console.warn("[drag] drop getDragState:", dragState);
       e.preventDefault();
@@ -1173,6 +1215,7 @@ export const FileList: React.FC<FileListProps> = ({
             onFolderDragOver: handleFolderDragOver,
             onFolderDragLeave: handleFolderDragLeave,
             onFolderDrop: handleFolderDrop,
+            onHoverFile,
             dragOverPath,
             iconSize,
             filledIcons,

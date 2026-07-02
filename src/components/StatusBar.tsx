@@ -1,12 +1,17 @@
 import React from 'react';
+import type { IFile } from '../types/files';
+import { getFileTypeDescription } from '../utils/mimeTypes';
 
 interface StatusBarProps {
     totalItems: number;
     selectedCount: number;
     selectionHint?: string | null;
+    hoveredFile?: IFile | null;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount, selectionHint }) => {
+export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount, selectionHint, hoveredFile }) => {
+  const fileType = hoveredFile ? getFileTypeDescription(hoveredFile) : null;
+
   return (
     <div style={{
       height: '24px',
@@ -20,12 +25,27 @@ export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount,
       gap: '16px',
       flexShrink: 0
     }}>
-      <span>{totalItems} items</span>
+      <span style={{ flexShrink: 0 }}>{totalItems} items</span>
       {selectedCount > 0 && (
-        <span>{selectedCount} selected</span>
+        <span style={{ flexShrink: 0 }}>{selectedCount} selected</span>
       )}
       {selectionHint && (
-        <span>{selectionHint}</span>
+        <span style={{ flexShrink: 0 }}>{selectionHint}</span>
+      )}
+      {hoveredFile && (
+        <span style={{
+          marginLeft: 'auto',
+          color: 'var(--text-primary)',
+          display: 'flex',
+          minWidth: 0,
+          gap: '4px',
+          textAlign: 'right',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {hoveredFile.name}
+          </span>
+          <span style={{ flexShrink: 0 }}>({fileType})</span>
+        </span>
       )}
     </div>
   );

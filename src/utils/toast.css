@@ -1,0 +1,68 @@
+.Toastify__toast {
+  padding: 8px 10px 8px 14px;
+  min-height: unset;
+}
+
+.Toastify__toast-body {
+  padding: 0;
+  margin: 0;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.Toastify__toast-body > div:last-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.toast-message {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.Toastify__toast-icon {
+  width: 18px;
+  margin-inline-end: 8px;
+  flex-shrink: 0;
+}
+
+.Toastify__progress-bar {
+  height: 3px;
+}
+
+.toast-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  z-index: 1;
+}
+
+.toast-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  color: inherit;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toast-action-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.toast-action-btn .material-symbols-rounded {
+  font-size: 16px;
+}
