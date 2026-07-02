@@ -2,6 +2,7 @@ import React from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
+import { t as ti } from '../i18n';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -18,23 +19,26 @@ interface SettingsDialogProps {
   customCssPath?: string;
 }
 
-// 统一汉化词典
-const settingsLocaleMap: Record<string, string> = {
-  Settings: "设置",
-  Done: "完成",
-  "Show Hidden Files": "显示隐藏文件",
-  Appearance: "外观",
-  "View Mode": "视图模式",
-  Grid: "网格",
-  List: "列表",
-  "Icon Size": "图标大小",
-  "Filled Icons": "实心图标",
-  Customization: "个性化",
-  "Custom CSS": "自定义 CSS",
-  "Import CSS": "导入 CSS",
+const labelToKey: Record<string, string> = {
+  Settings: "settings.title",
+  Done: "settings.done",
+  "Show Hidden Files": "settings.show_hidden",
+  Appearance: "settings.appearance",
+  "View Mode": "settings.view_mode",
+  Grid: "settings.grid",
+  List: "settings.list",
+  "Icon Size": "settings.icon_size",
+  "Filled Icons": "settings.filled_icons",
+  Customization: "settings.customization",
+  "Custom CSS": "settings.custom_css",
+  "Import CSS": "settings.import_css",
 };
 
-const tSettings = (text: string) => settingsLocaleMap[text] || text;
+const tSettings = (text: string) => {
+  const key = labelToKey[text];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return key ? (ti as any)(key) : text;
+};
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   open,

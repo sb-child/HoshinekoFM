@@ -9,6 +9,7 @@ import {
   type ConflictEntry,
   type ConflictResult,
 } from '../utils/fileConflict';
+import { t } from '../i18n';
 import './ConflictDialog.css';
 
 interface ConflictDialogProps {
@@ -100,8 +101,10 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
   const dialogTitle =
     title ??
     (operation
-      ? `${operation === "copy" ? "复制" : "移动"}重名 — ${conflicts.length} 个项目`
-      : `${conflicts.length} 个项目重名`);
+      ? operation === "copy"
+        ? t('dialog.conflict.title_copy', conflicts.length)
+        : t('dialog.conflict.title_move', conflicts.length)
+      : t('dialog.conflict.title_fallback', conflicts.length));
 
   return (
     <Dialog
@@ -111,10 +114,10 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
       actions={
         <>
           <Button variant="text" onClick={onCancel}>
-            取消
+            {t('dialog.button.cancel')}
           </Button>
           <Button onClick={handleConfirm} disabled={hasManualConflict}>
-            确认
+            {t('dialog.button.confirm')}
           </Button>
         </>
       }
@@ -123,21 +126,21 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
         {sourcePath && (
           <div className="conflict-info-section">
             <div className="conflict-info-row">
-              <span className="conflict-info-label">来源</span>
+              <span className="conflict-info-label">{t('dialog.conflict.source_label')}</span>
               <span className="conflict-info-path" title={sourcePath}>
                 {truncateDirPath(sourcePath, 48)}
               </span>
             </div>
             {operation && (
               <div className="conflict-info-row">
-                <span className="conflict-info-label">操作</span>
+                <span className="conflict-info-label">{t('dialog.conflict.operation_label')}</span>
                 <span className="conflict-info-value">
-                  {operation === "copy" ? "复制" : "移动"}
+                  {operation === "copy" ? t('dialog.conflict.operation_copy') : t('dialog.conflict.operation_move')}
                 </span>
               </div>
             )}
             <div className="conflict-info-row">
-              <span className="conflict-info-label">目标</span>
+              <span className="conflict-info-label">{t('dialog.conflict.dest_label')}</span>
               <span className="conflict-info-path" title={destDir}>
                 {truncateDirPath(destDir, 48)}
               </span>
@@ -151,7 +154,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
             checked={mode === 'skip'}
             onChange={() => handleModeChange('skip')}
           />
-          <span>取消操作重名项</span>
+          <span>{t('dialog.conflict.skip')}</span>
         </label>
         <label className="conflict-radio">
           <input
@@ -160,7 +163,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
             checked={mode === 'auto-rename'}
             onChange={() => handleModeChange('auto-rename')}
           />
-          <span>自动重命名</span>
+          <span>{t('dialog.conflict.auto_rename')}</span>
         </label>
         <label className="conflict-radio">
           <input
@@ -169,7 +172,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
             checked={mode === 'manual-rename'}
             onChange={() => handleModeChange('manual-rename')}
           />
-          <span>手动重命名</span>
+          <span>{t('dialog.conflict.manual_rename')}</span>
         </label>
 
         {(mode === 'skip' || mode === 'auto-rename') && (
@@ -181,7 +184,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
               </div>
             ))}
             {remaining > 0 && (
-              <div className="conflict-file-more">...还有 {remaining} 个</div>
+              <div className="conflict-file-more">{t('dialog.conflict.more_items', remaining)}</div>
             )}
           </div>
         )}
@@ -204,7 +207,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
                     className={`conflict-rename-input ${conflict ? 'conflict-rename-input-error' : ''}`}
                     value={edits[i]}
                     onChange={(e) => handleEditChange(i, e.target.value)}
-                    placeholder={isEmpty ? '取消此项' : undefined}
+                    placeholder={isEmpty ? t('dialog.conflict.cancel_item') : undefined}
                     spellCheck={false}
                   />
                   {conflict && !isEmpty && (

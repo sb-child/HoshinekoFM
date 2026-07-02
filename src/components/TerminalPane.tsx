@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { t } from '../i18n';
 
 interface TerminalPaneProps {
     cwd?: string;
@@ -70,7 +71,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ cwd }) => {
       });
 
       window.electron.ptyOnExit(pid, () => {
-        term.write('\r\nProcess exited.\r\n');
+        term.write(t('terminal.process_exited'));
         cleanupData();
         pidRef.current = null;
       });

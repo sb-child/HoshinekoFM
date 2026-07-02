@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './ContextMenu.css';
 import { Icon } from './Icon';
+import { t } from '../i18n';
 
 export interface ContextMenuItem {
     label: string;
@@ -32,24 +33,23 @@ function clampPosition(x: number, y: number, width: number, height: number) {
   return { left: newX, top: newY };
 }
 
-// 统一汉化词典（包含全量右键菜单、解压、打开方式等）
-const contextLocaleMap: Record<string, string> = {
-  'Open': '打开',
-  'Open in Terminal': '在内置终端打开',
-  'Copy': '复制',
-  'Cut': '剪切',
-  'Paste': '粘贴',
-  'Rename': '重命名',
-  'Delete': '删除',
-  'Properties': '属性',
-  'New Folder': '新建文件夹',
-  'New File': '新建文件',
-  'Refresh': '刷新',
-  'Select All': '全选',
-  'Pin to Dashboard': '固定到仪表盘',
-  'Unpin from Dashboard': '从仪表盘取消固定',
-  'Extract Here': '解压到当前文件夹',
-  'Open With...': '打开方式...'
+const labelToKey: Record<string, string> = {
+  'Open': 'context_menu.open',
+  'Open With...': 'context_menu.open_with',
+  'Open in Terminal': 'context_menu.open_terminal',
+  'Copy': 'context_menu.copy',
+  'Cut': 'context_menu.cut',
+  'Paste': 'context_menu.paste',
+  'Rename': 'context_menu.rename',
+  'Delete': 'context_menu.delete',
+  'Properties': 'context_menu.properties',
+  'New Folder': 'context_menu.new_folder',
+  'New File': 'context_menu.new_file',
+  'Refresh': 'context_menu.refresh',
+  'Select All': 'context_menu.select_all',
+  'Pin to Dashboard': 'context_menu.pin',
+  'Unpin from Dashboard': 'context_menu.unpin',
+  'Extract Here': 'context_menu.extract_here',
 };
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
@@ -92,16 +92,16 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
           setTimeout(() => {
             const dialogTitles = document.querySelectorAll('.md3-dialog-title, .dialog-title, h2');
             dialogTitles.forEach(el => {
-              if (el.textContent === 'Rename') el.textContent = '重命名';
+              if (el.textContent === 'Rename') el.textContent = t('dialog.rename.title');
             });
             const buttons = document.querySelectorAll('button');
             buttons.forEach(btn => {
-              if (btn.textContent === 'Cancel') btn.textContent = '取消';
-              if (btn.textContent === 'Rename') btn.textContent = '重命名';
+              if (btn.textContent === 'Cancel') btn.textContent = t('dialog.rename.cancel');
+              if (btn.textContent === 'Rename') btn.textContent = t('dialog.rename.confirm');
             });
             const inputs = document.querySelectorAll('input');
             inputs.forEach(input => {
-              if (input.placeholder === 'New name') input.placeholder = '新名称';
+              if (input.placeholder === 'New name') input.placeholder = t('dialog.rename.placeholder');
             });
           }, 50);
         }
@@ -127,7 +127,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
           }}>
             {item.icon && <Icon name={item.icon} className="context-menu-icon" />}
             <span className="context-menu-label">
-              {contextLocaleMap[item.label] || item.label}
+              {labelToKey[item.label] ? (t as any)(labelToKey[item.label]) : item.label}
             </span>
             {item.shortcut && <span className="context-menu-shortcut">{item.shortcut}</span>}
           </button>

@@ -4,6 +4,7 @@ import { Button } from './Button';
 import { Icon } from './Icon';
 import { showToast } from '../utils/toast';
 import { formatFileOpError } from '../utils/fileOperations';
+import { t as ti } from '../i18n';
 
 interface OpenWithDialogProps {
     open: boolean;
@@ -18,17 +19,20 @@ interface AppEntry {
     desktopFile?: string;
 }
 
-// 统一汉化词典
-const openWithLocaleMap: Record<string, string> = {
-  'Open With...': '打开方式',
-  'Cancel': '取消',
-  'Open': '打开',
-  'Search applications...': '搜索应用程序...',
-  'Recommended': '推荐程序',
-  'All Applications': '所有应用程序'
+const labelToKey: Record<string, string> = {
+  'Open With...': 'open_with.title',
+  'Cancel': 'dialog.button.cancel',
+  'Open': 'dialog.button.open',
+  'Search applications...': 'open_with.search',
+  'Recommended': 'open_with.recommended',
+  'All Applications': 'open_with.all'
 };
 
-const tOpenWith = (text: string) => openWithLocaleMap[text] || text;
+const tOpenWith = (text: string) => {
+  const key = labelToKey[text];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return key ? (ti as any)(key) : text;
+};
 
 export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = ({ open, onClose, onSelect, path }) => {
   const [allApps, setAllApps] = useState<AppEntry[]>([]);
@@ -61,7 +65,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
         await onSelect(selectedApp.exec, selectedApp.desktopFile);
         onClose();
       } catch (error: any) {
-        console.error('打开方式执行失败:', error);
+        console.error(ti('toast.launch_failed', selectedApp.exec, String(error)));
         showToast(formatFileOpError('启动程序', selectedApp.name, error), 'error');
       }
     }

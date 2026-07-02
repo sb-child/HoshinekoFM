@@ -3,6 +3,7 @@ import { Breadcrumbs } from "./Breadcrumbs";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import type { IFile } from "../types/files";
+import { t } from "../i18n";
 import "./Omnibar.css";
 
 interface OmnibarProps {
@@ -91,7 +92,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
               // Actually better UX: Click outside -> Cancel back to breadcrumbs.
               setIsEditing(false);
             }}
-            placeholder="Type a path or search..."
+            placeholder={t("omnibar.placeholder")}
           />
         </div>
       ) : (
@@ -106,7 +107,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
             variant="standard"
             className="omnibar-trigger"
             onClick={() => setIsEditing(true)}
-            title="Click to edit path or search"
+            title={t("omnibar.button_tip")}
           >
             <Icon name="edit" className="edit-icon" />
           </IconButton>

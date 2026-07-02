@@ -6,6 +6,7 @@ import { Icon } from "./Icon";
 import { useDrag } from "../contexts/DragContext";
 import { clearPendingNativeDrag } from "./FileList";
 import type { IFile } from "../types/files";
+import { t } from "../i18n";
 
 interface BreadcrumbsProps {
   currentPath: string;
@@ -110,7 +111,7 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleDrop(e, "/")}
         className={`breadcrumb-root${dragOverPath === "/" ? " drag-over" : ""}`}
-        title="Root"
+        title={t("breadcrumbs.root")}
       >
         <Icon name="home" style={{ fontSize: "18px" }} />
       </IconButton>

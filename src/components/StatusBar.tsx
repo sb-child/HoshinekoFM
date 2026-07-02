@@ -1,6 +1,7 @@
 import React from 'react';
 import type { IFile } from '../types/files';
 import { getFileTypeDescription } from '../utils/mimeTypes';
+import { t } from '../i18n';
 
 interface StatusBarProps {
     totalItems: number;
@@ -25,9 +26,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({ totalItems, selectedCount,
       gap: '16px',
       flexShrink: 0
     }}>
-      <span style={{ flexShrink: 0 }}>{totalItems} items</span>
+      <span style={{ flexShrink: 0 }}>{t("status.items", totalItems)}</span>
       {selectedCount > 0 && (
-        <span style={{ flexShrink: 0 }}>{selectedCount} selected</span>
+        <span style={{ flexShrink: 0 }}>{t("status.selected", selectedCount)}</span>
       )}
       {selectionHint && (
         <span style={{ flexShrink: 0 }}>{selectionHint}</span>

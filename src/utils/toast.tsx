@@ -1,5 +1,6 @@
 import React from "react";
 import { toast, type ToastOptions } from "react-toastify";
+import { t } from "../i18n";
 import "./toast.css";
 
 export function showToast(
@@ -20,14 +21,14 @@ export function showToast(
             e.stopPropagation();
             navigator.clipboard.writeText(message);
           }}
-          title="复制"
+          title={t("toast.copy_action")}
         >
           <span className="material-symbols-rounded">content_copy</span>
         </button>
         <button
           className="toast-action-btn"
           onClick={closeToast}
-          title="关闭"
+          title={t("toast.close_action")}
         >
           <span className="material-symbols-rounded">close</span>
         </button>

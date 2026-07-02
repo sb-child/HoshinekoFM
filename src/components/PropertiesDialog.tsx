@@ -3,6 +3,7 @@ import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
 import type { IFile } from '../types/files';
+import { t as ti } from '../i18n';
 
 interface PropertiesDialogProps {
     file: IFile | null;
@@ -10,22 +11,25 @@ interface PropertiesDialogProps {
     onClose: () => void;
 }
 
-// 统一属性面板汉化词典
-const propLocaleMap: Record<string, string> = {
-  'Properties': '属性',
-  'Close': '关闭',
-  'Folder': '文件夹',
-  'File': '文件',
-  'Location:': '位置:',
-  'Size:': '大小:',
-  'Calculating...': '计算中...',
-  ' bytes': ' 字节',
-  'Modified:': '修改时间:',
-  'Type:': '类型:',
-  'Directory': '文件夹'
+const labelToKey: Record<string, string> = {
+  'Properties': 'properties.title',
+  'Close': 'dialog.button.close',
+  'Folder': 'properties.folder',
+  'File': 'properties.file',
+  'Location:': 'properties.location',
+  'Size:': 'properties.size',
+  'Calculating...': 'properties.calculating',
+  ' bytes': 'properties.bytes',
+  'Modified:': 'properties.modified',
+  'Type:': 'properties.type',
+  'Directory': 'properties.directory'
 };
 
-const tProp = (text: string) => propLocaleMap[text] || text;
+const tProp = (text: string) => {
+  const key = labelToKey[text];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return key ? (ti as any)(key) : text;
+};
 
 export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, onClose }) => {
   const [calculatedSize, setCalculatedSize] = useState<number | null>(null);

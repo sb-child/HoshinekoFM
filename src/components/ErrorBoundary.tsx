@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { t } from '../i18n';
 
 interface Props {
     children?: ReactNode;
@@ -30,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div style={{ padding: '20px', color: 'red', overflow: 'auto', height: '100%', userSelect: 'text' }}>
-          <h1>Something went wrong.</h1>
+          <h1>{t("error.something_wrong")}</h1>
           <h3>{this.state.error?.toString()}</h3>
           <pre style={{ background: '#eee', padding: '10px', borderRadius: '4px', color: '#333' }}>
             {this.state.errorInfo?.componentStack}

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { showToast } from './toast';
 import {
   checkConflicts,
@@ -18,47 +19,47 @@ export function formatFileOpError(operation: string, fileRef: string, error: any
   }
 
   switch (code) {
-  case 'EEXIST':  return `${operation} ${fileRef}: 存在重名文件`;
-  case 'ENOENT':  return `${operation} ${fileRef}: 文件或目录不存在`;
+  case 'EEXIST':  return t('file_op.exists', operation, fileRef);
+  case 'ENOENT':  return t('file_op.not_found', operation, fileRef);
   case 'EACCES':
-  case 'EPERM':   return `${operation} ${fileRef}: 权限不足`;
-  case 'ENOSPC':  return `${operation} ${fileRef}: 磁盘空间不足`;
-  case 'EROFS':   return `${operation} ${fileRef}: 文件系统只读`;
-  case 'EISDIR':  return `${operation} ${fileRef}: 路径是一个目录`;
-  case 'ENOTDIR': return `${operation} ${fileRef}: 路径不是一个目录`;
-  case 'EXDEV':   return `${operation} ${fileRef}: 无法跨设备移动文件`;
-  case 'EBUSY':   return `${operation} ${fileRef}: 文件被占用，请关闭后重试`;
+  case 'EPERM':   return t('file_op.permission', operation, fileRef);
+  case 'ENOSPC':  return t('file_op.no_space', operation, fileRef);
+  case 'EROFS':   return t('file_op.read_only', operation, fileRef);
+  case 'EISDIR':  return t('file_op.is_dir', operation, fileRef);
+  case 'ENOTDIR': return t('file_op.not_dir', operation, fileRef);
+  case 'EXDEV':   return t('file_op.cross_device', operation, fileRef);
+  case 'EBUSY':   return t('file_op.busy', operation, fileRef);
   }
 
   if (msg.includes('same file') || msg.includes('same path') || msg.includes('source and destination')) {
-    return `${operation} ${fileRef}: 目标不能是自身`;
+    return t('file_op.same_target', operation, fileRef);
   }
   if (msg.includes('already exists') || msg.includes('exists')) {
-    return `${operation} ${fileRef}: 存在重名文件`;
+    return t('file_op.exists', operation, fileRef);
   }
   if (msg.includes('no such file') || msg.includes('not found') || msg.includes('不存在')) {
-    return `${operation} ${fileRef}: 找不到文件`;
+    return t('file_op.not_found', operation, fileRef);
   }
   if (msg.includes('permission denied') || msg.includes('not permitted') || msg.includes('eacces') || msg.includes('eperm')) {
-    return `${operation} ${fileRef}: 权限不足`;
+    return t('file_op.permission', operation, fileRef);
   }
   if (msg.includes('not a directory')) {
-    return `${operation} ${fileRef}: 路径不是一个目录`;
+    return t('file_op.not_dir', operation, fileRef);
   }
   if (msg.includes('is a directory')) {
-    return `${operation} ${fileRef}: 路径是一个目录`;
+    return t('file_op.is_dir', operation, fileRef);
   }
   if (msg.includes('no space') || msg.includes('device') || msg.includes('enospc')) {
-    return `${operation} ${fileRef}: 磁盘空间不足`;
+    return t('file_op.no_space', operation, fileRef);
   }
   if (msg.includes('read-only') || msg.includes('erofs')) {
-    return `${operation} ${fileRef}: 文件系统只读`;
+    return t('file_op.read_only', operation, fileRef);
   }
   if (msg.includes('busy') || msg.includes('ebusy')) {
-    return `${operation} ${fileRef}: 文件被占用，请关闭后重试`;
+    return t('file_op.busy', operation, fileRef);
   }
 
-  return `${operation} ${fileRef}: ${error?.message || error || '未知错误'}`;
+  return t('file_op.generic', operation, fileRef, error?.message || error);
 }
 
 function fileName(path: string): string {
@@ -82,10 +83,10 @@ export async function createFile(
 ): Promise<void> {
   try {
     await window.electron.createFile(filePath);
-    showToast(`文件 ${fileName(filePath)} 已创建`, 'success');
+    showToast(t('toast.file_created', fileName(filePath)), 'success');
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('创建文件', fileName(filePath), e), 'error');
+    showToast(formatFileOpError(t('operation.create_file'), fileName(filePath), e), 'error');
   }
 }
 
@@ -95,10 +96,10 @@ export async function createDirectory(
 ): Promise<void> {
   try {
     await window.electron.createDirectory(dirPath);
-    showToast(`文件夹 ${fileName(dirPath)} 已创建`, 'success');
+    showToast(t('toast.folder_created', fileName(dirPath)), 'success');
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('创建文件夹', fileName(dirPath), e), 'error');
+    showToast(formatFileOpError(t('operation.create_folder'), fileName(dirPath), e), 'error');
   }
 }
 
@@ -114,7 +115,7 @@ export async function renameFile(
   try {
     const targetExists = await window.electron.exists(newPath);
     if (targetExists) {
-      showToast(`重命名失败：${newName} 已存在`, 'error');
+      showToast(t('error.name_exists', newName), 'error');
       return;
     }
     if (newParent !== oldParent) {
@@ -123,13 +124,13 @@ export async function renameFile(
     }
     await window.electron.renameFile(oldPath, newPath);
     if (oldParent === newParent) {
-      showToast(`重命名：${oldName} -> ${newName}`, 'success');
+      showToast(t('toast.rename_success', oldName, newName), 'success');
     } else {
-      showToast(`重命名：${oldName} 已移动至 ${normalizePath(newPath)}`, 'success');
+      showToast(t('toast.rename_move_success', oldName, normalizePath(newPath)), 'success');
     }
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('重命名', `${oldName} -> ${normalizePath(newPath)}`, e), 'error');
+    showToast(formatFileOpError(t('operation.rename_op'), `${oldName} -> ${normalizePath(newPath)}`, e), 'error');
   }
 }
 
@@ -139,10 +140,10 @@ export async function trashFile(
 ): Promise<void> {
   try {
     await window.electron.trashFile(filePath);
-    showToast(`${fileName(filePath)} 已删除`, 'success');
+    showToast(t('toast.file_deleted', fileName(filePath)), 'success');
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('删除', fileName(filePath), e), 'error');
+    showToast(formatFileOpError(t('operation.delete_op'), fileName(filePath), e), 'error');
   }
 }
 
@@ -161,11 +162,12 @@ export async function trashFiles(
     }
   }
   if (success > 0) {
-    showToast(`已删除 ${success} 个项目`, 'success');
+    showToast(t('toast.deleted_items', success), 'success');
     onSuccess?.();
   }
   if (fail > 0) {
-    showToast(`删除 ${fail} 个项目失败，请检查权限`, 'error');
+    showToast(t('toast.failed_items', fail), 'error');
+    showToast(t('toast.delete_fail_permission'), 'error');
   }
 }
 
@@ -177,15 +179,15 @@ export async function copyFile(
   try {
     const targetExists = await window.electron.exists(dest);
     if (targetExists) {
-      showToast(`复制失败：${fileName(dest)} 已存在`, 'error');
+      showToast(t('error.copy_exists', fileName(dest)), 'error');
       return;
     }
     await window.electron.copyFile(source, dest);
     const destDir = dest.split('/').slice(0, -1).pop() || '';
-    showToast(`${fileName(source)} → ${destDir}/${fileName(dest)}`, 'success');
+    showToast(t('toast.copy_success', fileName(source), destDir, fileName(dest)), 'success');
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('复制', `${fileName(source)} -> ${fileName(dest)}`, e), 'error');
+    showToast(formatFileOpError(t('operation.copy_op'), `${fileName(source)} -> ${fileName(dest)}`, e), 'error');
   }
 }
 
@@ -197,15 +199,15 @@ export async function moveFile(
   try {
     const targetExists = await window.electron.exists(dest);
     if (targetExists) {
-      showToast(`移动失败：${fileName(dest)} 已存在`, 'error');
+      showToast(t('error.move_exists', fileName(dest)), 'error');
       return;
     }
     await window.electron.moveFile(source, dest);
     const destDir = dest.split('/').slice(0, -1).pop() || '';
-    showToast(`${fileName(source)} → ${destDir}/${fileName(dest)}`, 'success');
+    showToast(t('toast.move_success', fileName(source), destDir, fileName(dest)), 'success');
     onSuccess?.();
   } catch (e) {
-    showToast(formatFileOpError('移动', `${fileName(source)} -> ${fileName(dest)}`, e), 'error');
+    showToast(formatFileOpError(t('operation.move_op'), `${fileName(source)} -> ${fileName(dest)}`, e), 'error');
   }
 }
 
@@ -216,13 +218,13 @@ export async function extractFile(
   try {
     const ok = await window.electron.extractFile(filePath);
     if (ok) {
-      showToast(`${fileName(filePath)} 已解压`, 'success');
+      showToast(t('toast.file_extracted', fileName(filePath)), 'success');
       onSuccess?.();
     } else {
-      showToast(`解压 ${fileName(filePath)} 失败: 不支持的压缩格式`, 'error');
+      showToast(t('error.unsupported_format'), 'error');
     }
   } catch (e) {
-    showToast(formatFileOpError('解压', fileName(filePath), e), 'error');
+    showToast(formatFileOpError(t('operation.extract_op'), fileName(filePath), e), 'error');
   }
 }
 
@@ -302,12 +304,12 @@ export async function pasteFiles(
   }
 
   if (success > 0) {
-    showToast(`已粘贴 ${success} 个项目`, 'success');
+    showToast(t('toast.pasted_items', success), 'success');
     if (operation === 'cut') clearClipboard?.();
     onSuccess?.();
   }
   if (fail > 0) {
-    showToast(`粘贴 ${fail} 个项目失败`, 'error');
+    showToast(t('toast.failed_items', fail), 'error');
   }
 }
 
@@ -317,10 +319,10 @@ export async function openFile(
   try {
     const err = await window.electron.openPath(filePath);
     if (err) {
-      showToast(`打开 ${fileName(filePath)} 失败: ${err}`, 'error');
+      showToast(t('error.file_open_failed', fileName(filePath), err), 'error');
     }
   } catch (e) {
-    showToast(formatFileOpError('打开', fileName(filePath), e), 'error');
+    showToast(formatFileOpError(t('operation.open_op'), fileName(filePath), e), 'error');
   }
 }
 
@@ -341,7 +343,7 @@ export async function importFiles(
     }
   }
   if (count > 0) {
-    showToast(`已导入 ${count} 个文件`, 'success');
+    showToast(t('toast.imported_files', count), 'success');
     onSuccess?.();
   }
 }
@@ -349,11 +351,11 @@ export async function importFiles(
 export function copyToClipboard(
   count: number,
 ): void {
-  showToast(`已复制 ${count} 个项目`, 'info');
+  showToast(t('toast.copied_items', count), 'info');
 }
 
 export function cutToClipboard(
   count: number,
 ): void {
-  showToast(`已剪切 ${count} 个项目`, 'info');
+  showToast(t('toast.cut_items', count), 'info');
 }

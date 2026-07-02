@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { showToast } from "./utils/toast";
+import { t } from "./i18n";
 import { initDragIcons } from "./utils/dragIconRenderer";
 import "./index.css";
 import { ToastContainer } from "react-toastify";
@@ -291,7 +292,7 @@ function AppContent() {
           const newTabId = Date.now().toString();
           const newTab: TabState = {
             id: newTabId,
-            title: "New Tab",
+        title: t("tab.new_tab"),
             path,
             version: 0,
           };
@@ -610,8 +611,8 @@ function AppContent() {
             >
               <div style={{ textAlign: "center" }}>
                 <Icon name="tab" size={48} />
-                <p>No tabs open</p>
-                <Button onClick={() => handleAddTab()}>Open New Tab</Button>
+                <p>{t("empty.no_tabs")}</p>
+                <Button onClick={() => handleAddTab()}>{t("empty.open_new_tab")}</Button>
               </div>
             </div>
           )}
@@ -636,7 +637,7 @@ function AppContent() {
               }}
             >
               <span style={{ fontSize: "12px", fontWeight: 500 }}>
-                Terminal
+                {t("terminal.title")}
               </span>
               <div style={{ flex: 1 }} />
               <IconButton
@@ -668,15 +669,15 @@ function AppContent() {
         )}
 
         <Dialog
-          title="Rename"
+          title={t("dialog.rename.title")}
           open={renameDialogOpen}
           onClose={() => setRenameDialogOpen(false)}
           actions={
             <>
               <Button variant="text" onClick={() => setRenameDialogOpen(false)}>
-                Cancel
+                {t("dialog.rename.cancel")}
               </Button>
-              <Button onClick={handleRename}>Rename</Button>
+              <Button onClick={handleRename}>{t("dialog.rename.confirm")}</Button>
             </>
           }
         >
@@ -705,7 +706,7 @@ function AppContent() {
         {/* Create File/Folder Dialog */}
         {createDialog && (
           <NameInputDialog
-            title={createDialog.type === "folder" ? "新建文件夹" : "新建文件"}
+            title={createDialog.type === "folder" ? t("dialog.create.folder") : t("dialog.create.file")}
             defaultName={createDialog.defaultName}
             isDir={createDialog.type === "folder"}
             existingNames={createDialog.existingNames}
@@ -739,7 +740,7 @@ function AppContent() {
             );
             return (
               <NameInputDialog
-                title="项目重名"
+                title={t("dialog.conflict.single_title")}
                 defaultName={safeName}
                 isDir={c.conflict.isDir}
                 existingNames={c.existingNames}
@@ -801,7 +802,7 @@ function AppContent() {
                   desktopFile,
                 );
                 if (result !== true) {
-                  showToast(`打开方式：${exec} 启动失败（${result}）`, "error");
+                  showToast(t("toast.launch_failed", exec, result), "error");
                 }
               }
               setOpenWithFile(null);

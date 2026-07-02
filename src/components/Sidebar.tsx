@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import './Sidebar.css';
+import { t as ti } from '../i18n';
 
 interface Place {
     name: string;
@@ -23,22 +24,24 @@ interface Drive {
     usb: boolean;
 }
 
-// 1. 添加英文到中文的映射字典
-const localeMap: Record<string, string> = {
-  'Places': '位置',
-  'Devices': '设备',
-  'Dashboard': '仪表盘',
-  'Home': '主页',
-  'Desktop': '桌面',
-  'Documents': '文档',
-  'Downloads': '下载',
-  'Music': '音乐',
-  'Pictures': '图片',
-  'Videos': '视频'
+const labelToKey: Record<string, string> = {
+  'Places': 'sidebar.places',
+  'Devices': 'sidebar.devices',
+  'Dashboard': 'sidebar.dashboard',
+  'Home': 'sidebar.home',
+  'Desktop': 'sidebar.desktop',
+  'Documents': 'sidebar.documents',
+  'Downloads': 'sidebar.downloads',
+  'Music': 'sidebar.music',
+  'Pictures': 'sidebar.pictures',
+  'Videos': 'sidebar.videos'
 };
 
-// 2. 翻译函数：如果映射表里有对应的中文就使用，没有就保持原样
-const t = (text: string): string => localeMap[text] || text;
+const t = (text: string): string => {
+  const key = labelToKey[text];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return key ? (ti as any)(key) : text;
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, currentPath }) => {
   const [places, setPlaces] = useState<Place[]>([]);

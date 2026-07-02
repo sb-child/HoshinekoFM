@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { generateSafeName, splitNameExt, truncateDirPath } from '../utils/fileConflict';
+import { t } from '../i18n';
 import './NameInputDialog.css';
 
 interface NameInputDialogProps {
@@ -106,10 +107,10 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
       actions={
         <>
           <Button variant="text" onClick={onCancel}>
-            取消
+            {t('dialog.button.cancel')}
           </Button>
           <Button onClick={handleConfirm} disabled={!canConfirm}>
-            确认
+            {t('dialog.button.confirm')}
           </Button>
         </>
       }
@@ -118,22 +119,22 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
         {sourcePath && (
           <div className="conflict-info-section">
             <div className="conflict-info-row">
-              <span className="conflict-info-label">来源</span>
+              <span className="conflict-info-label">{t('dialog.conflict.source_label')}</span>
               <span className="conflict-info-path" title={sourcePath}>
                 {truncateDirPath(sourcePath, 48)}
               </span>
             </div>
             {operation && (
               <div className="conflict-info-row">
-                <span className="conflict-info-label">操作</span>
+                <span className="conflict-info-label">{t('dialog.conflict.operation_label')}</span>
                 <span className="conflict-info-value">
-                  {operation === "copy" ? "复制" : "移动"}
+                  {operation === "copy" ? t('dialog.conflict.operation_copy') : t('dialog.conflict.operation_move')}
                 </span>
               </div>
             )}
             {destDir && (
               <div className="conflict-info-row">
-                <span className="conflict-info-label">目标</span>
+                <span className="conflict-info-label">{t('dialog.conflict.dest_label')}</span>
                 <span className="conflict-info-path" title={destDir}>
                   {truncateDirPath(destDir, 48)}
                 </span>

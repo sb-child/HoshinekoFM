@@ -22,6 +22,7 @@ import {
 import { Omnibar } from './Omnibar';
 import { Dashboard } from './Dashboard';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { t } from '../i18n';
 import { getSemanticGroup, GROUP_ORDER } from '../utils/fileUtils';
 import type { ContextMenuItem } from './ContextMenu';
 import {
@@ -100,7 +101,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
     } catch (e) {
       console.error(e);
-      showToast(`搜索失败: ${(e as any)?.message || e || '未知错误'}`, 'error');
+      showToast(t('error.search_failed', (e as any)?.message || e || '未知错误'), 'error');
     }
   };
 
@@ -128,10 +129,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if (lastToastKeyRef.current !== toastKey) {
           lastToastKeyRef.current = toastKey;
           const reason = error.code === 'EACCES' || error.code === 'EPERM'
-            ? '权限不足'
+            ? t('error.permission_denied')
             : error.code === 'ENOENT'
-              ? '不存在'
-              : '无法访问';
+              ? t('error.not_found')
+              : t('error.cannot_access');
           showToast(
             `"${error.originalPath}" ${reason}，已切换到 "${actualPath}"`,
             'warning',
@@ -140,7 +141,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
     } catch (e) {
       console.error('Failed to load path', path, e);
-      showToast(`无法打开目录: ${(e as any)?.message || e || '未知错误'}`, 'error');
+      showToast(t('error.cannot_open_dir', (e as any)?.message || e || '未知错误'), 'error');
     }
   }, [onPathChange, tabId, addToRecents]);
 
@@ -266,11 +267,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
 
       if (success > 0) {
-        const verb = operation === 'copy' ? '复制' : '移动';
-        showToast(`已${verb} ${success} 个项目`, 'success');
+        showToast(operation === 'copy' ? t('toast.copied_items', success) : t('toast.moved_items', success), 'success');
       }
       if (fail > 0) {
-        showToast(`${fail} 个项目操作失败`, 'error');
+        showToast(t('toast.failed_items', fail), 'error');
       }
       loadPath(currentPath);
     },
@@ -359,18 +359,18 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const selectionHint = useMemo(() => {
     if (selectionMode) {
       const labelMap: Record<string, string> = {
-        replace: "框选(替换)",
-        union: "框选(并集)",
-        intersection: "框选(交集)",
-        difference: "框选(差集)",
+        replace: t('selection.box_replace'),
+        union: t('selection.box_union'),
+        intersection: t('selection.box_intersection'),
+        difference: t('selection.box_difference'),
       };
       return labelMap[selectionMode] || selectionMode;
     }
     if (suppressClickHint) return null;
     if (!modifiers.ctrl && !modifiers.shift) return null;
-    if (modifiers.ctrl && modifiers.shift) return "点选(范围加选)";
-    if (modifiers.ctrl) return "点选(加选/减选)";
-    return "点选(范围)";
+    if (modifiers.ctrl && modifiers.shift) return t('selection.click_range_add');
+    if (modifiers.ctrl) return t('selection.click_add_remove');
+    return t('selection.click_range');
   }, [selectionMode, modifiers, suppressClickHint]);
 
   useEffect(() => {
@@ -492,7 +492,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       if (e.key === 'Delete') {
         e.preventDefault();
         if (selectedFiles.size > 0) {
-          if (window.confirm(`确定要删除选中的 ${selectedFiles.size} 个项目吗？`)) {
+          if (window.confirm(t('dialog.delete.confirm', selectedFiles.size))) {
             await trashFiles(Array.from(selectedFiles), () => loadPath(currentPath));
           }
         }
@@ -544,18 +544,18 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     const customItems = [
       {
-        label: 'Refresh',
+        label: t('context_menu.refresh'),
         icon: 'refresh',
         action: () => loadPath(currentPath)
       },
       { label: '', divider: true, action: () => {} },
       {
-        label: 'New Folder',
+        label: t('context_menu.new_folder'),
         icon: 'create_new_folder',
         action: () => {
           const existingNames = files.map(f => f.name);
           void (async () => {
-            const name = await onCreateDialog('folder', '新建文件夹', existingNames);
+            const name = await onCreateDialog('folder', t('dialog.create.default_folder'), existingNames);
             if (name) {
               await createDirectory(currentPath + '/' + name, () => loadPath(currentPath));
             }
@@ -563,12 +563,12 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         },
       },
       {
-        label: 'New File',
+        label: t('context_menu.new_file'),
         icon: 'note_add',
         action: () => {
           const existingNames = files.map(f => f.name);
           void (async () => {
-            const name = await onCreateDialog('file', '新建文本文档.txt', existingNames);
+            const name = await onCreateDialog('file', t('dialog.create.default_file'), existingNames);
             if (name) {
               await createFile(currentPath + '/' + name, () => loadPath(currentPath));
             }
@@ -578,19 +578,19 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       ...(clipboard && clipboard.files.length > 0 ? [
         { label: '', divider: true, action: () => {} } as ContextMenuItem,
         {
-          label: 'Paste',
+          label: t('context_menu.paste'),
           icon: 'content_paste',
           action: () => executePasteAction(),
         } as ContextMenuItem,
         { label: '', divider: true, action: () => {} } as ContextMenuItem,
       ] : []),
       {
-        label: 'Open in Terminal',
+        label: t('context_menu.open_terminal'),
         icon: 'terminal',
         action: () => onOpenTerminalAt(currentPath)
       },
       {
-        label: 'Open With...',
+        label: t('context_menu.open_with'),
         icon: 'apps',
         action: () => {
           onOpenWithFile(currentFolderAsFile);
@@ -598,7 +598,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       },
       { label: '', divider: true, action: () => {} },
       {
-        label: 'Properties',
+        label: t('context_menu.properties'),
         icon: 'info',
         action: () => {
           onPropertiesFile(currentFolderAsFile);
@@ -632,7 +632,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             <IconButton
               variant={groupingEnabled ? 'filled' : 'standard'}
               onClick={() => setGroupingEnabled(!groupingEnabled)}
-              title="切换分组"
+              title={t('sort.toggle_grouping')}
             >
               <Icon name="view_agenda" />
             </IconButton>
@@ -643,7 +643,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 if (sortBy === 'name') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
                 else { setSortBy('name'); setSortOrder('asc'); }
               }}
-              title="按名称排序"
+              title={t('sort.by_name')}
             >
               <Icon name="sort_by_alpha" />
             </IconButton>
@@ -653,7 +653,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 if (sortBy === 'date') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
                 else { setSortBy('date'); setSortOrder('desc'); }
               }}
-              title="按修改时间排序"
+              title={t('sort.by_date')}
             >
               <Icon name="calendar_today" />
             </IconButton>
@@ -670,8 +670,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           {searchActive && (
             <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="search" />
-              <span>为您找到 {files.length} 个关于 "{searchQuery}" 的结果</span>
-              <IconButton onClick={() => loadPath(currentPath)} variant="standard" title="清除搜索">
+              <span>{t('search.results', files.length, searchQuery)}</span>
+              <IconButton onClick={() => loadPath(currentPath)} variant="standard" title={t('search.clear')}>
                 <Icon name="close" />
               </IconButton>
             </div>

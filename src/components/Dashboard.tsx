@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import './Dashboard.css';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { IFile } from '../types/files';
+import { t as ti } from '../i18n';
 
 interface DashboardProps {
     onNavigate: (path: string) => void;
@@ -20,25 +21,29 @@ interface PinnedItem {
     icon?: string;
 }
 
-const localeMap: Record<string, string> = {
-  'Good Morning': '早上好',
-  'Good Afternoon': '下午好',
-  'Good Evening': '晚上好',
-  'Welcome back to your command center.': '欢迎回到您的控制中心。',
-  'System Storage': '系统存储',
-  'used': '已用',
-  'total': '总量',
-  'Loading stats...': '正在加载统计数据...',
-  'Pinned': '固定项',
-  'Home': '主页',
-  'Downloads': '下载',
-  'Documents': '文档',
-  'Add': '添加',
-  'Recent': '最近访问',
-  'No recent files yet.': '暂无最近访问的文件。'
+const labelToKey: Record<string, string> = {
+  'Good Morning': 'dashboard.good_morning',
+  'Good Afternoon': 'dashboard.good_afternoon',
+  'Good Evening': 'dashboard.good_evening',
+  'Welcome back to your command center.': 'dashboard.welcome',
+  'System Storage': 'dashboard.system_storage',
+  'used': 'dashboard.used',
+  'total': 'dashboard.total',
+  'Loading stats...': 'dashboard.loading',
+  'Pinned': 'dashboard.pinned',
+  'Home': 'sidebar.home',
+  'Downloads': 'sidebar.downloads',
+  'Documents': 'sidebar.documents',
+  'Add': 'dashboard.add',
+  'Recent': 'dashboard.recent',
+  'No recent files yet.': 'dashboard.no_recent'
 };
 
-const t = (text: string): string => localeMap[text] || text;
+const t = (text: string): string => {
+  const key = labelToKey[text];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return key ? (ti as any)(key) : text;
+};
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [greeting, setGreeting] = useState('');
@@ -132,7 +137,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   <Icon name={item.name === 'Home' ? 'home' : 'folder'} size={32} />
                 </div>
                 <span>{t(item.name)}</span>
-                <div className="pin-remove" onClick={(e) => handleRemovePin(e, idx)} title="Unpin">
+                <div className="pin-remove" onClick={(e) => handleRemovePin(e, idx)} title={ti('dashboard.unpin_tooltip')}>
                   <Icon name="close" size={14} />
                 </div>
               </div>

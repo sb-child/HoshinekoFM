@@ -1,5 +1,6 @@
 import React from 'react';
 import { Icon } from './Icon';
+import { t } from '../i18n';
 import './TabBar.css';
 
 interface Tab {
@@ -15,28 +16,26 @@ interface TabBarProps {
     onNewTab: () => void;
 }
 
-// 1. 新增：标签页标题汉化函数，兼容大小写与特殊协议头
 const getTabTitle = (title: string): string => {
   const normalizeTitle = title.toLowerCase();
-    
+
   switch (normalizeTitle) {
   case 'dashboard':
   case 'app://dashboard':
-    return '仪表盘';
+    return t('tab.dashboard');
   case 'home':
-    return '主页';
+    return t('tab.home');
   case 'downloads':
-    return '下载';
+    return t('tab.downloads');
   case 'documents':
-    return '文档';
+    return t('tab.documents');
   case 'music':
-    return '音乐';
+    return t('tab.music');
   case 'pictures':
-    return '图片';
+    return t('tab.pictures');
   case 'videos':
-    return '视频';
+    return t('tab.videos');
   default:
-    // 如果是普通的文件夹名（例如用户自定义的文件夹），保持原样输出
     return title;
   }
 };
@@ -50,7 +49,6 @@ export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onTabClick, o
           className={`tab-item ${tab.id === activeTabId ? 'active' : ''}`}
           onClick={() => onTabClick(tab.id)}
         >
-          {/* 2. 核心修改：通过 getTabTitle 拦截并转换标题 */}
           <span className="tab-title">{getTabTitle(tab.title)}</span>
           <button
             className="tab-close-btn"

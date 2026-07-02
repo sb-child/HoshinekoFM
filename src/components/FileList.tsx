@@ -7,6 +7,7 @@ import { AutoSizer } from "react-virtualized-auto-sizer";
 import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { useDrag } from "../contexts/DragContext";
+import { t } from "../i18n";
 
 interface FileListProps {
   files: IFile[];
@@ -36,25 +37,19 @@ const DOUBLE_CLICK_THRESHOLD = 500;
 const AUTO_SCROLL_ZONE = 60;
 const AUTO_SCROLL_SPEED = 8;
 
-const groupLocaleMap: Record<string, string> = {
-  Today: "今天",
-  Yesterday: "昨天",
-  "Earlier this week": "本周早些时候",
-  "Earlier this month": "本月早些时候",
-  "Earlier this year": "今年早些时候",
-  Older: "更早以前",
-  Folders: "文件夹",
-  Files: "文件",
-  Media: "媒体文件",
-  Documents: "文档",
-  Code: "代码文件",
-  Archives: "压缩包",
-  Executables: "可执行文件",
-  Others: "其他文件",
+const GROUP_LABELS: Record<string, string> = {
+  Folders: t('group.folders'),
+  Media: t('group.media'),
+  Documents: t('group.documents'),
+  Code: t('group.code'),
+  Archives: t('group.archives'),
+  Executables: t('group.executables'),
+  Others: t('group.others'),
 };
 
-const tGroup = (groupName: string): string =>
-  groupLocaleMap[groupName] || groupName;
+function tGroup(groupName: string): string {
+  return GROUP_LABELS[groupName] || groupName;
+}
 
 function getFileIconFromMime(
   mime: string | null,
@@ -212,9 +207,9 @@ function getFileIconFromMime(
 }
 
 function formatSize(bytes: number) {
-  if (bytes === 0) return "0 B";
+  if (bytes === 0) return t("size.zero");
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const sizes = [t("size.b"), t("size.kb"), t("size.mb"), t("size.gb"), t("size.tb")];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
