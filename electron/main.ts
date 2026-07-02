@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } from 'electron';
 import path from 'path';
-import { promises as fs, writeFileSync, existsSync } from 'fs';
+import { promises as fs, writeFileSync, existsSync, constants } from 'fs';
 import url from 'url';
 import os from 'os';
 import { spawn, exec, execFile } from 'child_process';
@@ -93,77 +93,107 @@ ipcMain.handle('theme:get-css', async () => {
   }
 });
 
-ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
-  try {
-    const targetPath = dirPath || os.homedir();
-    const entries = await fs.readdir(targetPath, { withFileTypes: true });
-    const results = await Promise.all(entries.map(async (entry) => {
-      try {
-        const fullPath = path.join(targetPath, entry.name);
-        const isSymlink = entry.isSymbolicLink();
-        const isBlock = entry.isBlockDevice();
-        const isChar = entry.isCharacterDevice();
-        const isFIFO = entry.isFIFO();
-        const isSock = entry.isSocket();
-        const isSpecial = isBlock || isChar || isFIFO || isSock;
+/** Walk up the directory tree from `startPath` until a readable directory is found. */
+async function resolveAccessibleParent(startPath: string): Promise<string | null> {
+  let current = path.resolve(startPath);
+  while (current !== path.dirname(current)) {
+    current = path.dirname(current);
+    try {
+      await fs.access(current, constants.R_OK);
+      return current;
+    } catch {
+      // continue walking up
+    }
+  }
+  return null;
+}
 
-        if (isSpecial) {
-          let mime: string;
-          if (isBlock) mime = 'inode/blockdevice';
-          else if (isChar) mime = 'inode/chardevice';
-          else if (isFIFO) mime = 'inode/fifo';
-          else mime = 'inode/socket';
+async function listDirectoryContents(targetPath: string): Promise<{
+  name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
+}[]> {
+  const entries = await fs.readdir(targetPath, { withFileTypes: true });
+  const results = await Promise.all(entries.map(async (entry) => {
+    try {
+      const fullPath = path.join(targetPath, entry.name);
+      const isSymlink = entry.isSymbolicLink();
+      const isBlock = entry.isBlockDevice();
+      const isChar = entry.isCharacterDevice();
+      const isFIFO = entry.isFIFO();
+      const isSock = entry.isSocket();
+      const isSpecial = isBlock || isChar || isFIFO || isSock;
+
+      if (isSpecial) {
+        let mime: string;
+        if (isBlock) mime = 'inode/blockdevice';
+        else if (isChar) mime = 'inode/chardevice';
+        else if (isFIFO) mime = 'inode/fifo';
+        else mime = 'inode/socket';
+        return {
+          name: entry.name,
+          path: fullPath,
+          isDirectory: false,
+          size: 0,
+          mtime: new Date(0),
+          mime
+        };
+      }
+
+      if (isSymlink) {
+        try {
+          await fs.readlink(fullPath);
+          const stats = await fs.stat(fullPath);
+          return {
+            name: entry.name,
+            path: fullPath,
+            isDirectory: stats.isDirectory(),
+            size: stats.size,
+            mtime: stats.mtime,
+            mime: stats.isDirectory() ? 'inode/directory' : await detectMime(fullPath)
+          };
+        } catch {
           return {
             name: entry.name,
             path: fullPath,
             isDirectory: false,
             size: 0,
             mtime: new Date(0),
-            mime
+            mime: 'inode/symlink'
           };
         }
-
-        if (isSymlink) {
-          try {
-            await fs.readlink(fullPath);
-            const stats = await fs.stat(fullPath);
-            return {
-              name: entry.name,
-              path: fullPath,
-              isDirectory: stats.isDirectory(),
-              size: stats.size,
-              mtime: stats.mtime,
-              mime: stats.isDirectory() ? 'inode/directory' : await detectMime(fullPath)
-            };
-          } catch {
-            return {
-              name: entry.name,
-              path: fullPath,
-              isDirectory: false,
-              size: 0,
-              mtime: new Date(0),
-              mime: 'inode/symlink'
-            };
-          }
-        }
-
-        const stats = await fs.stat(fullPath);
-        const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
-        return {
-          name: entry.name,
-          path: fullPath,
-          isDirectory: entry.isDirectory(),
-          size: stats.size,
-          mtime: stats.mtime,
-          mime
-        };
-      } catch (e) {
-        return null;
       }
-    }));
-    return results.filter(r => r !== null);
+
+      const stats = await fs.stat(fullPath);
+      const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
+      return {
+        name: entry.name,
+        path: fullPath,
+        isDirectory: entry.isDirectory(),
+        size: stats.size,
+        mtime: stats.mtime,
+        mime
+      };
+    } catch (e) {
+      return null;
+    }
+  }));
+  return results.filter(r => r !== null) as {
+    name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
+  }[];
+}
+
+ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
+  const targetPath = dirPath || os.homedir();
+  try {
+    const data = await listDirectoryContents(targetPath);
+    return { data, actualPath: targetPath };
   } catch (error) {
-    console.error('Failed to list dir', dirPath, error);
+    console.error('Failed to list dir', targetPath, error);
+    const resolvedPath = await resolveAccessibleParent(targetPath);
+    if (resolvedPath) {
+      console.warn(`[fs:list-dir] resolved "${targetPath}" → "${resolvedPath}"`);
+      const data = await listDirectoryContents(resolvedPath);
+      return { data, actualPath: resolvedPath };
+    }
     throw error;
   }
 });

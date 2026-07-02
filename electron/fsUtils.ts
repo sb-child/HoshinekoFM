@@ -5,6 +5,7 @@ import os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
+import { EXT_TO_MIME, ZIP_CONTAINER_EXTS, BASENAME_TO_MIME, DOTFILE_TO_MIME } from './mimeMap';
 
 const execFileAsync = promisify(execFile);
 
@@ -118,48 +119,126 @@ export async function detectMimeByMagic(filePath: string): Promise<string | null
     }
   }
 
-  return null;
-}
-
-// ── Cached MIME detection (magic → `file --mime-type` fallback) ───
-
-const mimeCache = new Map<string, string>();
-
-export async function detectMime(filePath: string): Promise<string | null> {
-  const cached = mimeCache.get(filePath);
-  if (cached !== undefined) return cached;
-
-  let mime = await detectMimeByMagic(filePath);
-
-  if (mime) {
-    // Container types may have a more specific inner format (e.g. ODT inside ZIP)
-    const containerTypes = new Set([
-      'application/zip', 'application/gzip', 'application/x-bzip2',
-      'application/x-xz', 'application/x-7z-compressed',
-      'application/vnd.rar', 'application/x-rar-compressed',
-    ]);
-    if (containerTypes.has(mime)) {
-      try {
-        const { stdout } = await execFileAsync('file', ['--mime-type', '--brief', filePath]);
-        const specific = stdout.trim() || null;
-        if (specific && specific !== 'application/octet-stream' && !containerTypes.has(specific)) {
-          mime = specific;
-        }
-      } catch {
-        // Keep magic-detected mime
+  // MPEG Transport Stream — sync byte 0x47 at 188-byte boundaries
+  if (bufStartsWith(head, [0x47])) {
+    const tsHead = await readHead(filePath, 512);
+    if (tsHead && tsHead.length >= 377) {
+      if (tsHead[0] === 0x47 && tsHead[188] === 0x47 && tsHead[376] === 0x47) {
+        return 'video/mp2t';
       }
-    }
-  } else {
-    // Fall back to `file --mime-type`
-    try {
-      const { stdout } = await execFileAsync('file', ['--mime-type', '--brief', filePath]);
-      mime = stdout.trim() || null;
-    } catch {
-      mime = null;
     }
   }
 
-  mimeCache.set(filePath, mime ?? '');
+  return null;
+}
+
+// ── Cached MIME detection (4-tier hybrid) ────────────────────────
+
+const MIME_CACHE_TTL = 30_000; // 30 seconds
+const mimeCache = new Map<string, { mime: string; ts: number }>();
+
+/** Run `file --mime-type --brief` as an external subprocess. Returns stdout or null. */
+async function fileMimeCommand(filePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('file', ['--mime-type', '--brief', filePath]);
+    const mime = stdout.trim();
+    return mime && mime !== 'application/octet-stream' ? mime : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve known filenames without extensions (Makefile, Dockerfile) and dotfiles (.bashrc). */
+function detectByBasename(filePath: string): string | null {
+  const base = path.basename(filePath).toLowerCase();
+
+  if (base.startsWith('.')) {
+    if (DOTFILE_TO_MIME[base]) return DOTFILE_TO_MIME[base];
+    const dotExt = path.extname(base).toLowerCase();
+    if (dotExt && EXT_TO_MIME[dotExt]) return EXT_TO_MIME[dotExt];
+    return null;
+  }
+
+  return BASENAME_TO_MIME[base] ?? null;
+}
+
+/** Container types that might be ZIP but contain a more specific inner format. */
+const CONTAINER_TYPES = new Set([
+  'application/zip', 'application/gzip', 'application/x-bzip2',
+  'application/x-xz', 'application/x-7z-compressed',
+  'application/vnd.rar', 'application/x-rar-compressed',
+]);
+
+/**
+ * Hybrid MIME detection: 4 tiers, from most to least reliable.
+ *
+ *   ① Magic bytes  →  read first 16 bytes, match known signatures
+ *   ② Extension map  →  fast lookup for 150+ known extensions
+ *   ③ Basename map   →  extensionless files (Makefile, Dockerfile, dotfiles)
+ *   ④ `file --mime-type` command  →  shell fallback
+ *
+ * Conflict resolution:
+ *   - Magic=zip + extension in ZIP_CONTAINER_EXTS (.docx, etc.) → trust extension
+ *   - All other magic/ext conflicts → trust magic bytes, warn to console
+ */
+export async function detectMime(filePath: string): Promise<string | null> {
+  // Check cache
+  const cached = mimeCache.get(filePath);
+  if (cached && Date.now() - cached.ts < MIME_CACHE_TTL) {
+    return cached.mime || null;
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  let mime: string | null = null;
+
+  // ── Tier ①: Magic bytes ────────────────────────────────────
+  const magicMime = await detectMimeByMagic(filePath);
+
+  if (magicMime) {
+    const extMime = ext ? EXT_TO_MIME[ext] : null;
+
+    if (!ext || !extMime || extMime === magicMime) {
+      // No conflict → trust magic bytes
+      mime = magicMime;
+
+      // For generic containers, shell out to `file` for subtype
+      if (CONTAINER_TYPES.has(mime)) {
+        const specific = await fileMimeCommand(filePath);
+        if (specific && !CONTAINER_TYPES.has(specific)) {
+          mime = specific;
+        }
+      }
+    } else if (magicMime === 'application/zip' && ZIP_CONTAINER_EXTS.has(ext)) {
+      // ZIP-backed document/package → trust extension
+      mime = extMime;
+    } else {
+      // Extension disagrees with magic bytes → trust content
+      console.warn(
+        `[detectMime] conflict "${filePath}" → magic="${magicMime}" ext="${ext}→${extMime}". Using magic bytes.`,
+      );
+      mime = magicMime;
+    }
+  }
+
+  // ── Tier ②: Extension map ──────────────────────────────────
+  if (!mime && ext && EXT_TO_MIME[ext]) {
+    mime = EXT_TO_MIME[ext];
+  }
+
+  // ── Tier ③: Basename match (no extension or dotfile) ───────
+  if (!mime) {
+    const basenameMime = detectByBasename(filePath);
+    if (basenameMime) mime = basenameMime;
+  }
+
+  // ── Tier ④: `file` command ─────────────────────────────────
+  if (!mime) {
+    mime = await fileMimeCommand(filePath);
+    if (mime === 'inode/x-empty') mime = null;
+  }
+
+  // Cache result
+  mimeCache.set(filePath, { mime: mime ?? '', ts: Date.now() });
   return mime ?? null;
 }
 

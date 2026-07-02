@@ -29,15 +29,15 @@ export const FileSystemService = {
     return window.electron.openPath(path);
   },
 
-  async listDir(path: string): Promise<IFile[]> {
+  async listDir(path: string): Promise<{ data: IFile[]; actualPath: string }> {
     if (window.electron && window.electron.listDir) {
       try {
         return await window.electron.listDir(path);
       } catch (error) {
         console.error('FS Error:', error);
-        return [];
+        return { data: [], actualPath: path };
       }
     }
-    return [];
+    return { data: [], actualPath: path };
   }
 };

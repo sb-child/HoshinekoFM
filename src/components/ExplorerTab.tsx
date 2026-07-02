@@ -107,11 +107,11 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     suppressWatchRef.current = true;
     setTimeout(() => { suppressWatchRef.current = false; }, 1000);
     try {
-      const items = await FileSystemService.listDir(path);
-      setFiles(items);
-      setCurrentPath(path);
-      onPathChange(tabId, path);
-      addToRecents(path); // Track it
+      const { data, actualPath } = await FileSystemService.listDir(path);
+      setFiles(data);
+      setCurrentPath(actualPath);
+      onPathChange(tabId, actualPath);
+      addToRecents(actualPath); // Track it
     } catch (e) {
       console.error('Failed to load path', path, e);
       showToast(`无法打开目录: ${(e as any)?.message || e || '未知错误'}`, 'error');

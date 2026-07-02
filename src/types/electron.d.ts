@@ -12,7 +12,7 @@ export interface IDrive {
 
 export interface IElectronAPI {
     getThemeCss: () => Promise<string | null>;
-    listDir: (path: string) => Promise<IFile[]>;
+    listDir: (path: string) => Promise<{ data: IFile[]; actualPath: string }>;
     getParentPath: (path: string) => Promise<string>;
     getHomePath: () => Promise<string>;
     getPlaces: () => Promise<Array<{ name: string; path: string; icon: string }>>;
