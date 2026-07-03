@@ -88,7 +88,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
   // Search State
   const currentPathRef = useRef(currentPath);
-  currentPathRef.current = currentPath;
+  useEffect(() => { currentPathRef.current = currentPath; });
 
   const lastToastKeyRef = useRef('');
 
@@ -105,7 +105,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
     } catch (e) {
       console.error(e);
-      showToast(t('error.search_failed', (e as any)?.message || e || '未知错误'), 'error');
+      showToast(t('error.search_failed', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
   };
 
@@ -145,20 +145,20 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       }
     } catch (e) {
       console.error('Failed to load path', path, e);
-      showToast(t('error.cannot_open_dir', (e as any)?.message || e || '未知错误'), 'error');
+      showToast(t('error.cannot_open_dir', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
   }, [onPathChange, tabId, addToRecents]);
 
   useEffect(() => {
     if (initialPath) {
-      loadPath(initialPath);
+      loadPath(initialPath); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [initialPath, loadPath]);
 
   // Refresh when signal changes (dialog rename, paste, delete, extract)
   useEffect(() => {
     if (currentPath === 'app://dashboard') return;
-    loadPath(currentPath);
+    loadPath(currentPath); // eslint-disable-line react-hooks/set-state-in-effect
   }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Watch current directory for external filesystem changes
@@ -584,6 +584,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, clipboard]);
 
   // 核心新增：接管空白处右键事件分发逻辑
@@ -742,10 +743,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             }}
             onDrop={async (e) => {
               e.preventDefault();
-              const droppedFiles = Array.from(e.dataTransfer.files).filter(f => (f as any).path);
+              const droppedFiles = Array.from(e.dataTransfer.files).filter(f => (f as unknown as { path?: string }).path);
               if (droppedFiles.length > 0 && currentPath) {
                 await importFiles(
-                  droppedFiles.map(f => ({ path: (f as any).path })),
+                  droppedFiles.map(f => ({ path: (f as unknown as { path: string }).path })),
                   currentPath,
                   () => loadPath(currentPath),
                 );

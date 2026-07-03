@@ -94,140 +94,140 @@ function getFileIconFromMime(
   if (mime.startsWith("font/")) return "font_download";
 
   switch (mime) {
-    // ── Text — markup ──
-    case "text/markdown":
-      return "markdown";
-    case "text/x-tex":
-      return "article";
+  // ── Text — markup ──
+  case "text/markdown":
+    return "markdown";
+  case "text/x-tex":
+    return "article";
 
     // ── Text — code (specific languages) ──
-    case "text/javascript":
-      return "javascript";
-    case "text/html":
-      return "html";
-    case "text/css":
-    case "text/x-scss":
-      return "css";
-    case "text/x-shell":
-      return "terminal";
-    case "text/x-sql":
-      return "database";
+  case "text/javascript":
+    return "javascript";
+  case "text/html":
+    return "html";
+  case "text/css":
+  case "text/x-scss":
+    return "css";
+  case "text/x-shell":
+    return "terminal";
+  case "text/x-sql":
+    return "database";
 
     // ── Text — data/config ──
-    case "text/x-yaml":
-    case "text/x-toml":
-      return "data_object";
+  case "text/x-yaml":
+  case "text/x-toml":
+    return "data_object";
 
     // ── Text — table data ──
-    case "text/csv":
-    case "text/tab-separated-values":
-      return "csv";
+  case "text/csv":
+  case "text/tab-separated-values":
+    return "csv";
 
     // ── Text — plain ──
-    case "text/plain":
-      return "article";
+  case "text/plain":
+    return "article";
 
     // ── Images (overrides) ──
-    case "image/vnd.djvu":
-      return "book_2";
+  case "image/vnd.djvu":
+    return "book_2";
 
     // ── Documents ──
-    case "application/pdf":
-      return "picture_as_pdf";
-    case "application/msword":
-    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-    case "application/vnd.oasis.opendocument.text":
-    case "application/vnd.oasis.opendocument.formula":
-      return "description";
-    case "application/vnd.ms-excel":
-    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-    case "application/vnd.oasis.opendocument.spreadsheet":
-      return "table";
-    case "application/vnd.ms-powerpoint":
-    case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-    case "application/vnd.oasis.opendocument.presentation":
-      return "slideshow";
-    case "application/vnd.oasis.opendocument.graphics":
-      return "stylus";
-    case "application/rtf":
-      return "article";
+  case "application/pdf":
+    return "picture_as_pdf";
+  case "application/msword":
+  case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+  case "application/vnd.oasis.opendocument.text":
+  case "application/vnd.oasis.opendocument.formula":
+    return "description";
+  case "application/vnd.ms-excel":
+  case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+  case "application/vnd.oasis.opendocument.spreadsheet":
+    return "table";
+  case "application/vnd.ms-powerpoint":
+  case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+  case "application/vnd.oasis.opendocument.presentation":
+    return "slideshow";
+  case "application/vnd.oasis.opendocument.graphics":
+    return "stylus";
+  case "application/rtf":
+    return "article";
 
     // ── Ebooks ──
-    case "application/epub+zip":
-    case "application/x-mobipocket-ebook":
-      return "import_contacts";
+  case "application/epub+zip":
+  case "application/x-mobipocket-ebook":
+    return "import_contacts";
 
     // ── Archives ──
-    case "application/x-iso9660-image":
-      return "album";
-    case "application/x-rpm":
-    case "application/vnd.debian.binary-package":
-      return "package_2";
-    case "application/zip":
-    case "application/gzip":
-    case "application/x-bzip2":
-    case "application/x-xz":
-    case "application/x-7z-compressed":
-    case "application/vnd.rar":
-    case "application/x-rar-compressed":
-    case "application/x-tar":
-    case "application/x-lzip":
-    case "application/x-lzop":
-    case "application/x-lz4":
-    case "application/zstd":
-    case "application/vnd.ms-cab-compressed":
-    case "application/x-arj":
-    case "application/x-lzh":
-      return "folder_zip";
+  case "application/x-iso9660-image":
+    return "album";
+  case "application/x-rpm":
+  case "application/vnd.debian.binary-package":
+    return "package_2";
+  case "application/zip":
+  case "application/gzip":
+  case "application/x-bzip2":
+  case "application/x-xz":
+  case "application/x-7z-compressed":
+  case "application/vnd.rar":
+  case "application/x-rar-compressed":
+  case "application/x-tar":
+  case "application/x-lzip":
+  case "application/x-lzop":
+  case "application/x-lz4":
+  case "application/zstd":
+  case "application/vnd.ms-cab-compressed":
+  case "application/x-arj":
+  case "application/x-lzh":
+    return "folder_zip";
 
     // ── Executables ──
-    case "application/x-msdownload":
-      return "deployed_code";
-    case "application/java-archive":
-      return "deployed_code";
-    case "application/vnd.android.package-archive":
-      return "android";
-    case "application/wasm":
-    case "application/x-python-bytecode":
-    case "application/x-java-bytecode":
-      return "code";
-    case "application/x-elf":
-    case "application/x-executable":
-    case "application/x-sharedlib":
-      return "terminal";
+  case "application/x-msdownload":
+    return "deployed_code";
+  case "application/java-archive":
+    return "deployed_code";
+  case "application/vnd.android.package-archive":
+    return "android";
+  case "application/wasm":
+  case "application/x-python-bytecode":
+  case "application/x-java-bytecode":
+    return "code";
+  case "application/x-elf":
+  case "application/x-executable":
+  case "application/x-sharedlib":
+    return "terminal";
 
     // ── Data ──
-    case "application/json":
-      return "file_json";
-    case "application/xml":
-      return "data_object";
-    case "application/graphql":
-      return "data_object";
-    case "application/x-sqlite3":
-      return "database";
-    case "application/x-pem-file":
-    case "application/x-x509-ca-cert":
-      return "key";
-    case "application/x-bittorrent":
-      return "cloud_download";
+  case "application/json":
+    return "file_json";
+  case "application/xml":
+    return "data_object";
+  case "application/graphql":
+    return "data_object";
+  case "application/x-sqlite3":
+    return "database";
+  case "application/x-pem-file":
+  case "application/x-x509-ca-cert":
+    return "key";
+  case "application/x-bittorrent":
+    return "cloud_download";
 
     // ── Fonts (non-font/* MIMEs) ──
-    case "application/vnd.ms-fontobject":
-      return "font_download";
+  case "application/vnd.ms-fontobject":
+    return "font_download";
   }
 
   const cat = mime.split("/")[0];
   switch (cat) {
-    case "image":
-      return "image";
-    case "audio":
-      return "audio_file";
-    case "video":
-      return "movie";
-    case "text":
-      return "code";
-    case "inode":
-      return "folder";
+  case "image":
+    return "image";
+  case "audio":
+    return "audio_file";
+  case "video":
+    return "movie";
+  case "text":
+    return "code";
+  case "inode":
+    return "folder";
   }
 
   return "insert_drive_file";
@@ -544,18 +544,18 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
                 {file.isMountpoint &&
                   file.isDirectory &&
                   file.mountSource?.startsWith("/dev/") && (
-                    <Icon
-                      name="hard_drive"
-                      className="mountpoint-badge"
-                      style={{
-                        position: "absolute",
-                        bottom: "-1px",
-                        right: "-2px",
-                        fontSize: `${Math.max(10, data.iconSize * 0.45)}px`,
-                        color: "var(--md-sys-color-primary)",
-                      }}
-                    />
-                  )}
+                  <Icon
+                    name="hard_drive"
+                    className="mountpoint-badge"
+                    style={{
+                      position: "absolute",
+                      bottom: "-1px",
+                      right: "-2px",
+                      fontSize: `${Math.max(10, data.iconSize * 0.45)}px`,
+                      color: "var(--md-sys-color-primary)",
+                    }}
+                  />
+                )}
               </span>
             )}
           </span>
@@ -728,18 +728,18 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
                   />
                   {file.isMountpoint &&
                     file.mountSource?.startsWith("/dev/") && (
-                      <Icon
-                        name="hard_drive"
-                        className="mountpoint-badge"
-                        style={{
-                          position: "absolute",
-                          bottom: "-1px",
-                          right: "-2px",
-                          fontSize: `${Math.max(10, data.iconSize * 0.45)}px`,
-                          color: "var(--md-sys-color-primary)",
-                        }}
-                      />
-                    )}
+                    <Icon
+                      name="hard_drive"
+                      className="mountpoint-badge"
+                      style={{
+                        position: "absolute",
+                        bottom: "-1px",
+                        right: "-2px",
+                        fontSize: `${Math.max(10, data.iconSize * 0.45)}px`,
+                        color: "var(--md-sys-color-primary)",
+                      }}
+                    />
+                  )}
                 </span>
               )}
             </span>
@@ -804,6 +804,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
 let _draggedPaths: Set<string> = new Set();
 let _pendingNativeDragPaths: string[] | null = null;
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function clearPendingNativeDrag() {
   _pendingNativeDragPaths = null;
 }
@@ -945,6 +946,7 @@ export const FileList: React.FC<FileListProps> = ({
       onSelect(targetFile, false, false);
       onScrollToComplete?.();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     scrollToFileName,
     files,
@@ -954,7 +956,7 @@ export const FileList: React.FC<FileListProps> = ({
     onSelect,
     currentPath,
     onScrollToComplete,
-  ]);
+  ]);  
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {

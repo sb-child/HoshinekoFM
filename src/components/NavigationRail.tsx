@@ -2,6 +2,9 @@ import React from 'react';
 import { IconButton } from './IconButton';
 import './NavigationRail.css';
 import { t } from '../i18n';
+import type zhCN from '../i18n/zh-CN';
+
+type I18nKey = keyof typeof zhCN;
 
 interface NavigationItem {
     icon: React.ReactNode;
@@ -36,7 +39,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({ items, fab }) =>
               selected={item.active}
               onClick={item.onClick}
               // 确保无障碍标签（aria-label）也顺带汉化
-              aria-label={item.label ? (labelToKey[item.label] ? (t as any)(labelToKey[item.label]) : item.label) : undefined}
+              aria-label={item.label ? (labelToKey[item.label] ? t(labelToKey[item.label] as I18nKey) : item.label) : undefined}
             >
               {item.active && item.activeIcon ? item.activeIcon : item.icon}
             </IconButton>
@@ -44,7 +47,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({ items, fab }) =>
             {/* 2. 核心修改：在渲染文本时，拦截英文 label 并通过映射表转换为中文 */}
             {item.label && (
               <span className="m3-navigation-rail__label">
-                {labelToKey[item.label] ? (t as any)(labelToKey[item.label]) : item.label}
+                {labelToKey[item.label] ? t(labelToKey[item.label] as I18nKey) : item.label}
               </span>
             )}
           </div>

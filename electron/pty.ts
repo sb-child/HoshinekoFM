@@ -21,7 +21,7 @@ export function setupPtyHandlers() {
         cols: 80,
         rows: 24,
         cwd: cwd || os.homedir(),
-        env: process.env as any
+        env: process.env as Record<string, string>
       });
 
       const pid = ptyProcess.pid;

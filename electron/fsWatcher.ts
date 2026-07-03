@@ -1,5 +1,4 @@
 import { watch, FSWatcher } from 'fs';
-import path from 'path';
 
 interface WatcherEntry {
   watcher: FSWatcher;
@@ -15,7 +14,7 @@ export function startWatching(
   if (watchers.has(dir)) return;
 
   try {
-    const watcher = watch(dir, (_event, _filename) => {
+    const watcher = watch(dir, () => {
       const entry = watchers.get(dir);
       if (!entry) return;
 

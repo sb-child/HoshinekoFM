@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Icon } from './Icon';
 import './Dashboard.css';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -46,7 +46,12 @@ const t = (text: string): string => {
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const [greeting, setGreeting] = useState('');
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good Morning';
+    if (hour < 18) return 'Good Afternoon';
+    return 'Good Evening';
+  }, []);
   const [storage, setStorage] = useState<StorageStats | null>(null);
 
   const [pinnedItems, setPinnedItems] = useLocalStorage<PinnedItem[]>('dashboard.pinned', [
@@ -58,11 +63,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [recentFiles] = useLocalStorage<IFile[]>('dashboard.recent', []);
 
   useEffect(() => {
-    const hour = new Date().getHours();
-    if (hour < 12) setGreeting('Good Morning');
-    else if (hour < 18) setGreeting('Good Afternoon');
-    else setGreeting('Good Evening');
-
     if (window.electron) {
       window.electron.getStorageUsage().then(stats => {
         if (stats) setStorage(stats);

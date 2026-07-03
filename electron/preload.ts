@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('electron', {
   getStartupPath: () => ipcRenderer.invoke('app:get-startup-path'),
   exists: (path: string) => ipcRenderer.invoke('fs:exists', path),
   setIcon: (iconPath: string) => ipcRenderer.invoke('window:set-icon', iconPath),
-  search: (dir: string, query: string, options?: any) => ipcRenderer.invoke('system:search', dir, query, options),
+  search: (dir: string, query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => ipcRenderer.invoke('system:search', dir, query, options),
   getDirectorySize: (path: string) => ipcRenderer.invoke('system:get-directory-size', path),
   getDrives: () => ipcRenderer.invoke('system:get-drives'),
   getAllDevices: () => ipcRenderer.invoke('system:get-all-devices'),
@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('electron', {
   createFile: (filePath: string) => ipcRenderer.invoke('fs:create-file', filePath),
   ptyKill: (pid: number) => ipcRenderer.send('terminal:kill', pid),
   ptyOnData: (pid: number, callback: (data: string) => void) => {
-    const handler = (_: any, data: string) => callback(data);
+    const handler = (_: Electron.IpcRendererEvent, data: string) => callback(data);
     ipcRenderer.on(`terminal:data:${pid}`, handler);
     return () => ipcRenderer.removeListener(`terminal:data:${pid}`, handler);
   },
@@ -56,14 +56,14 @@ contextBridge.exposeInMainWorld('electron', {
   watchDirectory: (dir: string) => ipcRenderer.invoke('fs:watch-dir', dir),
   unwatchDirectory: (dir: string) => ipcRenderer.invoke('fs:unwatch-dir', dir),
   onDirChanged: (callback: (dir: string) => void) => {
-    const handler = (_: any, dir: string) => callback(dir);
+    const handler = (_: Electron.IpcRendererEvent, dir: string) => callback(dir);
     ipcRenderer.on('fs:dir-changed', handler);
     return () => ipcRenderer.removeListener('fs:dir-changed', handler);
   },
 
   // Device event push
-  onDeviceChange: (callback: (devices: any[]) => void) => {
-    const handler = (_: any, devices: any[]) => callback(devices);
+  onDeviceChange: (callback: (devices: unknown[]) => void) => {
+    const handler = (_: Electron.IpcRendererEvent, devices: unknown[]) => callback(devices);
     ipcRenderer.on('system:devices-changed', handler);
     return () => ipcRenderer.removeListener('system:devices-changed', handler);
   },

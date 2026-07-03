@@ -164,15 +164,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <div style={{ flex: 1 }} />
                       {isExternalDevice(disk) &&
                         disk.children?.every((part) => !part.mounted) && (
-                          <IconButton
-                            variant="standard"
-                            onClick={(e) => handleEjectClick(e, disk)}
-                            className="sidebar-disk-eject"
-                            title={t("device.eject")}
-                          >
-                            <Icon name="eject" style={{ fontSize: "18px" }} />
-                          </IconButton>
-                        )}
+                        <IconButton
+                          variant="standard"
+                          onClick={(e) => handleEjectClick(e, disk)}
+                          className="sidebar-disk-eject"
+                          title={t("device.eject")}
+                        >
+                          <Icon name="eject" style={{ fontSize: "18px" }} />
+                        </IconButton>
+                      )}
                     </div>
                     {disk.children.map((part) => (
                       <div
@@ -301,22 +301,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
 function getPlaceIcon(name: string): string {
   switch (name) {
-    case "Home":
-      return "home";
-    case "Desktop":
-      return "desktop_windows";
-    case "Documents":
-      return "description";
-    case "Downloads":
-      return "download";
-    case "Music":
-      return "music_note";
-    case "Pictures":
-      return "image";
-    case "Videos":
-      return "movie";
-    default:
-      return "folder";
+  case "Home":
+    return "home";
+  case "Desktop":
+    return "desktop_windows";
+  case "Documents":
+    return "description";
+  case "Downloads":
+    return "download";
+  case "Music":
+    return "music_note";
+  case "Pictures":
+    return "image";
+  case "Videos":
+    return "movie";
+  default:
+    return "folder";
   }
 }
 

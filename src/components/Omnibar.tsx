@@ -9,7 +9,7 @@ import "./Omnibar.css";
 interface OmnibarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
-  onSearch: (query: string, options?: any) => void;
+  onSearch: (query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => void;
   onDropFiles: (targetPath: string, files: IFile[], operation: "move" | "copy") => void;
   onDropExternalFiles: (targetPath: string, filePaths: string[]) => void;
 }
@@ -27,7 +27,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
 
   useEffect(() => {
     if (!isEditing) {
-      setInputValue(currentPath);
+      setInputValue(currentPath); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [currentPath, isEditing]);
 

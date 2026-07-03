@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, nativeImage } from 'electron';
 import path from 'path';
 import { promises as fs, writeFileSync, existsSync, constants } from 'fs';
 import url from 'url';
@@ -6,45 +6,54 @@ import os from 'os';
 import { spawn, exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import dbus from 'dbus-next';
-import { setupPtyHandlers, setMainWindow, killAllPty } from './pty';
-import { detectMime, getThumbnail, getDragIcon, getCachedDragIconPath } from './fsUtils';
+import { setupPtyHandlers, setMainWindow } from './pty';
+import { detectMime, getThumbnail, getCachedDragIconPath } from './fsUtils';
 import { startWatching, stopWatching, stopAllWatching } from './fsWatcher';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+interface LsblkDevice {
+  name: string;
+  kname?: string;
+  label?: string;
+  mountpoint?: string | null;
+  size?: string;
+  type?: string;
+  tran?: string;
+  rm?: boolean;
+  hotplug?: boolean;
+  fstype?: string;
+  model?: string;
+  ro?: boolean;
+  children?: LsblkDevice[];
+  devicePath?: string;
+  mounted?: boolean;
+  isExternal?: boolean;
+  parentDisk?: string;
+}
+
+interface DriveInfo {
+  name: string;
+  label: string;
+  mountpoint: string;
+  size?: string;
+  type?: string;
+  removable: boolean;
+  usb: boolean;
+}
+
+function getExecError(e: unknown): { stderr: string; message: string } {
+  const err = e as { stderr?: string; message?: string };
+  return { stderr: err.stderr || '', message: err.message || String(e) };
+}
 
 // --- State ---
 let mainWindow: BrowserWindow | null = null;
 
 // Initialize PTY handlers
 setupPtyHandlers();
-let terminalProcess: any = null;
-let terminalSessionProxy: any = null;
-
-// --- Helper Functions ---
-async function setupTerminal(pid: number) {
-  const bus = dbus.sessionBus();
-  const serviceName = `org.kde.konsole - ${pid} `;
-
-  for (let i = 0; i < 20; i++) {
-    try {
-      // Check if service exists by listing names? No, just try to get object.
-      const sessionPath = '/Sessions/1';
-      const sessionObj = await bus.getProxyObject(serviceName, sessionPath);
-      const sessionInterface = sessionObj.getInterface('org.kde.konsole.Session');
-
-      if (sessionInterface) {
-        terminalSessionProxy = sessionInterface;
-        console.log('Connected to Konsole DBus:', serviceName);
-        return;
-      }
-    } catch (e) {
-      // Ignore errors while waiting
-    }
-    await new Promise(r => setTimeout(r, 500));
-  }
-  console.warn('Failed to connect to Konsole DBus after retries');
-}
+let terminalProcess: ReturnType<typeof spawn> | null = null;
 
 // Register protocol before app ready
 protocol.registerSchemesAsPrivileged([
@@ -88,7 +97,7 @@ ipcMain.handle('theme:get-css', async () => {
   try {
     const css = await fs.readFile(themePath, 'utf-8');
     return css;
-  } catch (error) {
+  } catch {
     return null;
   }
 });
@@ -174,18 +183,18 @@ async function listDirectoryContents(targetPath: string): Promise<{
                   diskNameForExternal = parentName;
                 }
               }
-            } catch {}
+            } catch { /* continue */ }
           }
 
           try {
             const removable = await fs.readFile(`/sys/block/${diskNameForExternal}/removable`, 'utf-8');
             isExternal = removable.trim() === '1';
-          } catch {}
+          } catch { /* continue */ }
           if (!isExternal) {
             try {
               const link = await fs.readlink(`/sys/block/${diskNameForExternal}`);
               isExternal = link.includes('usb');
-            } catch {}
+            } catch { /* continue */ }
           }
         }
         return {
@@ -262,7 +271,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
         mtime: stats.mtime,
         mime
       };
-    } catch (e) {
+    } catch {
       return null;
     }
   }));
@@ -287,7 +296,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
           deviceMountMap.set(target, info);
         }
       }
-    } catch {}
+    } catch { /* continue */ }
   }
 
   for (const entry of filtered) {
@@ -319,16 +328,16 @@ async function listDirectoryContents(targetPath: string): Promise<{
           const hasDm = await fs.access(`/sys/class/block/${targetName}/dm/`).then(() => true).catch(() => false);
           entry.isMountable = hasPartition || hasDm;
           entry.canAutoMount = entry.isMountable && !hasDm;
-        } catch {}
+        } catch { /* continue */ }
         try {
           const removable = await fs.readFile(`/sys/block/${targetName}/removable`, 'utf-8');
           entry.isExternal = removable.trim() === '1';
-        } catch {}
+        } catch { /* continue */ }
         if (!entry.isExternal) {
           try {
             const link = await fs.readlink(`/sys/block/${targetName}`);
             entry.isExternal = link.includes('usb');
-          } catch {}
+          } catch { /* continue */ }
         }
       }
     }
@@ -457,10 +466,10 @@ ipcMain.handle('system:get-apps', async () => {
 
               apps.push({ name, icon, exec: execCmd, desktopFile: desktopPath });
             }
-          } catch { }
+          } catch { /* continue */ }
         }
       }
-    } catch { }
+    } catch { /* continue */ }
   }
 
   appsCache = apps.sort((a, b) => a.name.localeCompare(b.name));
@@ -477,7 +486,7 @@ ipcMain.handle('system:open-with', async (_, execPath: string, filePath: string,
       if (pathMatch && pathMatch[1].trim()) {
         cwd = pathMatch[1].trim();
       }
-    } catch { }
+    } catch { /* continue */ }
   }
 
   return new Promise((resolve) => {
@@ -497,13 +506,13 @@ ipcMain.handle('system:open-with', async (_, execPath: string, filePath: string,
         cwd: cwd,
         env: { ...process.env }
       });
-      child.on('error', (err: any) => {
-        resolve((err?.message || err) as string);
+      child.on('error', (err: Error) => {
+        resolve(err.message);
       });
       child.unref();
       child.on('spawn', () => resolve(true));
-    } catch (e: any) {
-      resolve((e?.message || e) as string);
+    } catch (e) {
+      resolve(getExecError(e).message);
     }
   });
 });
@@ -540,13 +549,12 @@ ipcMain.on('dnd:start', (event, filePaths: string | string[]) => {
   const cachedPath = getCachedDragIconPath('insert_drive_file');
   if (!existsSync(cachedPath)) {
     try {
-      const { nativeImage } = require('electron');
       const img = nativeImage.createFromDataURL(
         'data:image/svg+xml;base64,' +
         Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="16" fill="#4285F4"/></svg>').toString('base64')
       );
       writeFileSync(cachedPath, img.toPNG());
-    } catch {}
+    } catch { /* continue */ }
   }
   event.sender.startDrag({
     file: files[0],
@@ -586,8 +594,8 @@ ipcMain.handle('system:get-drives', async () => {
     const data = JSON.parse(stdout);
     const devices = data.blockdevices || [];
 
-    const drives: any[] = [];
-    const processDevice = (dev: any) => {
+    const drives: DriveInfo[] = [];
+    const processDevice = (dev: LsblkDevice) => {
       // We want devices that have a mountpoint OR children with mountpoints?
       // Actually, usually partition has mountpoint.
       if (dev.mountpoint) {
@@ -635,12 +643,12 @@ ipcMain.handle('system:get-storage-usage', async () => {
   }
 });
 
-async function getAllDevices(): Promise<any[]> {
+async function getAllDevices(): Promise<LsblkDevice[]> {
   try {
     const { stdout } = await execAsync('lsblk --json -o NAME,KNAME,LABEL,MOUNTPOINT,SIZE,TYPE,TRAN,RM,FSTYPE,MODEL,HOTPLUG,RO');
     const data = JSON.parse(stdout);
-    const devices = data.blockdevices || [];
-    const processDevice = (dev: any, parentModel?: string, parentDisk?: string): any => ({
+    const devices: LsblkDevice[] = data.blockdevices || [];
+    const processDevice = (dev: LsblkDevice, parentModel?: string, parentDisk?: string): LsblkDevice => ({
       name: dev.name,
       devicePath: `/dev/${dev.kname}`,
       label: dev.label || dev.name,
@@ -655,9 +663,9 @@ async function getAllDevices(): Promise<any[]> {
       model: dev.model || parentModel || undefined,
       isExternal: !!(dev.hotplug || dev.rm || dev.tran === 'usb'),
       parentDisk: dev.type === 'part' ? parentDisk : undefined,
-      children: dev.children ? dev.children.map((c: any) => processDevice(c, dev.model || parentModel, `/dev/${dev.kname}`)) : undefined,
+      children: dev.children ? dev.children.map(c => processDevice(c, dev.model || parentModel, `/dev/${dev.kname}`)) : undefined,
     });
-    return devices.map((d: any) => processDevice(d));
+    return devices.map(d => processDevice(d));
   } catch (e) {
     console.error('Failed to get all devices', e);
     return [];
@@ -702,7 +710,7 @@ async function setupUdisks2Monitor() {
 
     objectManager.on('InterfacesAdded', scheduleExternalDevicesRefresh);
     objectManager.on('InterfacesRemoved', scheduleExternalDevicesRefresh);
-  } catch (e) {
+  } catch {
     console.warn('udisks2 not available, device polling will be used');
     udisks2Available = false;
   }
@@ -727,11 +735,11 @@ ipcMain.handle('system:mount-device', async (_event, devicePath: string) => {
     const alreadyMatch = stderr.match(/already mounted at ['`](.+?)['`]/);
     if (alreadyMatch) return { success: true, mountpoint: alreadyMatch[1] };
     return { success: false, error: stderr || 'Unknown error' };
-  } catch (e: any) {
-    const stderr = e.stderr || '';
+  } catch (e) {
+    const { stderr } = getExecError(e);
     const alreadyMatch = stderr.match(/already mounted at ['`](.+?)['`]/);
     if (alreadyMatch) return { success: true, mountpoint: alreadyMatch[1] };
-    return { success: false, error: stderr || e.message || 'Mount failed' };
+    return { success: false, error: stderr || getExecError(e).message || 'Mount failed' };
   }
 });
 
@@ -739,8 +747,9 @@ ipcMain.handle('system:unmount-device', async (_event, devicePath: string) => {
   try {
     await execAsync(`udisksctl unmount -b "${devicePath}"`);
     return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.stderr || e.message || 'Unmount failed' };
+  } catch (e) {
+    const { stderr, message } = getExecError(e);
+    return { success: false, error: stderr || message || 'Unmount failed' };
   }
 });
 
@@ -754,8 +763,9 @@ ipcMain.handle('system:eject-device', async (_event, devicePath: string) => {
     }
     await execAsync(`udisksctl power-off -b "${devicePath}"`);
     return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.stderr || e.message || 'Eject failed' };
+  } catch (e) {
+    const { stderr, message } = getExecError(e);
+    return { success: false, error: stderr || message || 'Eject failed' };
   }
 });
 
@@ -766,7 +776,7 @@ ipcMain.handle('fs:get-symlink-target', async (_event, filePath: string) => {
     const rawTarget = await fs.readlink(filePath);
     const target = path.resolve(path.dirname(filePath), rawTarget);
     let targetExists = false;
-    try { await fs.access(target); targetExists = true; } catch {}
+    try { await fs.access(target); targetExists = true; } catch { /* continue */ }
     return { isSymlink: true, target, targetExists };
   } catch {
     return { isSymlink: false };
@@ -819,7 +829,7 @@ ipcMain.handle('app:get-startup-path', async () => {
         return path.dirname(lastArg); // Open parent folder if file passed
       }
     }
-  } catch (e) {
+  } catch {
     // Path doesn't exist or other error
     return null;
   }
@@ -842,7 +852,7 @@ ipcMain.handle('window:set-icon', async (_, iconType: 'light' | 'dark' | string)
         await fs.access(p);
         mainWindow.setIcon(p);
         return;
-      } catch { }
+      } catch { /* continue */ }
     }
   }
 });
@@ -856,10 +866,11 @@ ipcMain.handle('system:get-directory-size', async (_, dirPath: string) => {
       return parseInt(match[1], 10);
     }
     return 0;
-  } catch (error: any) {
+  } catch (error) {
     // du might fail on some files but still return partial
-    if (error.stdout) {
-      const match = error.stdout.match(/^(\d+)/);
+    const err = error as { stdout?: string };
+    if (err.stdout) {
+      const match = err.stdout.match(/^(\d+)/);
       if (match) return parseInt(match[1], 10);
     }
     return 0;
@@ -896,13 +907,13 @@ ipcMain.handle('system:get-recommended-apps', async (_, filePath: string) => {
         // escape mime type for grep? usually mime has / and -, safeish.
         const { stdout: grepOut } = await execAsync(`grep -l "${mime}" "${searchPath}"/*.desktop || true`);
         grepOut.split('\n').filter(Boolean).forEach(f => appFiles.add(f));
-      } catch (e) {
-        // console.log('Error searching path:', searchPath, e);
+      } catch {
+        // continue
       }
     }
 
     // 3. Parse desktop files
-    const apps: any[] = [];
+    const apps: { name: string; icon: string | null; exec: string; path: string }[] = [];
     for (const file of appFiles) {
       try {
         const content = await fs.readFile(file, 'utf-8');
@@ -925,7 +936,7 @@ ipcMain.handle('system:get-recommended-apps', async (_, filePath: string) => {
             path: file
           });
         }
-      } catch { }
+      } catch { /* continue */ }
     }
     // console.log('Found apps:', apps.length);
     return apps;
@@ -949,7 +960,7 @@ ipcMain.handle('system:search', async (_, directory: string, query: string, opti
     const { stdout } = await execFileAsync('find', args, { maxBuffer: 1024 * 1024 * 10 });
 
     const lines = stdout.split('\n').filter(Boolean);
-    const results: any[] = []; // Use any to avoid IFile import issues
+    const results: { name: string; path: string; isDirectory: boolean; size: number; mtime: Date }[] = [];
 
     const topLines = lines.slice(0, 100);
 
@@ -963,7 +974,7 @@ ipcMain.handle('system:search', async (_, directory: string, query: string, opti
           size: stats.size,
           mtime: stats.mtime
         });
-      } catch { }
+      } catch { /* continue */ }
     }
     return results;
   } catch (error) {
@@ -994,7 +1005,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (terminalProcess) {
-    process.kill(terminalProcess.pid);
+    if (terminalProcess.pid) process.kill(terminalProcess.pid);
     terminalProcess = null;
   }
   stopAllWatching();

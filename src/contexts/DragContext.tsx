@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { IFile } from '../types/files';

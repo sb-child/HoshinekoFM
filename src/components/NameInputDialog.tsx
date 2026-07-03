@@ -47,7 +47,7 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(computeDefault());
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setConflict(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultName, isDir, existingSet]);

@@ -114,7 +114,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ cwd }) => {
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, []); // Only mount once
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (cwd && pidRef.current) {

@@ -9,7 +9,6 @@ interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> 
 
 export const IconButton: React.FC<IconButtonProps> = ({
   variant = 'standard',
-  toggle,
   selected,
   className = '',
   children,

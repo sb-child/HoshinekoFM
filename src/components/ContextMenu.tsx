@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import './ContextMenu.css';
 import { Icon } from './Icon';
 import { t } from '../i18n';
+import type zhCN from '../i18n/zh-CN';
+
+type I18nKey = keyof typeof zhCN;
 
 export interface ContextMenuItem {
     label: string;
@@ -127,7 +130,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
           }}>
             {item.icon && <Icon name={item.icon} className="context-menu-icon" />}
             <span className="context-menu-label">
-              {labelToKey[item.label] ? (t as any)(labelToKey[item.label]) : item.label}
+              {labelToKey[item.label] ? t(labelToKey[item.label] as I18nKey) : item.label}
             </span>
             {item.shortcut && <span className="context-menu-shortcut">{item.shortcut}</span>}
           </button>

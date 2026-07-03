@@ -9,9 +9,10 @@ import {
   type ConflictResult,
 } from './fileConflict';
 
-export function formatFileOpError(operation: string, fileRef: string, error: any): string {
-  let code: string = error?.code || '';
-  const msg = (error?.message || error?.toString() || '').toLowerCase();
+export function formatFileOpError(operation: string, fileRef: string, error: unknown): string {
+  const err = error as { code?: string; message?: string } | undefined;
+  let code: string = err?.code || '';
+  const msg = (err?.message || String(error) || '').toLowerCase();
 
   if (!code) {
     const m = msg.match(/error:\s*(\w+):/);
@@ -59,7 +60,7 @@ export function formatFileOpError(operation: string, fileRef: string, error: any
     return t('file_op.busy', operation, fileRef);
   }
 
-  return t('file_op.generic', operation, fileRef, error?.message || error);
+  return t('file_op.generic', operation, fileRef, err?.message || String(error));
 }
 
 function fileName(path: string): string {

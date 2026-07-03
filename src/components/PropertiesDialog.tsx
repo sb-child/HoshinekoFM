@@ -38,8 +38,8 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, 
   useEffect(() => {
     if (open && file) {
       if (file.isDirectory) {
-        setCalculatedSize(null);
-        setIsCalculating(true);
+        setCalculatedSize(null); // eslint-disable-line react-hooks/set-state-in-effect
+        setIsCalculating(true);  
         // Fetch size
         if (window.electron && window.electron.getDirectorySize) {
           window.electron.getDirectorySize(file.path)

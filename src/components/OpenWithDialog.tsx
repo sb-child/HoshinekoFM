@@ -48,7 +48,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
           setRecommendedApps(apps.map(a => ({ name: a.name, icon: a.icon, exec: a.exec, desktopFile: a.path })))
         );
       } else {
-        setRecommendedApps([]);
+        setRecommendedApps([]); // eslint-disable-line react-hooks/set-state-in-effect
       }
     }
   }, [open, path]);
@@ -64,7 +64,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
         // 执行打开操作
         await onSelect(selectedApp.exec, selectedApp.desktopFile);
         onClose();
-      } catch (error: any) {
+      } catch (error) {
         console.error(ti('toast.launch_failed', selectedApp.exec, String(error)));
         showToast(formatFileOpError('启动程序', selectedApp.name, error), 'error');
       }

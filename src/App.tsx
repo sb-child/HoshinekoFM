@@ -98,7 +98,7 @@ function AppContent() {
     defaultName: string;
     existingNames: string[];
     resolve: (name: string | null) => void;
-  } | null>(null);
+      } | null>(null);
 
   // Conflict Dialog State
   const [singleConflict, setSingleConflict] = useState<{
@@ -108,7 +108,7 @@ function AppContent() {
     sourcePath?: string;
     operation?: "move" | "copy";
     resolve: (result: ConflictResult) => void;
-  } | null>(null);
+      } | null>(null);
 
   const [multiConflict, setMultiConflict] = useState<{
     conflicts: ConflictEntry[];
@@ -117,7 +117,7 @@ function AppContent() {
     resolve: (result: ConflictResult) => void;
     sourcePath?: string;
     operation?: "move" | "copy";
-  } | null>(null);
+      } | null>(null);
 
   // Device context menu state
   const [deviceContextMenu, setDeviceContextMenu] = useState<{
@@ -196,7 +196,23 @@ function AppContent() {
     }
   };
 
-  const loadHome = async () => {
+  const currentPath = tabs.find((t) => t.id === activeTabId)?.path || "";
+
+  // Tab Handlers
+  const handleAddTab = (path?: string) => {
+    const newTabId = Date.now().toString();
+    const newPath = path || currentPath || "/";
+    const newTab: TabState = {
+      id: newTabId,
+      title: "New Tab",
+      path: newPath,
+      version: 0,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newTabId);
+  };
+
+  const loadHome = () => {
     handleAddTab("app://dashboard");
   };
 
@@ -228,9 +244,9 @@ function AppContent() {
 
     const storedCssPath = localStorage.getItem("customCssPath");
     if (storedCssPath) {
-      handleLoadCustomCss(storedCssPath);
+      handleLoadCustomCss(storedCssPath); // eslint-disable-line react-hooks/set-state-in-effect
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Block scroll events when context menu or dialog is open
   useEffect(() => {
@@ -242,26 +258,6 @@ function AppContent() {
     window.addEventListener('wheel', handler, { passive: false });
     return () => window.removeEventListener('wheel', handler);
   }, []);
-
-  const currentPath = tabs.find((t) => t.id === activeTabId)?.path || "";
-
-  // Tab Handlers
-  const handleAddTab = useCallback(
-    (path?: string) => {
-      const newTabId = Date.now().toString();
-      const newPath = path || currentPath || "/"; // Default to current or root
-      const newTab: TabState = {
-        id: newTabId,
-        title: "New Tab",
-        path: newPath,
-        version: 0,
-      };
-
-      setTabs((prev) => [...prev, newTab]);
-      setActiveTabId(newTabId);
-    },
-    [currentPath],
-  );
 
   const handleCloseTab = useCallback(
     (id: string) => {
