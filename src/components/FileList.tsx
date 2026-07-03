@@ -791,7 +791,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
               >
                 <MarqueeText enabled={data.marqueeEnabled}
                   className="file-name-text"
-                  style={{ paddingLeft: 4, paddingRight: 4 }}
+                  style={{ paddingLeft: 0, paddingRight: 0 }}
                   title={getFileTitle(file)}
                 >
                   {file.name}

@@ -68,17 +68,22 @@ export function MarqueeText({
       <span
         className={className}
         style={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          display: "inline-block",
+          display: "inline-flex",
+          alignItems: "center",
           maxWidth: "100%",
           minWidth: 0,
+          overflow: "hidden",
           ...style,
         }}
         title={title}
       >
-        {children}
+        <span style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}>
+          {children}
+        </span>
       </span>
     );
   }
