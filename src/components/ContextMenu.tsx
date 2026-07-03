@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './ContextMenu.css';
+import { ListItem, Divider } from './md';
 import { Icon } from './Icon';
 import { t } from '../i18n';
 import type zhCN from '../i18n/zh-CN';
@@ -25,11 +26,13 @@ const MENU_PADDING = 8;
 
 function clampPosition(x: number, y: number, width: number, height: number) {
   const { innerWidth, innerHeight } = window;
+  const maxH = innerHeight - 2 * MENU_PADDING;
+  const clampedHeight = Math.min(height, maxH);
   let newX = x;
   let newY = y;
 
   if (x + width > innerWidth) newX = x - width;
-  if (y + height > innerHeight) newY = y - height;
+  if (y + clampedHeight > innerHeight) newY = y - clampedHeight;
   if (newX < MENU_PADDING) newX = MENU_PADDING;
   if (newY < MENU_PADDING) newY = MENU_PADDING;
 
@@ -71,71 +74,59 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
 
   useEffect(() => {
     if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    setPos(clampPosition(x, y, rect.width, rect.height));
+    const el = menuRef.current;
+    const w = el.getBoundingClientRect().width;
+    const h = el.scrollHeight;
+    setPos(clampPosition(x, y, w, h));
 
     const handleResize = () => {
       if (!menuRef.current) return;
-      const r = menuRef.current.getBoundingClientRect();
-      setPos(clampPosition(x, y, r.width, r.height));
+      const rW = menuRef.current.getBoundingClientRect().width;
+      const rH = menuRef.current.scrollHeight;
+      setPos(clampPosition(x, y, rW, rH));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [x, y]);
 
-  const processedItems = items.map(item => {
-    if (item.divider) return item;
-
-    if (item.label === 'Rename') {
-      const originalAction = item.action;
-      return {
-        ...item,
-        action: () => {
-          originalAction();
-          setTimeout(() => {
-            const dialogTitles = document.querySelectorAll('.md3-dialog-title, .dialog-title, h2');
-            dialogTitles.forEach(el => {
-              if (el.textContent === 'Rename') el.textContent = t('dialog.rename.title');
-            });
-            const buttons = document.querySelectorAll('button');
-            buttons.forEach(btn => {
-              if (btn.textContent === 'Cancel') btn.textContent = t('dialog.rename.cancel');
-              if (btn.textContent === 'Rename') btn.textContent = t('dialog.rename.confirm');
-            });
-            const inputs = document.querySelectorAll('input');
-            inputs.forEach(input => {
-              if (input.placeholder === 'New name') input.placeholder = t('dialog.rename.placeholder');
-            });
-          }, 50);
-        }
-      };
-    }
-
-    return item;
-  });
-
   return (
     <div
       ref={menuRef}
       className="context-menu"
-      style={{ left: pos.left, top: pos.top }}
+      style={{
+        left: pos.left,
+        top: pos.top,
+        maxHeight: `calc(100vh - ${pos.top + MENU_PADDING}px)`,
+      }}
     >
-      {processedItems.map((item, index) => (
-        item.divider ? (
-          <div key={index} className="context-menu-divider" />
-        ) : (
-          <button key={index} className="context-menu-item" onClick={() => {
-            item.action();
-            onClose();
-          }}>
-            {item.icon && <Icon name={item.icon} className="context-menu-icon" />}
-            <span className="context-menu-label">
-              {labelToKey[item.label] ? t(labelToKey[item.label] as I18nKey) : item.label}
-            </span>
-            {item.shortcut && <span className="context-menu-shortcut">{item.shortcut}</span>}
-          </button>
-        )
-      ))}
+      <div className="context-menu-list">
+        {items.map((item, index) => (
+          item.divider ? (
+            <Divider key={index} />
+          ) : (
+            <ListItem
+              key={index}
+              type="button"
+              onClick={() => {
+                item.action();
+                onClose();
+              }}
+            >
+              {item.icon && (
+                <span slot="start">
+                  <Icon name={item.icon} className="context-menu-icon" />
+                </span>
+              )}
+              <span slot="headline">
+                {labelToKey[item.label] ? t(labelToKey[item.label] as I18nKey) : item.label}
+              </span>
+              {item.shortcut && (
+                <span slot="end" className="context-menu-shortcut">{item.shortcut}</span>
+              )}
+            </ListItem>
+          )
+        ))}
+      </div>
     </div>
   );
 };

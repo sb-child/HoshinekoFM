@@ -1,26 +1,77 @@
 import React from 'react';
-import './IconButton.css';
+import {
+  IconButton as MdIconButton,
+  FilledIconButton,
+  TonalIconButton,
+  OutlinedIconButton,
+} from './md';
 
-interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-    variant?: 'filled' | 'tonal' | 'outlined' | 'standard';
-    toggle?: boolean;
-    selected?: boolean;
+interface IconButtonProps {
+  variant?: 'filled' | 'tonal' | 'outlined' | 'standard';
+  toggle?: boolean;
+  selected?: boolean;
+  disabled?: boolean;
+  type?: 'button' | 'submit' | 'reset';
+  className?: string;
+  style?: React.CSSProperties;
+  title?: string;
+  onClick?: React.MouseEventHandler<HTMLElement>;
+  onDragOver?: React.DragEventHandler<HTMLElement>;
+  onDragEnter?: React.DragEventHandler<HTMLElement>;
+  onDragLeave?: React.DragEventHandler<HTMLElement>;
+  onDrop?: React.DragEventHandler<HTMLElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLElement>;
+  children?: React.ReactNode;
+  tabIndex?: number;
+  id?: string;
 }
+
+const variantMap = {
+  standard: MdIconButton,
+  filled: FilledIconButton,
+  tonal: TonalIconButton,
+  outlined: OutlinedIconButton,
+} as const;
 
 export const IconButton: React.FC<IconButtonProps> = ({
   variant = 'standard',
   selected,
-  className = '',
+  toggle,
   children,
-  ...props
+  className = '',
+  disabled,
+  type,
+  style,
+  title,
+  onClick,
+  onDragOver,
+  onDragEnter,
+  onDragLeave,
+  onDrop,
+  onContextMenu,
+  tabIndex,
+  id,
 }) => {
-  const selectedClass = selected ? 'm3-icon-button--selected' : '';
+  const Component = variantMap[variant];
   return (
-    <button
-      className={`m3-icon-button m3-icon-button--${variant} ${selectedClass} ${className}`}
-      {...props}
+    <Component
+      className={className || undefined}
+      disabled={disabled}
+      toggle={toggle}
+      selected={selected}
+      type={type ?? 'button'}
+      style={style}
+      title={title}
+      onClick={onClick}
+      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onContextMenu={onContextMenu}
+      tabIndex={tabIndex}
+      id={id}
     >
       {children}
-    </button>
+    </Component>
   );
 };

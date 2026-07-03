@@ -1,46 +1,63 @@
-import React, { useEffect, useRef } from 'react';
-import './Dialog.css';
+import React, { useRef, useCallback } from 'react';
+import { Dialog as MdDialog } from './md';
+
+const SCROLLBAR_STYLE_ID = 'md-dialog-scrollbar-style';
+
+const SCROLLBAR_CSS = `
+.scroller::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroller::-webkit-scrollbar-thumb {
+  background: var(--md-sys-color-outline-variant);
+  border-radius: 4px;
+}
+.scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--md-sys-color-outline);
+}
+`;
+
+function injectScrollbarStyle(root: ShadowRoot) {
+  if (root.getElementById(SCROLLBAR_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = SCROLLBAR_STYLE_ID;
+  style.textContent = SCROLLBAR_CSS;
+  root.appendChild(style);
+}
 
 interface DialogProps {
-    title: string;
-    open: boolean;
-    onClose: () => void;
-    children: React.ReactNode;
-    actions?: React.ReactNode;
+  title: string;
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
 }
 
 export const Dialog: React.FC<DialogProps> = ({ title, open, onClose, children, actions }) => {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dialogRef = useRef<any>(null);
 
-  useEffect(() => {
-    if (open) {
-      dialogRef.current?.showModal();
-    } else {
-      dialogRef.current?.close();
-    }
-  }, [open]);
-
-  const handleBackdropMouseDown = (e: React.MouseEvent) => {
-    if (e.target === dialogRef.current) {
-      e.preventDefault();
-      onClose();
-    }
-  };
+  const handleOpened = useCallback(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    const root = el.shadowRoot;
+    if (root) injectScrollbarStyle(root);
+  }, []);
 
   return (
-    <dialog ref={dialogRef} className="md3-dialog" onMouseDown={handleBackdropMouseDown} onCancel={onClose}>
-      <div className="md3-dialog-content">
-        <div className="md3-dialog-icon">
-          {/* Optional Icon Slot */}
-        </div>
-        <h2 className="md3-dialog-headline">{title}</h2>
-        <div className="md3-dialog-supporting-text">
-          {children}
-        </div>
-        <div className="md3-dialog-actions">
-          {actions}
-        </div>
-      </div>
-    </dialog>
+    <MdDialog
+      ref={dialogRef}
+      open={open}
+      onCancel={onClose}
+      onClose={onClose}
+      onOpened={handleOpened}
+    >
+      <span slot="headline">{title}</span>
+      <div slot="content">{children}</div>
+      {actions && <div slot="actions">{actions}</div>}
+    </MdDialog>
   );
 };

@@ -1,22 +1,75 @@
 import React from 'react';
-import './Button.css';
+import {
+  FilledButton,
+  OutlinedButton,
+  TextButton,
+  FilledTonalButton,
+} from './md';
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-    variant?: 'filled' | 'tonal' | 'outlined' | 'text';
-    icon?: React.ReactNode;
+interface ButtonProps {
+  variant?: 'filled' | 'tonal' | 'outlined' | 'text';
+  icon?: React.ReactNode;
+  disabled?: boolean;
+  type?: 'button' | 'submit' | 'reset';
+  className?: string;
+  style?: React.CSSProperties;
+  onClick?: React.MouseEventHandler<HTMLElement>;
+  onDragOver?: React.DragEventHandler<HTMLElement>;
+  onDragEnter?: React.DragEventHandler<HTMLElement>;
+  onDragLeave?: React.DragEventHandler<HTMLElement>;
+  onDrop?: React.DragEventHandler<HTMLElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLElement>;
+  children?: React.ReactNode;
+  tabIndex?: number;
+  id?: string;
+  title?: string;
 }
+
+const variantMap = {
+  filled: FilledButton,
+  tonal: FilledTonalButton,
+  outlined: OutlinedButton,
+  text: TextButton,
+} as const;
 
 export const Button: React.FC<ButtonProps> = ({
   variant = 'filled',
   icon,
   children,
   className = '',
-  ...props
+  disabled,
+  type,
+  style,
+  onClick,
+  onDragOver,
+  onDragEnter,
+  onDragLeave,
+  onDrop,
+  onContextMenu,
+  tabIndex,
+  id,
+  title,
 }) => {
+  const Component = variantMap[variant];
   return (
-    <button className={`m3-button m3-button--${variant} ${className}`} {...props}>
-      {icon && <span className="m3-button__icon">{icon}</span>}
-      <span className="m3-button__label">{children}</span>
-    </button>
+    <Component
+      className={className || undefined}
+      disabled={disabled}
+      type={type ?? 'button'}
+      style={style}
+      hasIcon={!!icon}
+      onClick={onClick}
+      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onContextMenu={onContextMenu}
+      tabIndex={tabIndex}
+      id={id}
+      title={title}
+    >
+      {icon && <span slot="icon">{icon}</span>}
+      {children}
+    </Component>
   );
 };

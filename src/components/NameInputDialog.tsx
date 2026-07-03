@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
+import { OutlinedTextField } from './md';
 import { generateSafeName, splitNameExt, truncateDirPath } from '../utils/fileConflict';
 import { t } from '../i18n';
 import './NameInputDialog.css';
@@ -41,7 +42,8 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
 
   const [value, setValue] = useState(() => computeDefault());
   const [conflict, setConflict] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inputRef = useRef<any>(null);
 
   // Recompute default when opened with new props
   useEffect(() => {
@@ -56,8 +58,8 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
     inputRef.current?.focus();
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value;
+  const handleChange = (e: Event) => {
+    const v = (e.target as HTMLInputElement).value;
     setValue(v);
     const trimmed = v.trim();
     if (!trimmed) {
@@ -142,14 +144,15 @@ export const NameInputDialog: React.FC<NameInputDialogProps> = ({
             )}
           </div>
         )}
-        <input
+        <OutlinedTextField
           ref={inputRef}
-          type="text"
-          className={`name-input-field ${conflict ? 'name-input-conflict' : ''}`}
+          label={title}
           value={value}
-          onChange={handleChange}
+          onInput={handleChange}
           onKeyDown={handleKeyDown}
-          spellCheck={false}
+          error={conflict}
+          errorText={conflict ? t('error.name_exists', value) : ''}
+          style={{ width: '100%' }}
         />
       </div>
     </Dialog>

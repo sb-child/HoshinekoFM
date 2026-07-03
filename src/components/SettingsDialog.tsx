@@ -2,6 +2,7 @@ import React from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
+import { Switch, Slider } from "./md";
 import { t as ti } from '../i18n';
 
 interface SettingsDialogProps {
@@ -84,34 +85,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
             </div>
           </div>
           {/* Material 3 Switch */}
-          <div
-            style={{
-              width: "52px",
-              height: "32px",
-              background: showHiddenFiles
-                ? "var(--md-sys-color-primary)"
-                : "var(--md-sys-color-surface-container-highest)",
-              borderRadius: "16px",
-              position: "relative",
-              transition: "background 0.2s",
-              border: `2px solid ${showHiddenFiles ? "var(--md-sys-color-primary)" : "var(--md-sys-color-outline)"}`,
-            }}
-          >
-            <div
-              style={{
-                width: "16px",
-                height: "16px",
-                borderRadius: "50%",
-                background: showHiddenFiles
-                  ? "var(--md-sys-color-on-primary)"
-                  : "var(--md-sys-color-outline)",
-                position: "absolute",
-                top: "50%",
-                transform: `translate(${showHiddenFiles ? "28px" : "6px"}, -50%)`,
-                transition: "transform 0.2s, background 0.2s",
-              }}
-            />
-          </div>
+          <Switch
+            selected={showHiddenFiles}
+            onClick={onToggleHiddenFiles}
+          />
         </div>
 
         <div
@@ -162,17 +139,13 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               <span>{tSettings("Icon Size")}</span>
               <span>{iconSize}px</span>
             </div>
-            <input
-              type="range"
-              min="16"
-              max="128"
-              step="8"
+            <Slider
+              min={16}
+              max={128}
+              step={8}
               value={iconSize}
-              onChange={(e) => onIconSizeChange(Number(e.target.value))}
-              style={{
-                width: "100%",
-                accentColor: "var(--md-sys-color-primary)",
-              }}
+              onInput={(e) => onIconSizeChange(Number((e.target as HTMLInputElement).value))}
+              style={{ width: "100%" }}
             />
           </div>
 
@@ -193,34 +166,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 {tSettings("Filled Icons")}
               </div>
             </div>
-            <div
-              style={{
-                width: "52px",
-                height: "32px",
-                background: filledIcons
-                  ? "var(--md-sys-color-primary)"
-                  : "var(--md-sys-color-surface-container-highest)",
-                borderRadius: "16px",
-                position: "relative",
-                transition: "background 0.2s",
-                border: `2px solid ${filledIcons ? "var(--md-sys-color-primary)" : "var(--md-sys-color-outline)"}`,
-              }}
-            >
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  borderRadius: "50%",
-                  background: filledIcons
-                    ? "var(--md-sys-color-on-primary)"
-                    : "var(--md-sys-color-outline)",
-                  position: "absolute",
-                  top: "50%",
-                  transform: `translate(${filledIcons ? "28px" : "6px"}, -50%)`,
-                  transition: "transform 0.2s, background 0.2s",
-                }}
-              />
-            </div>
+            <Switch
+              selected={filledIcons}
+              onClick={onToggleFilledIcons}
+            />
           </div>
         </div>
 

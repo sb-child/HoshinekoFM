@@ -135,29 +135,6 @@
 .conflict-rename-input {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--md-sys-color-outline);
-  background: var(--md-sys-color-surface);
-  color: var(--md-sys-color-on-surface);
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.15s ease;
-  box-sizing: border-box;
-}
-
-.conflict-rename-input:focus {
-  border-color: var(--md-sys-color-primary);
-  box-shadow: 0 0 0 1px var(--md-sys-color-primary);
-}
-
-.conflict-rename-input-error {
-  border-color: var(--md-sys-color-error) !important;
-}
-
-.conflict-rename-input-error:focus {
-  border-color: var(--md-sys-color-error) !important;
-  box-shadow: 0 0 0 1px var(--md-sys-color-error) !important;
 }
 
 .conflict-rename-badge {

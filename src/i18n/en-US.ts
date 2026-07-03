@@ -43,7 +43,7 @@ const enUS = {
   'dialog.button.open': 'Open',
 
   // ── 重名对话框（多选）──
-'dialog.conflict.title_move': (n: number) => n === 1 
+  'dialog.conflict.title_move': (n: number) => n === 1 
     ? 'Move — 1 Naming Conflict' 
     : `Move — ${n} Naming Conflicts`,
   'dialog.conflict.title_copy': (n: number) => n === 1 
@@ -151,7 +151,7 @@ const enUS = {
   'error.create_parent_failed': (parent: string) => `Failed to create destination directory: ${parent}`,
 
   // ── fileOperations 错误格式化 ──
-'file_op.exists': (op: string, ref: string) => `${op} ${ref}: A file with the same name already exists`,
+  'file_op.exists': (op: string, ref: string) => `${op} ${ref}: A file with the same name already exists`,
   'file_op.not_found': (op: string, ref: string) => `${op} ${ref}: No such file or directory`,
   'file_op.permission': (op: string, ref: string) => `${op} ${ref}: Permission denied`,
   'file_op.no_space': (op: string, ref: string) => `${op} ${ref}: No space left on device`,
@@ -164,7 +164,7 @@ const enUS = {
   'file_op.generic': (op: string, ref: string, msg: string) => `${op} ${ref}: ${msg}`,
 
   // ── 操作动词 ──
-'operation.create_file': 'Create File',
+  'operation.create_file': 'Create File',
   'operation.create_folder': 'Create Folder',
   'operation.rename_op': 'Rename',
   'operation.delete_op': 'Delete',
@@ -177,7 +177,7 @@ const enUS = {
   'operation.copy_verb': 'Copy',
 
   // ── 侧边栏 ──
-'sidebar.places': 'Places',
+  'sidebar.places': 'Places',
   'sidebar.devices': 'Devices',
   'sidebar.dashboard': 'Dashboard',
   'sidebar.home': 'Home',
@@ -189,14 +189,14 @@ const enUS = {
   'sidebar.videos': 'Videos',
 
   // ── 导航栏 ──
-'nav.dashboard': 'Dashboard',
+  'nav.dashboard': 'Dashboard',
   'nav.home': 'Home',
   'nav.files': 'Files',
   'nav.terminal': 'Terminal',
   'nav.settings': 'Settings',
 
   // ── 仪表盘 ──
-'dashboard.good_morning': 'Good morning',
+  'dashboard.good_morning': 'Good morning',
   'dashboard.good_afternoon': 'Good afternoon',
   'dashboard.good_evening': 'Good evening',
   'dashboard.welcome': 'Welcome back to your dashboard.',
@@ -211,7 +211,7 @@ const enUS = {
   'dashboard.unpin_tooltip': 'Unpin',
 
   // ── 选择模式 ──
-'selection.box_replace': 'Box Select (Replace)',
+  'selection.box_replace': 'Box Select (Replace)',
   'selection.box_union': 'Box Select (Union)',
   'selection.box_intersection': 'Box Select (Intersection)',
   'selection.box_difference': 'Box Select (Difference)',
@@ -220,27 +220,27 @@ const enUS = {
   'selection.click_range': 'Click Select (Range)',
 
   // ── 搜索 ──
-'search.results': (n: number, q: string) => `Found ${n} result(s) for "${q}"`,
+  'search.results': (n: number, q: string) => `Found ${n} result(s) for "${q}"`,
   'search.clear': 'Clear Search',
 
   // ── 排序 ──
-'sort.toggle_grouping': 'Toggle Grouping',
+  'sort.toggle_grouping': 'Toggle Grouping',
   'sort.by_name': 'Sort by Name',
   'sort.by_date': 'Sort by Date Modified',
 
   // ── 状态栏 ──
-'status.items': (n: number) => n === 1 ? '1 item' : `${n} items`,
+  'status.items': (n: number) => n === 1 ? '1 item' : `${n} items`,
   'status.selected': (n: number) => `${n} selected`,
 
   // ── Omnibar ──
-'omnibar.placeholder': 'Enter path or search...',
+  'omnibar.placeholder': 'Enter path or search...',
   'omnibar.button_tip': 'Click to edit path or search',
 
   // ── 面包屑 ──
- 'breadcrumbs.root': 'Root',
+  'breadcrumbs.root': 'Root',
 
   // ── Tab 标题 ──
-'tab.dashboard': 'Dashboard',
+  'tab.dashboard': 'Dashboard',
   'tab.home': 'Home',
   'tab.downloads': 'Downloads',
   'tab.documents': 'Documents',
@@ -249,17 +249,17 @@ const enUS = {
   'tab.videos': 'Videos',
   'tab.new_tab': 'New Tab',
   // ── 空状态 ──
-'empty.no_tabs': 'No tabs open',
+  'empty.no_tabs': 'No tabs open',
   'empty.open_new_tab': 'Open a new tab',
 
   // ── 终端 ──
-'terminal.title': 'Terminal',
+  'terminal.title': 'Terminal',
   'terminal.process_exited': '\r\nProcess exited.\r\n',
 
   // ── 错误边界 ──
   'error.something_wrong': 'Something went wrong',
 
-// ── MIME 类型 ──
+  // ── MIME 类型 ──
   'mime.folder': 'Folder',
   'mime.symlink': 'Symbolic Link',
   'mime.broken_symlink': 'Broken Symbolic Link',
@@ -338,7 +338,7 @@ const enUS = {
   'mime.cat.other': 'Other',
 
   // ── 文件分组 ──
-'group.folders': 'Folders',
+  'group.folders': 'Folders',
   'group.media': 'Media',
   'group.documents': 'Documents',
   'group.code': 'Code',
@@ -355,11 +355,11 @@ const enUS = {
   'size.zero': '0 B',
 
   // ── Toast 操作 ──
-'toast.copy_action': 'Copy',
+  'toast.copy_action': 'Copy',
   'toast.close_action': 'Close',
 
   // ── 设备操作 ──
-'device.mount': 'Mount',
+  'device.mount': 'Mount',
   'device.unmount': 'Unmount',
   'device.eject': 'Eject',
   'device.power_off': 'Power Off Drive',
@@ -377,7 +377,7 @@ const enUS = {
   'device.type_disk': 'Disk',
 
   // ── 软链接操作 ──
-'symlink.go_to_target': 'Go to Target',
+  'symlink.go_to_target': 'Go to Target',
   'symlink.broken_tooltip': (target: string) => `→ ${target} (Broken)`,
   'symlink.tooltip': (target: string) => `→ ${target}`,
   // ── 挂载点操作 ──

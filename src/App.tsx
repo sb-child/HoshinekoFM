@@ -20,6 +20,7 @@ import { TerminalPane } from "./components/TerminalPane"; // Import TerminalPane
 import type { IFile, AllDevice } from "./types/files";
 import { Dialog } from "./components/Dialog";
 import { Button } from "./components/Button";
+import { OutlinedTextField } from "./components/md";
 import { TabBar } from "./components/TabBar";
 import { ExplorerTab } from "./components/ExplorerTab";
 import { OpenWithDialog } from "./components/OpenWithDialog";
@@ -251,7 +252,16 @@ function AppContent() {
   // Block scroll events when context menu or dialog is open
   useEffect(() => {
     const handler = (e: WheelEvent) => {
-      if (document.querySelector('dialog[open].md3-dialog, .context-menu')) {
+      const target = e.target as Node;
+      const menu = document.querySelector('.context-menu');
+      if (menu) {
+        if (menu.contains(target)) return;
+        e.preventDefault();
+        return;
+      }
+      const openDialog = document.querySelector('dialog[open]');
+      if (openDialog) {
+        if (openDialog.contains(target)) return;
         e.preventDefault();
       }
     };
@@ -892,25 +902,14 @@ function AppContent() {
             </>
           }
         >
-          <input
-            type="text"
+          <OutlinedTextField
+            label={t("dialog.rename.title")}
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className="md3-text-field"
-            style={{
-              width: "100%",
-              padding: "12px",
-              borderRadius: "4px",
-              border: "1px solid var(--md-sys-color-outline)",
-              background: "var(--md-sys-color-surface)",
-              color: "var(--md-sys-color-on-surface)",
-              fontSize: "16px",
-              boxSizing: "border-box",
-            }}
-            autoFocus
+            onInput={(e) => setNewName((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleRename();
+              if ((e as React.KeyboardEvent).key === "Enter") handleRename();
             }}
+            style={{ width: "100%" }}
           />
         </Dialog>
 

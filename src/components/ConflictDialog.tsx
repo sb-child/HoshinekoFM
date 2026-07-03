@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
+import { Radio, OutlinedTextField } from './md';
 import {
   splitNameExt,
   generateSafeName,
@@ -148,27 +149,27 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
           </div>
         )}
         <label className="conflict-radio">
-          <input
-            type="radio"
+          <Radio
             name="conflict-mode"
+            value="skip"
             checked={mode === 'skip'}
             onChange={() => handleModeChange('skip')}
           />
           <span>{t('dialog.conflict.skip')}</span>
         </label>
         <label className="conflict-radio">
-          <input
-            type="radio"
+          <Radio
             name="conflict-mode"
+            value="auto-rename"
             checked={mode === 'auto-rename'}
             onChange={() => handleModeChange('auto-rename')}
           />
           <span>{t('dialog.conflict.auto_rename')}</span>
         </label>
         <label className="conflict-radio">
-          <input
-            type="radio"
+          <Radio
             name="conflict-mode"
+            value="manual-rename"
             checked={mode === 'manual-rename'}
             onChange={() => handleModeChange('manual-rename')}
           />
@@ -202,13 +203,12 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
                   <span className="conflict-rename-path" title={dirPath}>
                     {truncateDirPath(dirPath, 24)}
                   </span>
-                  <input
-                    type="text"
-                    className={`conflict-rename-input ${conflict ? 'conflict-rename-input-error' : ''}`}
+                  <OutlinedTextField
+                    className="conflict-rename-input"
                     value={edits[i]}
-                    onChange={(e) => handleEditChange(i, e.target.value)}
+                    onInput={(e) => handleEditChange(i, (e.target as HTMLInputElement).value)}
                     placeholder={isEmpty ? t('dialog.conflict.cancel_item') : undefined}
-                    spellCheck={false}
+                    error={conflict && !isEmpty}
                   />
                   {conflict && !isEmpty && (
                     <span className="conflict-rename-badge">!</span>

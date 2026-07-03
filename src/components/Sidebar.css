@@ -27,7 +27,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0 16px 0 16px;
+    padding: 0 4px 0 16px;
     /* Navigation Drawer State Layer Item padding */
     height: 56px;
     border: none;

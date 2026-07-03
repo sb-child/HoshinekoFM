@@ -39,7 +39,7 @@
 }
 
 /* When item is active, label color might change */
-.m3-navigation-rail__item:has(.m3-icon-button--selected) .m3-navigation-rail__label {
+.m3-navigation-rail__item:has([selected]) .m3-navigation-rail__label {
     color: var(--md-sys-color-on-surface);
     font-weight: 600;
 }

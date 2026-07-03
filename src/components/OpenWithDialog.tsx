@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog } from './Dialog';
 import { Button } from './Button';
 import { Icon } from './Icon';
+import { OutlinedTextField } from './md';
 import { showToast } from '../utils/toast';
 import { formatFileOpError } from '../utils/fileOperations';
 import { t as ti } from '../i18n';
@@ -103,20 +104,11 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '500px', width: '400px' }}>
-        <input
-          type="text"
-          placeholder={tOpenWith('Search applications...')}
+        <OutlinedTextField
+          label={tOpenWith('Search applications...')}
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="md3-text-field"
-          style={{
-            padding: '12px',
-            borderRadius: '4px',
-            border: '1px solid var(--md-sys-color-outline)',
-            background: 'var(--md-sys-color-surface)',
-            color: 'var(--md-sys-color-on-surface)'
-          }}
-          autoFocus
+          onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
+          style={{ width: '100%' }}
         />
 
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>

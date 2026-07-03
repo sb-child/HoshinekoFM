@@ -1,4 +1,9 @@
-.breadcrumb-item.m3-button--text {
+md-text-button.breadcrumb-item,
+md-icon-button.breadcrumb-root {
+    --md-icon-button-size: 32px;
+}
+
+md-text-button.breadcrumb-item {
     height: auto;
     min-width: 0;
     flex-shrink: 0;
@@ -11,7 +16,7 @@
     background: transparent;
 }
 
-.breadcrumb-root.m3-icon-button {
+md-icon-button.breadcrumb-root {
     flex-shrink: 0;
     width: auto;
     height: auto;
