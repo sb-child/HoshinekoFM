@@ -1,0 +1,390 @@
+const zhAC = {
+  // ── 文件操作 ──
+  'file.open': '打开',
+  'file.copy': '复制',
+  'file.cut': '剪切',
+  'file.paste': '粘贴',
+  'file.delete': '删除',
+  'file.rename': '重新命名',
+  'file.extract_here': '解压到当前目录',
+  'file.open_terminal': '在内建终端打开',
+  'file.open_with': '打开方式...',
+  'file.properties': '属性',
+  'file.refresh': '刷新',
+  'file.new_folder': '新建目录',
+  'file.new_file': '新建文件',
+  'file.select_all': '全选',
+  'file.pin': '固定到仪表板',
+  'file.unpin': '从仪表板取消固定',
+
+  // ── 右键菜单 ──
+  'context_menu.open': '打开',
+  'context_menu.open_with': '打开方式...',
+  'context_menu.open_terminal': '在内建终端打开',
+  'context_menu.copy': '复制',
+  'context_menu.cut': '剪切',
+  'context_menu.paste': '粘贴',
+  'context_menu.rename': '重命名',
+  'context_menu.delete': '删除',
+  'context_menu.properties': '属性',
+  'context_menu.new_folder': '新建目录',
+  'context_menu.new_file': '新建文件',
+  'context_menu.refresh': '重新载入',
+  'context_menu.select_all': '全选',
+  'context_menu.pin': '固定到仪表板',
+  'context_menu.unpin': '从仪表板取消固定',
+  'context_menu.extract_here': '释放到当前目录',
+
+  // ── 弹窗按钮 ──
+  'dialog.button.cancel': '取消',
+  'dialog.button.confirm': '确认',
+  'dialog.button.done': '完成',
+  'dialog.button.close': '关闭',
+  'dialog.button.open': '打开',
+
+  // ── 重名对话框（多选）──
+  'dialog.conflict.title_move': (n: number) => `移动重名 — ${n} 个项目`,
+  'dialog.conflict.title_copy': (n: number) => `复制重名 — ${n} 个项目`,
+  'dialog.conflict.title_fallback': (n: number) => `${n} 个项目重名`,
+  'dialog.conflict.single_title': '项目重名',
+  'dialog.conflict.skip': '取消操作重名项',
+  'dialog.conflict.auto_rename': '自动重命名',
+  'dialog.conflict.manual_rename': '手动重命名',
+  'dialog.conflict.source_label': '来源',
+  'dialog.conflict.operation_label': '操作',
+  'dialog.conflict.dest_label': '目标',
+  'dialog.conflict.operation_move': '移动',
+  'dialog.conflict.operation_copy': '复制',
+  'dialog.conflict.more_items': (n: number) => `...还有 ${n} 个`,
+  'dialog.conflict.cancel_item': '取消此项',
+
+  // ── 重命名弹窗 ──
+  'dialog.rename.title': '重命名',
+  'dialog.rename.cancel': '取消',
+  'dialog.rename.confirm': '重命名',
+  'dialog.rename.placeholder': '新名称',
+
+  // ── 新建弹窗 ──
+  'dialog.create.folder': '新建目录',
+  'dialog.create.file': '新建文件',
+  'dialog.create.default_folder': '新建目录',
+  'dialog.create.default_file': '新建文本文档.txt',
+
+  // ── 删除确认 ──
+  'dialog.delete.confirm': (n: number) => `确定要删除选中的 ${n} 个项目吗？`,
+
+  // ── 属性弹窗 ──
+  'properties.title': '属性',
+  'properties.folder': '目录',
+  'properties.file': '文件',
+  'properties.location': '位置:',
+  'properties.size': '大小:',
+  'properties.calculating': '计算中...',
+  'properties.bytes': ' 字节',
+  'properties.modified': '修改时间:',
+  'properties.type': '类型:',
+  'properties.directory': '目录',
+
+  // ── 打开方式弹窗 ──
+  'open_with.title': '打开方式',
+  'open_with.cancel': '取消',
+  'open_with.open': '打开',
+  'open_with.search': '搜索应用程序...',
+  'open_with.recommended': '推荐程序',
+  'open_with.all': '所有应用程序',
+
+  // ── 设置弹窗 ──
+  'settings.title': '设置',
+  'settings.done': '完成',
+  'settings.show_hidden': '显示隐藏文件',
+  'settings.appearance': '外观',
+  'settings.view_mode': '视图模式',
+  'settings.grid': '网格',
+  'settings.list': '列表',
+  'settings.icon_size': '图标大小',
+  'settings.filled_icons': '实心图标',
+  'settings.customization': '个性化',
+  'settings.custom_css': '自定义 CSS',
+  'settings.import_css': '导入 CSS',
+  // ── 设置弹窗-新增-修改于7月3日第二版 ──
+  'settings.behavior': '行为',
+  'settings.language': '淫语',
+  'settings.marquee_text': '滚动文本',
+
+
+  // ── Toast 消息 ──
+  'toast.copied_items': (n: number) => `已复制 ${n} 个项目`,
+  'toast.cut_items': (n: number) => `已剪切 ${n} 个项目`,
+  'toast.moved_items': (n: number) => `已移动 ${n} 个项目`,
+  'toast.pasted_items': (n: number) => `已粘贴 ${n} 个项目`,
+  'toast.deleted_items': (n: number) => `已删除 ${n} 个项目`,
+  'toast.imported_files': (n: number) => `已导入 ${n} 个文件`,
+  'toast.failed_items': (n: number) => `${n} 个项目操作失败`,
+  'toast.delete_fail_permission': '请检查权限',
+  'toast.file_deleted': (name: string) => `${name} 已删除`,
+  'toast.file_created': (name: string) => `文件 ${name} 已创建`,
+  'toast.folder_created': (name: string) => `目录 ${name} 已创建`,
+  'toast.file_extracted': (name: string) => `${name} 已释放`,
+  'toast.rename_success': (oldN: string, newN: string) => `重命名：${oldN} -> ${newN}`,
+  'toast.rename_move_success': (oldN: string, newP: string) => `重命名：${oldN} 已移动至 ${newP}`,
+  'toast.copy_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.move_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.launch_failed': (exec: string, result: string) => `打开方式：${exec} 启动失败（${result}）`,
+
+  // ── 错误消息 ──
+  'error.permission_denied': '权限不足',
+  'error.not_found': '不存在',
+  'error.cannot_access': '无法访问',
+  'error.unknown': '未知错误',
+  'error.cannot_open_dir': (msg: string) => `无法打开目录: ${msg}`,
+  'error.search_failed': (msg: string) => `搜索失败: ${msg}`,
+  'error.name_exists': (name: string) => `重命名失败：${name} 已存在`,
+  'error.copy_exists': (name: string) => `复制失败：${name} 已存在`,
+  'error.move_exists': (name: string) => `移动失败：${name} 已存在`,
+  'error.unsupported_format': '不支持的压缩格式',
+  'error.file_open_failed': (name: string, err: string) => `打开 ${name} 失败: ${err}`,
+  'error.create_parent_failed': (parent: string) => `创建目标目录失败: ${parent}`,
+
+  // ── fileOperations 错误格式化 ──
+  'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 存在重名文件`,
+  'file_op.not_found': (op: string, ref: string) => `${op} ${ref}: 文件或目录不存在`,
+  'file_op.permission': (op: string, ref: string) => `${op} ${ref}: 权限不足`,
+  'file_op.no_space': (op: string, ref: string) => `${op} ${ref}: 磁盘空间不足`,
+  'file_op.read_only': (op: string, ref: string) => `${op} ${ref}: 文件系统只读`,
+  'file_op.is_dir': (op: string, ref: string) => `${op} ${ref}: 路径是一个目录`,
+  'file_op.not_dir': (op: string, ref: string) => `${op} ${ref}: 路径不是一个目录`,
+  'file_op.cross_device': (op: string, ref: string) => `${op} ${ref}: 无法跨设备移动文件`,
+  'file_op.busy': (op: string, ref: string) => `${op} ${ref}: 文件被占用，请关闭后重试`,
+  'file_op.same_target': (op: string, ref: string) => `${op} ${ref}: 目标不能是自身`,
+  'file_op.generic': (op: string, ref: string, msg: string) => `${op} ${ref}: ${msg}`,
+
+  // ── 操作动词 ──
+  'operation.create_file': '创建文件',
+  'operation.create_folder': '创建目录',
+  'operation.rename_op': '重命名',
+  'operation.delete_op': '删除',
+  'operation.copy_op': '复制',
+  'operation.move_op': '移动',
+  'operation.extract_op': '解压',
+  'operation.open_op': '打开',
+  'operation.launch_app': '启动程序',
+  'operation.move_verb': '移动',
+  'operation.copy_verb': '复制',
+
+  // ── 侧边栏 ──
+  'sidebar.places': '位置',
+  'sidebar.devices': '设备',
+  'sidebar.dashboard': '仪表板',
+  'sidebar.home': '主页',
+  'sidebar.desktop': '桌面',
+  'sidebar.documents': '文档',
+  'sidebar.downloads': '下载',
+  'sidebar.music': '音乐',
+  'sidebar.pictures': '图片',
+  'sidebar.videos': '视频',
+
+  // ── 导航栏 ──
+  'nav.dashboard': '仪表板',
+  'nav.home': '主页',
+  'nav.files': '文件',
+  'nav.terminal': '终端',
+  'nav.settings': '设置',
+
+  // ── 仪表板 ──
+  'dashboard.good_morning': '早上好',
+  'dashboard.good_afternoon': '下午好',
+  'dashboard.good_evening': '晚上好',
+  'dashboard.welcome': '欢迎回到您的控制中心。',
+  'dashboard.system_storage': '系统存储',
+  'dashboard.used': '已用',
+  'dashboard.total': '总量',
+  'dashboard.loading': '正在加载统计数据...',
+  'dashboard.pinned': '固定项',
+  'dashboard.add': '添加',
+  'dashboard.recent': '最近访问',
+  'dashboard.no_recent': '暂无最近访问的文件。',
+  'dashboard.unpin_tooltip': '取消固定',
+
+  // ── 选择模式 ──
+  'selection.box_replace': '框选(替换)',
+  'selection.box_union': '框选(并集)',
+  'selection.box_intersection': '框选(交集)',
+  'selection.box_difference': '框选(差集)',
+  'selection.click_range_add': '点选(范围加选)',
+  'selection.click_add_remove': '点选(加选/减选)',
+  'selection.click_range': '点选(范围)',
+
+  // ── 搜索 ──
+  'search.results': (n: number, q: string) => `为您找到 ${n} 个关于 "${q}" 的结果`,
+  'search.clear': '清除搜索',
+
+  // ── 排序 ──
+  'sort.toggle_grouping': '切换分组',
+  'sort.by_name': '按名称排序',
+  'sort.by_date': '按修改时间排序',
+
+  // ── 状态栏 ──
+  'status.items': (n: number) => `${n} 个项目`,
+  'status.selected': (n: number) => `${n} 个已选`,
+
+  // ── Omnibar ──
+  'omnibar.placeholder': '输入路径或搜索...',
+  'omnibar.button_tip': '点击编辑路径或搜索',
+
+  // ── 面包屑 ──
+  'breadcrumbs.root': '根目录',
+
+  // ── Tab 标题 ──
+  'tab.dashboard': '仪表板',
+  'tab.home': '主页',
+  'tab.downloads': '下载',
+  'tab.documents': '文档',
+  'tab.music': '音乐',
+  'tab.pictures': '图片',
+  'tab.videos': '视频',
+  'tab.new_tab': '新标签页',
+
+  // ── 空状态 ──
+  'empty.no_tabs': '暂无标签页',
+  'empty.open_new_tab': '新建标签页',
+
+  // ── 终端 ──
+  'terminal.title': '终端',
+  'terminal.process_exited': '\r\n进程已退出。\r\n',
+
+  // ── 错误边界 ──
+  'error.something_wrong': '出了点问题。',
+
+// ── MIME 类型 ──
+  'mime.folder': '目录',
+  'mime.symlink': '符号链接',
+  'mime.broken_symlink': '损坏的软链接',
+  'mime.block_device': '土夬设备',
+  'mime.char_device': '字符设备',
+  'mime.named_pipe': '命名管道',
+  'mime.socket': '套接字',
+  'mime.text': '文本文件',
+  'mime.html': 'HTML 文件',
+  'mime.css': '样式表',
+  'mime.javascript': 'JavaScript 文件',
+  'mime.xml': 'XML 文件',
+  'mime.csv': 'CSV 文件',
+  'mime.markdown': 'Markdown 文件',
+  'mime.python': 'Python 文件',
+  'mime.c_source': 'C 源文件',
+  'mime.cpp_source': 'C++ 源文件',
+  'mime.java_source': 'Java 源文件',
+  'mime.go_source': 'Go 源文件',
+  'mime.rust_source': 'Rust 源文件',
+  'mime.shell': 'Shell 脚本',
+  'mime.yaml': 'YAML 文件',
+  'mime.toml': 'TOML 文件',
+  'mime.png': 'PNG 图像',
+  'mime.jpeg': 'JPEG 图像',
+  'mime.gif': 'GIF 图像',
+  'mime.svg': 'SVG 图像',
+  'mime.webp': 'WebP 图像',
+  'mime.bmp': 'BMP 图像',
+  'mime.tiff': 'TIFF 图像',
+  'mime.icon': '图标文件',
+  'mime.heic': 'HEIC 图像',
+  'mime.mp3': 'MP3 音频',
+  'mime.ogg': 'OGG 音频',
+  'mime.flac': 'FLAC 音频',
+  'mime.wav': 'WAV 音频',
+  'mime.aac': 'AAC 音频',
+  'mime.mp4': 'MP4 视频',
+  'mime.webm': 'WebM 视频',
+  'mime.avi': 'AVI 视频',
+  'mime.quicktime': 'QuickTime 视频',
+  'mime.pdf': 'PDF 文档',
+  'mime.zip': 'ZIP 压缩包',
+  'mime.gzip': 'GZip 压缩包',
+  'mime.bzip2': 'BZip2 压缩包',
+  'mime.xz': 'XZ 压缩包',
+  'mime._7z': '7z 压缩包',
+  'mime.rar': 'RAR 压缩包',
+  'mime.tar': 'TAR 归档',
+  'mime.iso': '光盘映像',
+  'mime.krita': 'Krita 文档',
+  'mime.scratch': 'sb3 项目',
+  'mime.odt': 'ODT 文档',
+  'mime.ods': 'ODS 表格',
+  'mime.odp': 'ODP 演示文稿',
+  'mime.docx': 'DOCX 文档',
+  'mime.xlsx': 'XLSX 表格',
+  'mime.pptx': 'PPTX 演示文稿',
+  'mime.doc': 'DOC 文档',
+  'mime.xls': 'XLS 表格',
+  'mime.ppt': 'PPT 演示文稿',
+  'mime.rtf': 'RTF 文档',
+  'mime.elf': '可执行文件',
+  'mime.executable': '可执行文件',
+  'mime.shared_lib': '共享库',
+  'mime.python_bytecode': 'Python 字节码',
+  'mime.json': 'JSON 文件',
+  'mime.unknown_ext': (ext: string) => `${ext} 文件`,
+  'mime.other_file': '其他文件',
+
+  // ── MIME 分类 ──
+  'mime.cat.text': '文本文件',
+  'mime.cat.image': '图像文件',
+  'mime.cat.audio': '音频文件',
+  'mime.cat.video': '视频文件',
+  'mime.cat.font': '字体文件',
+  'mime.cat.system': '系统文件',
+  'mime.cat.other': '其他文件',
+
+  // ── 文件分组 ──
+  'group.folders': '目录',
+  'group.media': '媒体文件',
+  'group.documents': '文档',
+  'group.code': '代码文件',
+  'group.archives': '打包档案',
+  'group.executables': '可执行文件',
+  'group.others': '其他文件',
+
+  // ── 大小格式化 ──
+  'size.b': 'B',
+  'size.kb': 'KB',
+  'size.mb': 'MB',
+  'size.gb': 'GB',
+  'size.tb': 'TB',
+  'size.zero': '0 B',
+  // ── Toast 操作 ──
+  'toast.copy_action': '复制',
+  'toast.close_action': '关闭',
+
+  // ── 设备操作 ──
+  'device.mount': '挂载',
+  'device.unmount': '卸载',
+  'device.eject': '弹出',
+  'device.power_off': '关闭硬盘',
+  'device.mounting': '正在挂载...',
+  'device.unmounting': '正在卸载...',
+  'device.mounted': '已挂载',
+  'device.unmounted': '未挂载',
+  'device.mount_failed': '挂载失败',
+  'device.unmount_failed': '卸载失败',
+  'device.eject_failed': '弹出失败',
+  'device.already_mounted': '设备已挂载',
+  'device.go_to_source': '转到源设备',
+  'device.type_usb': 'USB 设备',
+  'device.type_removable': '可移动设备',
+  'device.type_disk': '磁盘',
+
+  // ── 软链接操作 ──
+  'symlink.go_to_target': '转到软链接目标',
+  'symlink.broken_tooltip': (target: string) => `→ ${target}（损坏）`,
+  'symlink.tooltip': (target: string) => `→ ${target}`,
+
+  // ── 挂载点操作 ──
+  'mountpoint.go_to_source': '转到源设备',
+  // ── 语言信息 ──
+  'language_name': '交流电中文',
+  'language_auto': '跟随系统',
+} as const;
+
+export const match = (lang: string) => false;
+
+export default zhAC;

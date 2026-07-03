@@ -1,0 +1,390 @@
+const zhTW = {
+  // ── 檔案操作 ──
+  'file.open': '開啟',
+  'file.copy': '複製',
+  'file.cut': '剪下',
+  'file.paste': '貼上',
+  'file.delete': '刪除',
+  'file.rename': '重新命名',
+  'file.extract_here': '解壓縮至此',
+  'file.open_terminal': '在內建終端機開啟',
+  'file.open_with': '選擇其他應用程式...',
+  'file.properties': '內容',
+  'file.refresh': '重新整理',
+  'file.new_folder': '新增資料夾',
+  'file.new_file': '新增檔案',
+  'file.select_all': '全選',
+  'file.pin': '釘選至儀表板',
+  'file.unpin': '從儀表板取消釘選',
+
+  // ── 右鍵選單 ──
+  'context_menu.open': '開啟',
+  'context_menu.open_with': '選擇其他應用程式...',
+  'context_menu.open_terminal': '在內建終端機開啟',
+  'context_menu.copy': '複製',
+  'context_menu.cut': '剪下',
+  'context_menu.paste': '貼上',
+  'context_menu.rename': '重新命名',
+  'context_menu.delete': '刪除',
+  'context_menu.properties': '內容',
+  'context_menu.new_folder': '新增資料夾',
+  'context_menu.new_file': '新增檔案',
+  'context_menu.refresh': '重新整理',
+  'context_menu.select_all': '全選',
+  'context_menu.pin': '釘選至儀表板',
+  'context_menu.unpin': '從儀表板取消釘選',
+  'context_menu.extract_here': '解壓縮至此',
+
+  // ── 彈窗按鈕 ──
+  'dialog.button.cancel': '取消',
+  'dialog.button.confirm': '確認',
+  'dialog.button.done': '完成',
+  'dialog.button.close': '關閉',
+  'dialog.button.open': '開啟',
+
+  // ── 重名對話框（多選）──
+  'dialog.conflict.title_move': (n: number) => `移動發生衝突 — ${n} 個項目`,
+  'dialog.conflict.title_copy': (n: number) => `複製發生衝突 — ${n} 個項目`,
+  'dialog.conflict.title_fallback': (n: number) => `${n} 個項目名稱衝突`,
+  'dialog.conflict.single_title': '項目衝突',
+  'dialog.conflict.skip': '略過衝突項目',
+  'dialog.conflict.auto_rename': '自動重新命名',
+  'dialog.conflict.manual_rename': '手動重新命名',
+  'dialog.conflict.source_label': '來源',
+  'dialog.conflict.operation_label': '操作',
+  'dialog.conflict.dest_label': '目標',
+  'dialog.conflict.operation_move': '移動',
+  'dialog.conflict.operation_copy': '複製',
+  'dialog.conflict.more_items': (n: number) => `...還有 ${n} 個`,
+  'dialog.conflict.cancel_item': '取消此項目',
+
+  // ── 重新命名彈窗 ──
+  'dialog.rename.title': '重新命名',
+  'dialog.rename.cancel': '取消',
+  'dialog.rename.confirm': '重新命名',
+  'dialog.rename.placeholder': '新名稱',
+
+  // ── 新建彈窗 ──
+  'dialog.create.folder': '新增資料夾',
+  'dialog.create.file': '新增檔案',
+  'dialog.create.default_folder': '新增資料夾',
+  'dialog.create.default_file': '新增文字文件.txt',
+
+  // ── 刪除確認 ──
+  'dialog.delete.confirm': (n: number) => `您確定要刪除選取的 ${n} 個項目嗎？`,
+
+  // ── 內容彈窗 ──
+  'properties.title': '內容',
+  'properties.folder': '資料夾',
+  'properties.file': '檔案',
+  'properties.location': '位置:',
+  'properties.size': '大小:',
+  'properties.calculating': '計算中...',
+  'properties.bytes': ' 位元組',
+  'properties.modified': '修改時間:',
+  'properties.type': '類型:',
+  'properties.directory': '資料夾',
+
+  // ── 開啟方式彈窗 ──
+  'open_with.title': '選擇其他應用程式',
+  'open_with.cancel': '取消',
+  'open_with.open': '開啟',
+  'open_with.search': '搜尋應用程式...',
+  'open_with.recommended': '建議的應用程式',
+  'open_with.all': '所有應用程式',
+
+  // ── 設定彈窗 ──
+  'settings.title': '設定',
+  'settings.done': '完成',
+  'settings.show_hidden': '顯示隱藏的檔案',
+  'settings.appearance': '外觀',
+  'settings.view_mode': '檢視模式',
+  'settings.grid': '格狀',
+  'settings.list': '清單',
+  'settings.icon_size': '圖示大小',
+  'settings.filled_icons': '實心圖示',
+  'settings.customization': '個人化',
+  'settings.custom_css': '自訂 CSS',
+  'settings.import_css': '匯入 CSS',
+  'settings.behavior': '行為',
+  'settings.language': '語言',
+  'settings.marquee_text': '跑馬燈文字',
+
+  // ── Toast 訊息 ──
+  'toast.copied_items': (n: number) => `已複製 ${n} 個項目`,
+  'toast.cut_items': (n: number) => `已剪下 ${n} 個項目`,
+  'toast.moved_items': (n: number) => `已移動 ${n} 個項目`,
+  'toast.pasted_items': (n: number) => `已貼上 ${n} 個項目`,
+  'toast.deleted_items': (n: number) => `已刪除 ${n} 個項目`,
+  'toast.imported_files': (n: number) => `已匯入 ${n} 個檔案`,
+  'toast.failed_items': (n: number) => `${n} 個項目操作失敗`,
+  'toast.delete_fail_permission': '請檢查權限',
+  'toast.file_deleted': (name: string) => `已刪除 ${name}`,
+  'toast.file_created': (name: string) => `已建立檔案 ${name}`,
+  'toast.folder_created': (name: string) => `已建立資料夾 ${name}`,
+  'toast.file_extracted': (name: string) => `已解壓縮 ${name}`,
+  'toast.rename_success': (oldN: string, newN: string) => `重新命名成功：${oldN} -> ${newN}`,
+  'toast.rename_move_success': (oldN: string, newP: string) => `重新命名成功：${oldN} 已移動至 ${newP}`,
+  'toast.copy_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.move_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.launch_failed': (exec: string, result: string) => `啟動程式：${exec} 啟動失敗（${result}）`,
+
+  // ── 錯誤訊息 ──
+  'error.permission_denied': '權限不足',
+  'error.not_found': '找不到',
+  'error.cannot_access': '無法存取',
+  'error.unknown': '未知錯誤',
+  'error.cannot_open_dir': (msg: string) => `無法開啟目錄：${msg}`,
+  'error.search_failed': (msg: string) => `搜尋失敗：${msg}`,
+  'error.name_exists': (name: string) => `重新命名失敗：${name} 已存在`,
+  'error.copy_exists': (name: string) => `複製失敗：${name} 已存在`,
+  'error.move_exists': (name: string) => `移動失敗：${name} 已存在`,
+  'error.unsupported_format': '不支援的壓縮格式',
+  'error.file_open_failed': (name: string, err: string) => `開啟 ${name} 失敗：${err}`,
+  'error.create_parent_failed': (parent: string) => `建立目標目錄失敗：${parent}`,
+
+  // ── fileOperations 錯誤格式化 ──
+  'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 存在同名檔案`,
+  'file_op.not_found': (op: string, ref: string) => `${op} ${ref}: 檔案或目錄不存在`,
+  'file_op.permission': (op: string, ref: string) => `${op} ${ref}: 權限不足`,
+  'file_op.no_space': (op: string, ref: string) => `${op} ${ref}: 磁碟空間不足`,
+  'file_op.read_only': (op: string, ref: string) => `${op} ${ref}: 唯讀檔案系統`,
+  'file_op.is_dir': (op: string, ref: string) => `${op} ${ref}: 路徑為目錄`,
+  'file_op.not_dir': (op: string, ref: string) => `${op} ${ref}: 路徑並非目錄`,
+  'file_op.cross_device': (op: string, ref: string) => `${op} ${ref}: 無法跨裝置移動檔案`,
+  'file_op.busy': (op: string, ref: string) => `${op} ${ref}: 檔案被佔用，請關閉後再試`,
+  'file_op.same_target': (op: string, ref: string) => `${op} ${ref}: 目標不能是自己`,
+  'file_op.generic': (op: string, ref: string, msg: string) => `${op} ${ref}: ${msg}`,
+
+  // ── 操作動詞 ──
+  'operation.create_file': '建立檔案',
+  'operation.create_folder': '建立資料夾',
+  'operation.rename_op': '重新命名',
+  'operation.delete_op': '刪除',
+  'operation.copy_op': '複製',
+  'operation.move_op': '移動',
+  'operation.extract_op': '解壓縮',
+  'operation.open_op': '開啟',
+  'operation.launch_app': '啟動程式',
+  'operation.move_verb': '移動',
+  'operation.copy_verb': '複製',
+
+  // ── 側邊欄 ──
+  'sidebar.places': '位置',
+  'sidebar.devices': '裝置',
+  'sidebar.dashboard': '儀表板',
+  'sidebar.home': '首頁',
+  'sidebar.desktop': '桌面',
+  'sidebar.documents': '文件',
+  'sidebar.downloads': '下載',
+  'sidebar.music': '音樂',
+  'sidebar.pictures': '圖片',
+  'sidebar.videos': '影片',
+
+  // ── 導覽列 ──
+  'nav.dashboard': '儀表板',
+  'nav.home': '首頁',
+  'nav.files': '檔案',
+  'nav.terminal': '終端機',
+  'nav.settings': '設定',
+
+  // ── 儀表板 ──
+  'dashboard.good_morning': '早安',
+  'dashboard.good_afternoon': '午安',
+  'dashboard.good_evening': '晚安',
+  'dashboard.welcome': '歡迎來到控制中心。',
+  'dashboard.system_storage': '系統儲存空間',
+  'dashboard.used': '已用',
+  'dashboard.total': '總計',
+  'dashboard.loading': '正在載入統計資料...',
+  'dashboard.pinned': '已釘選項目',
+  'dashboard.add': '新增',
+  'dashboard.recent': '最近存取',
+  'dashboard.no_recent': '近期沒有存取檔案。',
+  'dashboard.unpin_tooltip': '取消釘選',
+
+  // ── 選擇模式 ──
+  'selection.box_replace': '框選(取代)',
+  'selection.box_union': '框選(聯集)',
+  'selection.box_intersection': '框選(交集)',
+  'selection.box_difference': '框選(差集)',
+  'selection.click_range_add': '點擊(範圍新增)',
+  'selection.click_add_remove': '點擊(新增/移除)',
+  'selection.click_range': '點擊(範圍)',
+
+  // ── 搜尋 ──
+  'search.results': (n: number, q: string) => `為您找到 ${n} 個關於 "${q}" 的結果`,
+  'search.clear': '清除搜尋',
+
+  // ── 排序 ──
+  'sort.toggle_grouping': '切換群組',
+  'sort.by_name': '依名稱',
+  'sort.by_date': '依修改日期',
+
+  // ── 狀態列 ──
+  'status.items': (n: number) => `${n} 個項目`,
+  'status.selected': (n: number) => `已選取 ${n} 個`,
+
+  // ── Omnibar ──
+  'omnibar.placeholder': '輸入路徑或搜尋...',
+  'omnibar.button_tip': '點擊編輯路徑或搜尋',
+
+  // ── 麵包屑 ──
+  'breadcrumbs.root': '根目錄',
+
+  // ── Tab 標題 ──
+  'tab.dashboard': '儀表板',
+  'tab.home': '首頁',
+  'tab.downloads': '下載',
+  'tab.documents': '文件',
+  'tab.music': '音樂',
+  'tab.pictures': '圖片',
+  'tab.videos': '影片',
+  'tab.new_tab': '新增分頁',
+
+  // ── 空狀態 ──
+  'empty.no_tabs': '沒有分頁',
+  'empty.open_new_tab': '開啟新分頁',
+
+  // ── 終端機 ──
+  'terminal.title': '終端機',
+  'terminal.process_exited': '\r\n處理程序已結束。\r\n',
+
+  // ── 錯誤邊界 ──
+  'error.something_wrong': '發生錯誤。',
+
+  // ── MIME 類型 ──
+  'mime.folder': '資料夾',
+  'mime.symlink': '捷徑',
+  'mime.broken_symlink': '損壞的捷徑',
+  'mime.block_device': '區塊裝置',
+  'mime.char_device': '字元裝置',
+  'mime.named_pipe': '具名管道',
+  'mime.socket': '通訊端',
+  'mime.text': '文字文件',
+  'mime.html': 'HTML 文件',
+  'mime.css': '階層式樣式表',
+  'mime.javascript': 'JavaScript 檔案',
+  'mime.xml': 'XML 檔案',
+  'mime.csv': 'CSV 檔案',
+  'mime.markdown': 'Markdown 檔案',
+  'mime.python': 'Python 檔案',
+  'mime.c_source': 'C 原始碼檔案',
+  'mime.cpp_source': 'C++ 原始碼檔案',
+  'mime.java_source': 'Java 原始碼檔案',
+  'mime.go_source': 'Go 原始碼檔案',
+  'mime.rust_source': 'Rust 原始碼檔案',
+  'mime.shell': 'Shell 指令碼',
+  'mime.yaml': 'YAML 檔案',
+  'mime.toml': 'TOML 檔案',
+  'mime.png': 'PNG 圖片',
+  'mime.jpeg': 'JPEG 圖片',
+  'mime.gif': 'GIF 圖片',
+  'mime.svg': 'SVG 圖片',
+  'mime.webp': 'WebP 圖片',
+  'mime.bmp': 'BMP 圖片',
+  'mime.tiff': 'TIFF 圖片',
+  'mime.icon': '圖示檔案',
+  'mime.heic': 'HEIC 圖片',
+  'mime.mp3': 'MP3 音訊',
+  'mime.ogg': 'OGG 音訊',
+  'mime.flac': 'FLAC 音訊',
+  'mime.wav': 'WAV 音訊',
+  'mime.aac': 'AAC 音訊',
+  'mime.mp4': 'MP4 影片',
+  'mime.webm': 'WebM 影片',
+  'mime.avi': 'AVI 影片',
+  'mime.quicktime': 'QuickTime 影片',
+  'mime.pdf': 'PDF 文件',
+  'mime.zip': 'ZIP 壓縮檔',
+  'mime.gzip': 'GZip 壓縮檔',
+  'mime.bzip2': 'BZip2 壓縮檔',
+  'mime.xz': 'XZ 壓縮檔',
+  'mime._7z': '7z 壓縮檔',
+  'mime.rar': 'RAR 壓縮檔',
+  'mime.tar': 'TAR 封存檔',
+  'mime.iso': '光碟映像檔',
+  'mime.krita': 'Krita 文件',
+  'mime.scratch': 'Scratch 專案',
+  'mime.odt': 'ODT 文件',
+  'mime.ods': 'ODS 試算表',
+  'mime.odp': 'ODP 簡報',
+  'mime.docx': 'DOCX 文件',
+  'mime.xlsx': 'XLSX 試算表',
+  'mime.pptx': 'PPTX 簡報',
+  'mime.doc': 'DOC 文件',
+  'mime.xls': 'XLS 試算表',
+  'mime.ppt': 'PPT 簡報',
+  'mime.rtf': 'RTF 文件',
+  'mime.elf': '執行檔',
+  'mime.executable': '執行檔',
+  'mime.shared_lib': '共用程式庫',
+  'mime.python_bytecode': 'Python 位元組碼',
+  'mime.json': 'JSON 檔案',
+  'mime.unknown_ext': (ext: string) => `${ext} 檔案`,
+  'mime.other_file': '其他檔案',
+
+  // ── MIME 分類 ──
+  'mime.cat.text': '文字文件',
+  'mime.cat.image': '圖片檔案',
+  'mime.cat.audio': '音訊檔案',
+  'mime.cat.video': '影片檔案',
+  'mime.cat.font': '字型檔案',
+  'mime.cat.system': '系統檔案',
+  'mime.cat.other': '其他檔案',
+
+  // ── 檔案群組 ──
+  'group.folders': '資料夾',
+  'group.media': '媒體檔案',
+  'group.documents': '文件',
+  'group.code': '程式碼檔案',
+  'group.archives': '壓縮檔',
+  'group.executables': '執行檔',
+  'group.others': '其他檔案',
+
+  // ── 大小格式化 ──
+  'size.b': 'B',
+  'size.kb': 'KB',
+  'size.mb': 'MB',
+  'size.gb': 'GB',
+  'size.tb': 'TB',
+  'size.zero': '0 B',
+
+  // ── Toast 操作 ──
+  'toast.copy_action': '複製',
+  'toast.close_action': '關閉',
+
+  // ── 裝置操作 ──
+  'device.mount': '掛接',
+  'device.unmount': '卸載',
+  'device.eject': '退出',
+  'device.power_off': '關閉磁碟電源',
+  'device.mounting': '掛接中...',
+  'device.unmounting': '卸載中...',
+  'device.mounted': '已掛接',
+  'device.unmounted': '已卸載',
+  'device.mount_failed': '掛接失敗',
+  'device.unmount_failed': '卸載失敗',
+  'device.eject_failed': '退出失敗',
+  'device.already_mounted': '裝置已掛接',
+  'device.go_to_source': '前往來源裝置',
+  'device.type_usb': 'USB 裝置',
+  'device.type_removable': '卸除式裝置',
+  'device.type_disk': '磁碟',
+
+  // ── 捷徑操作 ──
+  'symlink.go_to_target': '前往捷徑目標',
+  'symlink.broken_tooltip': (target: string) => `→ ${target}（損壞）`,
+  'symlink.tooltip': (target: string) => `→ ${target}`,
+
+  // ── 掛載點操作 ──
+  'mountpoint.go_to_source': '前往來源裝置',
+
+  // ── 語言資訊 ──
+  'language_name': '繁體中文 (台灣)',
+  'language_auto': '跟隨系統',
+} as const;
+
+export const match = (lang: string) => lang === 'zh-TW' || lang.toLowerCase() === 'zh-hant-tw';
+
+export default zhTW;
