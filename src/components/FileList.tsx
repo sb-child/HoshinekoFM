@@ -32,6 +32,7 @@ interface FileListProps {
   groupingEnabled?: boolean;
   currentPath?: string;
   scrollToFileName?: string;
+  onScrollToComplete?: () => void;
 }
 
 const DOUBLE_CLICK_THRESHOLD = 500;
@@ -59,14 +60,17 @@ function getFileTitle(file: IFile): string {
     }
     return `${file.name}(${file.mountFstype})`;
   }
+  if (file.symlinkTarget && file.mountFstype) {
+    return `${file.name}(${file.mountFstype}) \u2192 ${file.symlinkTarget}`;
+  }
+  if (file.mime === 'inode/blockdevice' && file.mountFstype) {
+    return `${file.name}(${file.mountFstype})`;
+  }
   if (file.symlinkTarget) {
     if (file.mime === 'inode/symlink') {
       return `${file.name} \u2192 ${file.symlinkTarget}\uFF08\u635F\u574F\uFF09`;
     }
     return `${file.name} \u2192 ${file.symlinkTarget}`;
-  }
-  if (file.mime === 'inode/blockdevice' && file.isMountpoint && file.mountSource) {
-    return `${file.name} \u2192 ${file.mountSource}`;
   }
   return file.name;
 }
@@ -749,6 +753,7 @@ export const FileList: React.FC<FileListProps> = ({
   groupingEnabled = false,
   currentPath,
   scrollToFileName,
+  onScrollToComplete,
 }) => {
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -863,8 +868,9 @@ export const FileList: React.FC<FileListProps> = ({
     const targetFile = files[idx];
     if (targetFile && onSelect) {
       onSelect(targetFile, false, false);
+      onScrollToComplete?.();
     }
-  }, [scrollToFileName, files, viewMode, iconSize, groupingEnabled, onSelect, currentPath]);
+  }, [scrollToFileName, files, viewMode, iconSize, groupingEnabled, onSelect, currentPath, onScrollToComplete]);
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {

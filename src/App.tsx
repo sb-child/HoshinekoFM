@@ -232,6 +232,17 @@ function AppContent() {
     }
   }, []);
 
+  // Block scroll events when context menu or dialog is open
+  useEffect(() => {
+    const handler = (e: WheelEvent) => {
+      if (document.querySelector('dialog[open].md3-dialog, .context-menu')) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('wheel', handler, { passive: false });
+    return () => window.removeEventListener('wheel', handler);
+  }, []);
+
   const currentPath = tabs.find((t) => t.id === activeTabId)?.path || "";
 
   // Tab Handlers
@@ -300,7 +311,7 @@ function AppContent() {
           const newTabId = Date.now().toString();
           const newTab: TabState = {
             id: newTabId,
-        title: t("tab.new_tab"),
+            title: t("tab.new_tab"),
             path,
             version: 0,
             pendingSelectFile: selectFileName,
@@ -313,6 +324,12 @@ function AppContent() {
     },
     [activeTabId],
   );
+
+  const handleScrollToComplete = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabId ? { ...t, pendingSelectFile: undefined } : t)),
+    );
+  }, [activeTabId]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, file: IFile | null) => {
@@ -742,6 +759,7 @@ function AppContent() {
                 filledIcons={filledIcons}
                 refreshSignal={tab.version}
                 scrollToFileName={tab.pendingSelectFile}
+                onScrollToComplete={handleScrollToComplete}
                 onMountDevice={handleDeviceMount}
               />
             </div>

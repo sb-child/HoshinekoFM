@@ -133,7 +133,7 @@ async function getMountMap(): Promise<Map<string, { source: string; fstype: stri
 
 async function listDirectoryContents(targetPath: string): Promise<{
   name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
-  symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean;
+  symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean; mountedAt?: string; canAutoMount?: boolean;
 }[]> {
   const entries = await fs.readdir(targetPath, { withFileTypes: true });
   const results = await Promise.all(entries.map(async (entry) => {
@@ -155,10 +155,12 @@ async function listDirectoryContents(targetPath: string): Promise<{
         let isMountable: boolean | undefined;
         let parentDisk: string | undefined;
         let isExternal: boolean | undefined;
+        let canAutoMount: boolean | undefined;
         if (isBlock) {
           const hasPartition = await fs.access(`/sys/class/block/${entry.name}/partition`).then(() => true).catch(() => false);
           const hasDm = await fs.access(`/sys/class/block/${entry.name}/dm/`).then(() => true).catch(() => false);
           isMountable = hasPartition || hasDm;
+          canAutoMount = isMountable && !hasDm;
 
           let diskNameForExternal = entry.name;
           if (hasPartition) {
@@ -197,6 +199,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
           isMountable,
           parentDisk,
           isExternal,
+          canAutoMount,
         };
       }
 
@@ -265,7 +268,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
   }));
   const filtered = results.filter(r => r !== null) as {
     name: string; path: string; isDirectory: boolean; size: number; mtime: Date; mime: string | null;
-    symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean;
+    symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean; mountedAt?: string; canAutoMount?: boolean;
   }[];
 
   const mountMap = await getMountMap();
@@ -275,6 +278,18 @@ async function listDirectoryContents(targetPath: string): Promise<{
       deviceMountMap.set(info.source, { ...info, mountpoint: mp });
     }
   }
+  for (const [source, info] of [...deviceMountMap]) {
+    try {
+      const stat = await fs.lstat(source);
+      if (stat.isSymbolicLink()) {
+        const target = path.resolve(path.dirname(source), await fs.readlink(source));
+        if (!deviceMountMap.has(target)) {
+          deviceMountMap.set(target, info);
+        }
+      }
+    } catch {}
+  }
+
   for (const entry of filtered) {
     if (entry.isDirectory) {
       const mount = mountMap.get(entry.path);
@@ -287,9 +302,34 @@ async function listDirectoryContents(targetPath: string): Promise<{
     if (entry.devicePath) {
       const dm = deviceMountMap.get(entry.devicePath);
       if (dm) {
-        entry.isMountpoint = true;
-        entry.mountSource = dm.mountpoint;
         entry.mountFstype = dm.fstype;
+        entry.mountedAt = dm.mountpoint;
+      }
+    }
+    if (entry.symlinkTarget) {
+      const dm = deviceMountMap.get(entry.symlinkTarget);
+      if (dm) {
+        entry.mountFstype = dm.fstype;
+        entry.mountedAt = dm.mountpoint;
+      }
+      if (entry.mime === 'inode/blockdevice') {
+        const targetName = path.basename(entry.symlinkTarget);
+        try {
+          const hasPartition = await fs.access(`/sys/class/block/${targetName}/partition`).then(() => true).catch(() => false);
+          const hasDm = await fs.access(`/sys/class/block/${targetName}/dm/`).then(() => true).catch(() => false);
+          entry.isMountable = hasPartition || hasDm;
+          entry.canAutoMount = entry.isMountable && !hasDm;
+        } catch {}
+        try {
+          const removable = await fs.readFile(`/sys/block/${targetName}/removable`, 'utf-8');
+          entry.isExternal = removable.trim() === '1';
+        } catch {}
+        if (!entry.isExternal) {
+          try {
+            const link = await fs.readlink(`/sys/block/${targetName}`);
+            entry.isExternal = link.includes('usb');
+          } catch {}
+        }
       }
     }
   }

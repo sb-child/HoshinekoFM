@@ -52,10 +52,11 @@ interface ExplorerTabProps {
     filledIcons: boolean;
     refreshSignal: number;
     scrollToFileName?: string;
+    onScrollToComplete?: () => void;
     onMountDevice?: (devicePath: string) => Promise<{ success: boolean; mountpoint?: string; error?: string }>;
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal, scrollToFileName, onMountDevice }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal, scrollToFileName, onScrollToComplete, onMountDevice }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
@@ -223,16 +224,22 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const handleNavigate = async (file: IFile) => {
     if (file.isDirectory) {
       loadPath(file.path);
-    } else if (file.mime === 'inode/blockdevice' && file.isMountable && file.isExternal) {
+    } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
       const devPath = file.devicePath || file.path;
-      if (file.isMountpoint && file.mountSource) {
-        loadPath(file.mountSource);
-      } else if (onMountDevice) {
+      if (file.mountedAt) {
+        loadPath(file.mountedAt);
+      } else if (file.canAutoMount && onMountDevice) {
         const result = await onMountDevice(devPath);
         if (result && 'success' in result && result.success && result.mountpoint) {
           loadPath(result.mountpoint);
+        } else if (result && 'error' in result) {
+          showToast(`${t('device.mount_failed')}: ${result.error || ''}`, 'error');
         }
+      } else {
+        showToast(t('device.needs_auth') || 'This device requires authentication to mount', 'warning');
       }
+    } else if (file.mime === 'inode/blockdevice') {
+      showToast(t('device.cannot_mount') || 'Cannot mount this device type', 'warning');
     } else {
       openFile(file.path);
     }
@@ -462,12 +469,14 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, []);
 
-  // Clear selection on path change (unless we have a pending scroll-to-file target)
+  // Clear selection on path change (unless scrollToFileName was just cleared after scroll-to)
+  const prevScrollToRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!scrollToFileName) {
+    if (!scrollToFileName && prevScrollToRef.current === undefined) {
       setSelectedFiles(new Set());
       setLastSelectedPath(null);
     }
+    prevScrollToRef.current = scrollToFileName;
   }, [currentPath, scrollToFileName]);
 
   const handleSelect = (file: IFile, toggle: boolean, range: boolean) => {
@@ -523,7 +532,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       // Don't handle shortcuts when focus is on an input/textarea, or when dialogs/context-menus are open
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (document.querySelector('.md3-dialog, .context-menu, [role="dialog"]')) return;
+      if (document.querySelector('dialog[open].md3-dialog, .context-menu, [role="dialog"]')) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
@@ -769,6 +778,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               filledIcons={filledIcons}
               groupingEnabled={groupingEnabled}
               scrollToFileName={scrollToFileName}
+              onScrollToComplete={onScrollToComplete}
             />
           </div>
         </div>

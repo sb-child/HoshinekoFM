@@ -13,6 +13,8 @@ export interface IFile {
     isMountable?: boolean;
     parentDisk?: string;
     isExternal?: boolean;
+    mountedAt?: string;
+    canAutoMount?: boolean;
 }
 
 export interface AllDevice {

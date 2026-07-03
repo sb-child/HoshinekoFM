@@ -9,7 +9,7 @@ interface SidebarProps {
   currentPath: string;
   onNavigate: (path: string, selectFileName?: string) => void;
   onDeviceContextMenu?: (e: React.MouseEvent, device: AllDevice) => void;
-  onDeviceMount?: (devicePath: string) => void;
+  onDeviceMount?: (devicePath: string) => Promise<{ success: boolean; mountpoint?: string; error?: string }>;
   onDeviceUnmount?: (devicePath: string) => void;
   onDeviceEject?: (devicePath: string) => void;
 }
@@ -79,14 +79,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const externalDisks = devices.filter(isExternalDevice);
 
-  const handlePartitionClick = (device: AllDevice) => {
+  const handlePartitionClick = async (device: AllDevice) => {
     if (device.mounted && device.mountpoint) {
       onNavigate(device.mountpoint);
     } else if (
       onDeviceMount &&
       (device.type === "part" || (device.type === "disk" && device.fstype))
     ) {
-      onDeviceMount(device.devicePath);
+      const result = await onDeviceMount(device.devicePath);
+      if (result.success && result.mountpoint) {
+        onNavigate(result.mountpoint);
+      }
     }
   };
 
