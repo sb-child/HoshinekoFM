@@ -1,0 +1,390 @@
+const jaJP = {
+  // ── 文件操作 ──
+  'file.open': '開く',
+  'file.copy': 'コピー',
+  'file.cut': '切り取り',
+  'file.paste': '貼り付け',
+  'file.delete': '削除',
+  'file.rename': '名前の変更',
+  'file.extract_here': 'ここに展開',
+  'file.open_terminal': '内蔵ターミナルで開く',
+  'file.open_with': 'プログラムから開く...',
+  'file.properties': 'プロパティ',
+  'file.refresh': '更新',
+  'file.new_folder': '新しいフォルダー',
+  'file.new_file': '新しいファイル',
+  'file.select_all': 'すべて選択',
+  'file.pin': 'ダッシュボードにピン留め',
+  'file.unpin': 'ダッシュボードのピン留めを外す',
+
+  // ── 右键菜单 ──
+  'context_menu.open': '開く',
+  'context_menu.open_with': 'プログラムから開く...',
+  'context_menu.open_terminal': '内蔵ターミナルで開く',
+  'context_menu.copy': 'コピー',
+  'context_menu.cut': '切り取り',
+  'context_menu.paste': '貼り付け',
+  'context_menu.rename': '名前の変更',
+  'context_menu.delete': '削除',
+  'context_menu.properties': 'プロパティ',
+  'context_menu.new_folder': '新しいフォルダー',
+  'context_menu.new_file': '新しいファイル',
+  'context_menu.refresh': '更新',
+  'context_menu.select_all': 'すべて選択',
+  'context_menu.pin': 'ダッシュボードにピン留め',
+  'context_menu.unpin': 'ダッシュボードのピン留めを外す',
+  'context_menu.extract_here': 'ここに展開',
+
+  // ── 弹窗按钮 ──
+  'dialog.button.cancel': 'キャンセル',
+  'dialog.button.confirm': '確認',
+  'dialog.button.done': '完了',
+  'dialog.button.close': '閉じる',
+  'dialog.button.open': '開く',
+
+  // ── 重名对话框（多选）──
+  'dialog.conflict.title_move': (n: number) => `移動の競合 — ${n} 個の項目`,
+  'dialog.conflict.title_copy': (n: number) => `コピーの競合 — ${n} 個の項目`,
+  'dialog.conflict.title_fallback': (n: number) => `${n} 個の項目の名前が競合しています`,
+  'dialog.conflict.single_title': '項目の競合',
+  'dialog.conflict.skip': '競合する項目をスキップ',
+  'dialog.conflict.auto_rename': '自動で名前を変更',
+  'dialog.conflict.manual_rename': '手動で名前を変更',
+  'dialog.conflict.source_label': '元',
+  'dialog.conflict.operation_label': '操作',
+  'dialog.conflict.dest_label': '対象',
+  'dialog.conflict.operation_move': '移動',
+  'dialog.conflict.operation_copy': 'コピー',
+  'dialog.conflict.more_items': (n: number) => `...残り ${n} 個`,
+  'dialog.conflict.cancel_item': 'この項目をキャンセル',
+
+  // ── 重命名弹窗 ──
+  'dialog.rename.title': '名前の変更',
+  'dialog.rename.cancel': 'キャンセル',
+  'dialog.rename.confirm': '名前を変更',
+  'dialog.rename.placeholder': '新しい名前',
+
+  // ── 新建弹窗 ──
+  'dialog.create.folder': '新しいフォルダー',
+  'dialog.create.file': '新しいファイル',
+  'dialog.create.default_folder': '新しいフォルダー',
+  'dialog.create.default_file': '新しいテキスト ドキュメント.txt',
+
+  // ── 删除确认 ──
+  'dialog.delete.confirm': (n: number) => `選択した ${n} 個の項目を削除してもよろしいですか？`,
+
+  // ── 属性弹窗 ──
+  'properties.title': 'プロパティ',
+  'properties.folder': 'フォルダー',
+  'properties.file': 'ファイル',
+  'properties.location': '場所:',
+  'properties.size': 'サイズ:',
+  'properties.calculating': '計算中...',
+  'properties.bytes': ' バイト',
+  'properties.modified': '更新日時:',
+  'properties.type': '種類:',
+  'properties.directory': 'フォルダー',
+
+  // ── 打开方式弹窗 ──
+  'open_with.title': 'プログラムから開く',
+  'open_with.cancel': 'キャンセル',
+  'open_with.open': '開く',
+  'open_with.search': 'アプリケーションを検索...',
+  'open_with.recommended': '推奨プログラム',
+  'open_with.all': 'すべてのアプリケーション',
+
+  // ── 设置弹窗 ──
+  'settings.title': '設定',
+  'settings.done': '完了',
+  'settings.show_hidden': '隠しファイルを表示',
+  'settings.appearance': '外観',
+  'settings.view_mode': '表示モード',
+  'settings.grid': 'グリッド',
+  'settings.list': 'リスト',
+  'settings.icon_size': 'アイコンのサイズ',
+  'settings.filled_icons': '塗りつぶしアイコン',
+  'settings.customization': 'カスタマイズ',
+  'settings.custom_css': 'カスタム CSS',
+  'settings.import_css': 'CSS をインポート',
+  'settings.behavior': '動作',
+  'settings.language': '言語',
+  'settings.marquee_text': 'スクロールテキスト',
+
+  // ── Toast 消息 ──
+  'toast.copied_items': (n: number) => `${n} 個の項目をコピーしました`,
+  'toast.cut_items': (n: number) => `${n} 個の項目を切り取りました`,
+  'toast.moved_items': (n: number) => `${n} 個の項目を移動しました`,
+  'toast.pasted_items': (n: number) => `${n} 個の項目を貼り付けました`,
+  'toast.deleted_items': (n: number) => `${n} 個の項目を削除しました`,
+  'toast.imported_files': (n: number) => `${n} 個のファイルをインポートしました`,
+  'toast.failed_items': (n: number) => `${n} 個の項目の操作に失敗しました`,
+  'toast.delete_fail_permission': '権限を確認してください',
+  'toast.file_deleted': (name: string) => `${name} を削除しました`,
+  'toast.file_created': (name: string) => `ファイル ${name} を作成しました`,
+  'toast.folder_created': (name: string) => `フォルダー ${name} を作成しました`,
+  'toast.file_extracted': (name: string) => `${name} を展開しました`,
+  'toast.rename_success': (oldN: string, newN: string) => `名前を変更しました: ${oldN} -> ${newN}`,
+  'toast.rename_move_success': (oldN: string, newP: string) => `名前を変更しました: ${oldN} を ${newP} に移動しました`,
+  'toast.copy_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.move_success': (src: string, destDir: string, dest: string) => `${src} → ${destDir}/${dest}`,
+  'toast.launch_failed': (exec: string, result: string) => `プログラムの起動: ${exec} の起動に失敗しました（${result}）`,
+
+  // ── 错误消息 ──
+  'error.permission_denied': '権限がありません',
+  'error.not_found': '見つかりません',
+  'error.cannot_access': 'アクセスできません',
+  'error.unknown': '不明なエラー',
+  'error.cannot_open_dir': (msg: string) => `ディレクトリを開けません: ${msg}`,
+  'error.search_failed': (msg: string) => `検索に失敗しました: ${msg}`,
+  'error.name_exists': (name: string) => `名前の変更に失敗しました: ${name} は既に存在します`,
+  'error.copy_exists': (name: string) => `コピーに失敗しました: ${name} は既に存在します`,
+  'error.move_exists': (name: string) => `移動に失敗しました: ${name} は既に存在します`,
+  'error.unsupported_format': 'サポートされていない圧縮フォーマットです',
+  'error.file_open_failed': (name: string, err: string) => `${name} を開けませんでした: ${err}`,
+  'error.create_parent_failed': (parent: string) => `ターゲットディレクトリの作成に失敗しました: ${parent}`,
+
+  // ── fileOperations 错误格式化 ──
+  'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 同名のファイルが存在します`,
+  'file_op.not_found': (op: string, ref: string) => `${op} ${ref}: ファイルまたはディレクトリが存在しません`,
+  'file_op.permission': (op: string, ref: string) => `${op} ${ref}: 権限がありません`,
+  'file_op.no_space': (op: string, ref: string) => `${op} ${ref}: ディスクの空き容量が不足しています`,
+  'file_op.read_only': (op: string, ref: string) => `${op} ${ref}: 読み取り専用ファイルシステムです`,
+  'file_op.is_dir': (op: string, ref: string) => `${op} ${ref}: パスはディレクトリです`,
+  'file_op.not_dir': (op: string, ref: string) => `${op} ${ref}: パスはディレクトリではありません`,
+  'file_op.cross_device': (op: string, ref: string) => `${op} ${ref}: デバイス間でファイルを移動できません`,
+  'file_op.busy': (op: string, ref: string) => `${op} ${ref}: ファイルが使用中です。閉じてから再試行してください`,
+  'file_op.same_target': (op: string, ref: string) => `${op} ${ref}: 対象を自身にすることはできません`,
+  'file_op.generic': (op: string, ref: string, msg: string) => `${op} ${ref}: ${msg}`,
+
+  // ── 操作动词 ──
+  'operation.create_file': 'ファイルの作成',
+  'operation.create_folder': 'フォルダーの作成',
+  'operation.rename_op': '名前の変更',
+  'operation.delete_op': '削除',
+  'operation.copy_op': 'コピー',
+  'operation.move_op': '移動',
+  'operation.extract_op': '展開',
+  'operation.open_op': '開く',
+  'operation.launch_app': 'プログラムの起動',
+  'operation.move_verb': '移動',
+  'operation.copy_verb': 'コピー',
+
+  // ── 侧边栏 ──
+  'sidebar.places': '場所',
+  'sidebar.devices': 'デバイス',
+  'sidebar.dashboard': 'ダッシュボード',
+  'sidebar.home': 'ホーム',
+  'sidebar.desktop': 'デスクトップ',
+  'sidebar.documents': 'ドキュメント',
+  'sidebar.downloads': 'ダウンロード',
+  'sidebar.music': 'ミュージック',
+  'sidebar.pictures': 'ピクチャ',
+  'sidebar.videos': 'ビデオ',
+
+  // ── 导航栏 ──
+  'nav.dashboard': 'ダッシュボード',
+  'nav.home': 'ホーム',
+  'nav.files': 'ファイル',
+  'nav.terminal': 'ターミナル',
+  'nav.settings': '設定',
+
+  // ── 仪表盘 ──
+  'dashboard.good_morning': 'おはようございます',
+  'dashboard.good_afternoon': 'こんにちは',
+  'dashboard.good_evening': 'こんばんは',
+  'dashboard.welcome': 'コントロールセンターへようこそ。',
+  'dashboard.system_storage': 'システムストレージ',
+  'dashboard.used': '使用済み',
+  'dashboard.total': '合計',
+  'dashboard.loading': '統計データを読み込み中...',
+  'dashboard.pinned': 'ピン留めされた項目',
+  'dashboard.add': '追加',
+  'dashboard.recent': '最近使用した項目',
+  'dashboard.no_recent': '最近使用したファイルはありません。',
+  'dashboard.unpin_tooltip': 'ピン留めを外す',
+
+  // ── 选择模式 ──
+  'selection.box_replace': 'ボックス選択 (置換)',
+  'selection.box_union': 'ボックス選択 (和集合)',
+  'selection.box_intersection': 'ボックス選択 (積集合)',
+  'selection.box_difference': 'ボックス選択 (差集合)',
+  'selection.click_range_add': 'クリック選択 (範囲追加)',
+  'selection.click_add_remove': 'クリック選択 (追加/削除)',
+  'selection.click_range': 'クリック選択 (範囲)',
+
+  // ── 搜索 ──
+  'search.results': (n: number, q: string) => `"${q}" に関する結果が ${n} 件見つかりました`,
+  'search.clear': '検索をクリア',
+
+  // ── 排序 ──
+  'sort.toggle_grouping': 'グループ化の切り替え',
+  'sort.by_name': '名前順',
+  'sort.by_date': '更新日時順',
+
+  // ── 状态栏 ──
+  'status.items': (n: number) => `${n} 個の項目`,
+  'status.selected': (n: number) => `${n} 個選択`,
+
+  // ── Omnibar ──
+  'omnibar.placeholder': 'パスを入力するか検索...',
+  'omnibar.button_tip': 'クリックしてパスを編集または検索',
+
+  // ── 面包屑 ──
+  'breadcrumbs.root': 'ルートディレクトリ',
+
+  // ── Tab 标题 ──
+  'tab.dashboard': 'ダッシュボード',
+  'tab.home': 'ホーム',
+  'tab.downloads': 'ダウンロード',
+  'tab.documents': 'ドキュメント',
+  'tab.music': 'ミュージック',
+  'tab.pictures': 'ピクチャ',
+  'tab.videos': 'ビデオ',
+  'tab.new_tab': '新しいタブ',
+
+  // ── 空状态 ──
+  'empty.no_tabs': 'タブがありません',
+  'empty.open_new_tab': '新しいタブを開く',
+
+  // ── 终端 ──
+  'terminal.title': 'ターミナル',
+  'terminal.process_exited': '\r\nプロセスが終了しました。\r\n',
+
+  // ── 错误边界 ──
+  'error.something_wrong': '問題が発生しました。',
+
+  // ── MIME 类型 ──
+  'mime.folder': 'フォルダー',
+  'mime.symlink': 'シンボリックリンク',
+  'mime.broken_symlink': '破損したシンボリックリンク',
+  'mime.block_device': 'ブロックデバイス',
+  'mime.char_device': 'キャラクターデバイス',
+  'mime.named_pipe': '名前付きパイプ',
+  'mime.socket': 'ソケット',
+  'mime.text': 'テキストファイル',
+  'mime.html': 'HTML ファイル',
+  'mime.css': 'スタイルシート',
+  'mime.javascript': 'JavaScript ファイル',
+  'mime.xml': 'XML ファイル',
+  'mime.csv': 'CSV ファイル',
+  'mime.markdown': 'Markdown ファイル',
+  'mime.python': 'Python ファイル',
+  'mime.c_source': 'C ソースファイル',
+  'mime.cpp_source': 'C++ ソースファイル',
+  'mime.java_source': 'Java ソースファイル',
+  'mime.go_source': 'Go ソースファイル',
+  'mime.rust_source': 'Rust ソースファイル',
+  'mime.shell': 'シェルスクリプト',
+  'mime.yaml': 'YAML ファイル',
+  'mime.toml': 'TOML ファイル',
+  'mime.png': 'PNG 画像',
+  'mime.jpeg': 'JPEG 画像',
+  'mime.gif': 'GIF 画像',
+  'mime.svg': 'SVG 画像',
+  'mime.webp': 'WebP 画像',
+  'mime.bmp': 'BMP 画像',
+  'mime.tiff': 'TIFF 画像',
+  'mime.icon': 'アイコンファイル',
+  'mime.heic': 'HEIC 画像',
+  'mime.mp3': 'MP3 オーディオ',
+  'mime.ogg': 'OGG オーディオ',
+  'mime.flac': 'FLAC オーディオ',
+  'mime.wav': 'WAV オーディオ',
+  'mime.aac': 'AAC オーディオ',
+  'mime.mp4': 'MP4 ビデオ',
+  'mime.webm': 'WebM ビデオ',
+  'mime.avi': 'AVI ビデオ',
+  'mime.quicktime': 'QuickTime ビデオ',
+  'mime.pdf': 'PDF ドキュメント',
+  'mime.zip': 'ZIP アーカイブ',
+  'mime.gzip': 'GZip アーカイブ',
+  'mime.bzip2': 'BZip2 アーカイブ',
+  'mime.xz': 'XZ アーカイブ',
+  'mime._7z': '7z アーカイブ',
+  'mime.rar': 'RAR アーカイブ',
+  'mime.tar': 'TAR アーカイブ',
+  'mime.iso': 'ディスクイメージ',
+  'mime.krita': 'Krita ドキュメント',
+  'mime.scratch': 'Scratch プロジェクト',
+  'mime.odt': 'ODT ドキュメント',
+  'mime.ods': 'ODS スプレッドシート',
+  'mime.odp': 'ODP プレゼンテーション',
+  'mime.docx': 'DOCX ドキュメント',
+  'mime.xlsx': 'XLSX スプレッドシート',
+  'mime.pptx': 'PPTX プレゼンテーション',
+  'mime.doc': 'DOC ドキュメント',
+  'mime.xls': 'XLS スプレッドシート',
+  'mime.ppt': 'PPT プレゼンテーション',
+  'mime.rtf': 'RTF ドキュメント',
+  'mime.elf': '実行可能ファイル',
+  'mime.executable': '実行可能ファイル',
+  'mime.shared_lib': '共有ライブラリ',
+  'mime.python_bytecode': 'Python バイトコード',
+  'mime.json': 'JSON ファイル',
+  'mime.unknown_ext': (ext: string) => `${ext} ファイル`,
+  'mime.other_file': 'その他のファイル',
+
+  // ── MIME 分类 ──
+  'mime.cat.text': 'テキストファイル',
+  'mime.cat.image': '画像ファイル',
+  'mime.cat.audio': '音声ファイル',
+  'mime.cat.video': '動画ファイル',
+  'mime.cat.font': 'フォントファイル',
+  'mime.cat.system': 'システムファイル',
+  'mime.cat.other': 'その他のファイル',
+
+  // ── 文件分组 ──
+  'group.folders': 'フォルダー',
+  'group.media': 'メディアファイル',
+  'group.documents': 'ドキュメント',
+  'group.code': 'コードファイル',
+  'group.archives': 'アーカイブ',
+  'group.executables': '実行可能ファイル',
+  'group.others': 'その他のファイル',
+
+  // ── 大小格式化 ──
+  'size.b': 'B',
+  'size.kb': 'KB',
+  'size.mb': 'MB',
+  'size.gb': 'GB',
+  'size.tb': 'TB',
+  'size.zero': '0 B',
+
+  // ── Toast 操作 ──
+  'toast.copy_action': 'コピー',
+  'toast.close_action': '閉じる',
+
+  // ── 设备操作 ──
+  'device.mount': 'マウント',
+  'device.unmount': 'アンマウント',
+  'device.eject': '取り出し',
+  'device.power_off': 'ディスクの電源を切る',
+  'device.mounting': 'マウント中...',
+  'device.unmounting': 'アンマウント中...',
+  'device.mounted': 'マウント済み',
+  'device.unmounted': 'アンマウント済み',
+  'device.mount_failed': 'マウントに失敗しました',
+  'device.unmount_failed': 'アンマウントに失敗しました',
+  'device.eject_failed': '取り出しに失敗しました',
+  'device.already_mounted': 'デバイスは既にマウントされています',
+  'device.go_to_source': 'ソースデバイスへ移動',
+  'device.type_usb': 'USB デバイス',
+  'device.type_removable': 'リムーバブルデバイス',
+  'device.type_disk': 'ディスク',
+
+  // ── 软链接操作 ──
+  'symlink.go_to_target': 'シンボリックリンクのリンク先へ移動',
+  'symlink.broken_tooltip': (target: string) => `→ ${target}（破損）`,
+  'symlink.tooltip': (target: string) => `→ ${target}`,
+
+  // ── 挂载点操作 ──
+  'mountpoint.go_to_source': 'ソースデバイスへ移動',
+  
+  // ── 语言信息 ──
+  'language_name': '日本語',
+  'language_auto': 'システムに従う',
+} as const;
+
+export const match = (lang: string) => lang.startsWith('ja');
+
+export default jaJP;
