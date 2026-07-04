@@ -5,6 +5,8 @@ import { MarqueeText } from "./MarqueeText";
 import "./Sidebar.css";
 import { t } from "../i18n";
 import type { AllDevice } from "../types/files";
+import { isExternalDevice, getDiskIcon } from "../utils/deviceUtils";
+import { SidebarPartitionItem } from "./SidebarPartitionItem";
 
 interface SidebarProps {
   currentPath: string;
@@ -17,23 +19,6 @@ interface SidebarProps {
   onDeviceEject?: (devicePath: string) => void;
   marqueeEnabled: boolean;
 }
-
-const isExternalDevice = (d: AllDevice): boolean =>
-  d.hotplug || d.rm || d.tran === "usb";
-
-const getDeviceIcon = (d: AllDevice): string => {
-  if (d.tran === "usb") return "usb";
-  if (d.rm) return "sd_card";
-  if (d.type === "crypt") return "encrypted";
-  return "hard_drive";
-};
-
-const getDiskIcon = (d: AllDevice): string => {
-  if (d.tran === "usb") return "usb";
-  if (d.rm) return "sd_card";
-  if (d.tran === "nvme") return "memory";
-  return "hard_drive";
-};
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentPath,
@@ -98,24 +83,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleEjectClick = (e: React.MouseEvent, device: AllDevice) => {
-    e.stopPropagation();
-    if (onDeviceEject) {
-      onDeviceEject(device.devicePath);
-    }
-  };
-
-  const getDeviceTitle = (d: AllDevice): string => {
-    const parts = [d.label || d.name];
-    if (d.fstype) parts.push(d.fstype);
-    if (d.size) parts.push(d.size);
-    const base = parts.join(" · ");
-    if (d.mounted && d.mountpoint) {
-      return base + "\n" + d.devicePath + "\n→ " + d.mountpoint;
-    }
-    return base + "\n" + d.devicePath;
-  };
-
   return (
     <aside className="sidebar">
       <div className="sidebar-section">
@@ -174,128 +141,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <div style={{ flex: 1 }} />
                       {isExternalDevice(disk) &&
                         disk.children?.every((part) => !part.mounted) && (
-                          <IconButton
-                            variant="standard"
-                            onClick={(e) => handleEjectClick(e, disk)}
-                            className="sidebar-disk-eject"
-                            title={t("device.eject")}
-                          >
-                            <Icon name="eject" />
-                          </IconButton>
-                        )}
-                    </div>
-                    {disk.children.map((part) => (
-                      <div
-                        key={part.name}
-                        className={`sidebar-item sidebar-partition ${!part.mounted ? "unmounted" : ""} ${part.mounted && part.mountpoint && currentPath.startsWith(part.mountpoint) ? "active" : ""}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => handlePartitionClick(part)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          onDeviceContextMenu?.(e, part);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            handlePartitionClick(part);
-                          }
-                        }}
-                        title={getDeviceTitle(part)}
-                      >
-                        <Icon
-                          name={getDeviceIcon(part)}
-                          className="sidebar-icon"
-                        />
-                        <div className="sidebar-partition-info">
-                          <span className="sidebar-label">
-                            <MarqueeText enabled={marqueeEnabled}>{part.label || part.name}</MarqueeText>
-                          </span>
-                          {part.mounted && part.mountpoint ? (
-                            <span className="sidebar-subtitle">
-                              <MarqueeText enabled={marqueeEnabled}>{part.mountpoint}</MarqueeText>
-                            </span>
-                          ) : (
-                            <span className="sidebar-subtitle">
-                              <MarqueeText enabled={marqueeEnabled}>{`${part.fstype ? `${part.fstype} · ` : ""}${part.size}`}</MarqueeText>
-                            </span>
-                          )}
-                        </div>
-                        {part.mounted && (
-                          <IconButton
-                            variant="standard"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeviceUnmount?.(part.devicePath);
-                            }}
-                            className="sidebar-eject-btn"
-                            title={t("device.unmount")}
-                          >
-                            <Icon name="eject" />
-                          </IconButton>
-                        )}
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <div
-                    className={`sidebar-item sidebar-partition ${!disk.mounted ? "unmounted" : ""} ${disk.mounted && disk.mountpoint && currentPath.startsWith(disk.mountpoint) ? "active" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handlePartitionClick(disk)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      onDeviceContextMenu?.(e, disk);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handlePartitionClick(disk);
-                      }
-                    }}
-                    title={getDeviceTitle(disk)}
-                  >
-                    <Icon name={getDeviceIcon(disk)} className="sidebar-icon" />
-                    <div className="sidebar-partition-info">
-                      <span className="sidebar-label">
-                        <MarqueeText enabled={marqueeEnabled}>{disk.label || disk.name}</MarqueeText>
-                      </span>
-                      {disk.mounted && disk.mountpoint ? (
-                        <span className="sidebar-subtitle">
-                          <MarqueeText enabled={marqueeEnabled}>{disk.mountpoint}</MarqueeText>
-                        </span>
-                      ) : (
-                        <span className="sidebar-subtitle">
-                          <MarqueeText enabled={marqueeEnabled}>{`${disk.fstype ? `${disk.fstype} · ` : ""}${disk.size}`}</MarqueeText>
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: "4px" }}>
-                      {disk.mounted && (
                         <IconButton
                           variant="standard"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onDeviceUnmount?.(disk.devicePath);
+                            onDeviceEject?.(disk.devicePath);
                           }}
-                          className="sidebar-eject-btn"
-                          title={t("device.unmount")}
+                          className="sidebar-disk-eject"
+                          title={t("device.eject")}
                         >
                           <Icon name="eject" />
                         </IconButton>
                       )}
-                      {isExternalDevice(disk) && (
-                        <IconButton
-                          variant="standard"
-                          onClick={(e) => handleEjectClick(e, disk)}
-                          className="sidebar-disk-eject"
-                          title={t("device.eject")}
-                        >
-                          <Icon name="power_settings_new" />
-                        </IconButton>
-                      )}
                     </div>
-                  </div>
+                    {disk.children.map((part) => (
+                      <SidebarPartitionItem
+                        key={part.name}
+                        device={part}
+                        isActive={!!(part.mounted && part.mountpoint && currentPath.startsWith(part.mountpoint))}
+                        onPartitionClick={handlePartitionClick}
+                        onDeviceContextMenu={onDeviceContextMenu}
+                        onDeviceUnmount={onDeviceUnmount}
+                        marqueeEnabled={marqueeEnabled}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <SidebarPartitionItem
+                    device={disk}
+                    isActive={!!(disk.mounted && disk.mountpoint && currentPath.startsWith(disk.mountpoint))}
+                    onPartitionClick={handlePartitionClick}
+                    onDeviceContextMenu={onDeviceContextMenu}
+                    onDeviceUnmount={onDeviceUnmount}
+                    onDeviceEject={onDeviceEject}
+                    marqueeEnabled={marqueeEnabled}
+                    showEject
+                  />
                 )}
               </div>
             ))}
@@ -308,22 +189,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
 function getPlaceIcon(name: string): string {
   switch (name) {
-    case "Home":
-      return "home";
-    case "Desktop":
-      return "desktop_windows";
-    case "Documents":
-      return "description";
-    case "Downloads":
-      return "download";
-    case "Music":
-      return "music_note";
-    case "Pictures":
-      return "image";
-    case "Videos":
-      return "movie";
-    default:
-      return "folder";
+  case "Home":
+    return "home";
+  case "Desktop":
+    return "desktop_windows";
+  case "Documents":
+    return "description";
+  case "Downloads":
+    return "download";
+  case "Music":
+    return "music_note";
+  case "Pictures":
+    return "image";
+  case "Videos":
+    return "movie";
+  default:
+    return "folder";
   }
 }
 

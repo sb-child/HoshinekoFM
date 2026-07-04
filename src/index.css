@@ -105,3 +105,59 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--md-sys-color-outline);
 }
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background: var(--md-sys-color-background);
+}
+
+.main-content {
+  flex: 1;
+  height: 100%;
+  background: var(--md-sys-color-background);
+  border-radius: 24px 0 0 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.tab-header-bar {
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-sys-color-surface);
+}
+
+.terminal-panel {
+  height: 300px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--surface-variant);
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+}
+
+.empty-state-content {
+  text-align: center;
+}

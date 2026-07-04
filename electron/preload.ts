@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('electron', {
   getStorageUsage: () => ipcRenderer.invoke('system:get-storage-usage'),
   getStartupPath: () => ipcRenderer.invoke('app:get-startup-path'),
   exists: (path: string) => ipcRenderer.invoke('fs:exists', path),
+  existsBatch: (paths: string[]) => ipcRenderer.invoke('fs:exists-batch', paths),
+  trashBatch: (paths: string[]) => ipcRenderer.invoke('fs:trash-batch', paths),
   setIcon: (iconPath: string) => ipcRenderer.invoke('window:set-icon', iconPath),
   search: (dir: string, query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => ipcRenderer.invoke('system:search', dir, query, options),
   getDirectorySize: (path: string) => ipcRenderer.invoke('system:get-directory-size', path),

@@ -38,18 +38,14 @@ export async function checkConflicts(
   entries: { path: string; name: string; isDir: boolean }[],
   destDir: string,
 ): Promise<ConflictEntry[]> {
-  const conflicts: ConflictEntry[] = [];
   const base = destDir.endsWith('/') ? destDir : destDir + '/';
+  const destPaths = entries.map((e) => base + e.name);
+  const existsMap = await window.electron.existsBatch(destPaths);
 
-  for (const entry of entries) {
-    const destPath = base + entry.name;
-    try {
-      const exists = await window.electron.exists(destPath);
-      if (exists) {
-        conflicts.push({ entry, destPath, isDir: entry.isDir });
-      }
-    } catch {
-      // ignore, assume no conflict
+  const conflicts: ConflictEntry[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (existsMap[destPaths[i]]) {
+      conflicts.push({ entry: entries[i], destPath: destPaths[i], isDir: entries[i].isDir });
     }
   }
 

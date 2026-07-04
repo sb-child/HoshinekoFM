@@ -16,8 +16,8 @@ import { IconButton } from "./components/IconButton";
 import { ContextMenu } from "./components/ContextMenu";
 import type { ContextMenuItem } from "./components/ContextMenu";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { TerminalPane } from "./components/TerminalPane"; // Import TerminalPane
-import type { IFile, AllDevice } from "./types/files";
+import { TerminalPane } from "./components/TerminalPane";
+import type { IFile } from "./types/files";
 import { Dialog } from "./components/Dialog";
 import { Button } from "./components/Button";
 import { OutlinedTextField } from "./components/md";
@@ -27,36 +27,78 @@ import { OpenWithDialog } from "./components/OpenWithDialog";
 import { PropertiesDialog } from "./components/PropertiesDialog";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import {
-  renameFile as renameFileOp,
   trashFile,
   pasteFiles,
   extractFile,
   openFile,
 } from "./utils/fileOperations";
-import { FileSystemService } from "./services/FileSystemService";
 import { NameInputDialog } from "./components/NameInputDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import {
   generateSafeName,
   splitNameExt,
-  type ConflictEntry,
-  type ConflictResult,
 } from "./utils/fileConflict";
-
-interface TabState {
-  id: string;
-  title: string;
-  path: string;
-  version: number;
-  pendingSelectFile?: string;
-}
+import { useTabs } from "./hooks/useTabs";
+import { useContextMenu } from "./hooks/useContextMenu";
+import { useRenameDialog } from "./hooks/useRenameDialog";
+import { useConflictDialog } from "./hooks/useConflictDialog";
+import { useCreateDialog } from "./hooks/useCreateDialog";
+import { useDeviceActions } from "./hooks/useDeviceActions";
 
 function AppContent() {
-  // Tabs State
-  const [tabs, setTabs] = useState<TabState[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string>("");
+  const {
+    tabs,
+    activeTabId,
+    setActiveTabId,
+    currentPath,
+    handleAddTab,
+    handleCloseTab,
+    handleTabPathUpdate,
+    handleSidebarNavigate,
+    handleScrollToComplete,
+    refreshActiveTab,
+  } = useTabs();
 
-  // Note: loading/files state is now internal to ExplorerTab
+  const {
+    contextMenu,
+    bgMenuItems,
+    deviceContextMenu,
+    handleContextMenu,
+    handleDeviceContextMenu,
+    handleBgMenuItems,
+    closeContextMenu,
+    closeDeviceContextMenu,
+  } = useContextMenu();
+
+  const {
+    renameDialogOpen,
+    setRenameDialogOpen,
+    newName,
+    setNewName,
+    handleRename,
+    openRenameDialog,
+  } = useRenameDialog(refreshActiveTab);
+
+  const {
+    singleConflict,
+    setSingleConflict,
+    multiConflict,
+    setMultiConflict,
+    handleConflictDialog,
+  } = useConflictDialog();
+
+  const {
+    createDialog,
+    setCreateDialog,
+    handleCreateDialog,
+  } = useCreateDialog();
+
+  const {
+    handleDeviceMount,
+    handleDeviceUnmount,
+    handleDeviceEject,
+  } = useDeviceActions();
+
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalCwd, setTerminalCwd] = useState<string | undefined>(undefined);
 
@@ -65,91 +107,14 @@ function AppContent() {
     setTerminalOpen(true);
   }, []);
 
-  // Context Menu State
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    item: IFile | null;
-  } | null>(null);
-  const [bgMenuItems, setBgMenuItems] = useState<ContextMenuItem[] | null>(
-    null,
-  );
-
-  // Rename Dialog State
-  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
-  const [renameFile, setRenameFile] = useState<IFile | null>(null);
-  const [newName, setNewName] = useState("");
-
-  // Properties Dialog State
   const [propertiesDialogOpen, setPropertiesDialogOpen] = useState(false);
   const [propertiesFile, setPropertiesFile] = useState<IFile | null>(null);
 
-  // Open With Dialog State
   const [openWithFile, setOpenWithFile] = useState<IFile | null>(null);
 
-  // Clipboard State (from Context)
   const { clipboard, copy, cut, clear: clearClipboard } = useClipboard();
 
-  // Settings State
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-
-  // Create Dialog State
-  const [createDialog, setCreateDialog] = useState<{
-    type: "file" | "folder";
-    defaultName: string;
-    existingNames: string[];
-    resolve: (name: string | null) => void;
-      } | null>(null);
-
-  // Conflict Dialog State
-  const [singleConflict, setSingleConflict] = useState<{
-    conflict: ConflictEntry;
-    existingNames: string[];
-    destDir: string;
-    sourcePath?: string;
-    operation?: "move" | "copy";
-    resolve: (result: ConflictResult) => void;
-      } | null>(null);
-
-  const [multiConflict, setMultiConflict] = useState<{
-    conflicts: ConflictEntry[];
-    destDir: string;
-    existingNames: string[];
-    resolve: (result: ConflictResult) => void;
-    sourcePath?: string;
-    operation?: "move" | "copy";
-      } | null>(null);
-
-  // Device context menu state
-  const [deviceContextMenu, setDeviceContextMenu] = useState<{
-    x: number;
-    y: number;
-    device: AllDevice;
-  } | null>(null);
-
-  // -- Dialog helpers (passed as props to ExplorerTab) --
-
-  const handleCreateDialog = useCallback(
-    (type: "file" | "folder", defaultName: string, existingNames: string[]) => {
-      return new Promise<string | null>((resolve) => {
-        setCreateDialog({ type, defaultName, existingNames, resolve });
-      });
-    },
-    [],
-  );
-
-  const handleConflictDialog = useCallback(
-    (conflicts: ConflictEntry[], destDir: string, existingNames: string[], sourcePath?: string, operation?: "move" | "copy") => {
-      return new Promise<ConflictResult>((resolve) => {
-        if (conflicts.length === 1) {
-          setSingleConflict({ conflict: conflicts[0], existingNames, destDir, sourcePath, operation, resolve });
-        } else {
-          setMultiConflict({ conflicts, destDir, existingNames, resolve, sourcePath, operation });
-        }
-      });
-    },
-    [],
-  );
 
   const [showHiddenFiles, setShowHiddenFiles] = useLocalStorage<boolean>(
     "settings.showHiddenFiles",
@@ -177,12 +142,9 @@ function AppContent() {
     true,
   );
 
-  // Sync module-level locale when state changes
   useEffect(() => {
     setLocale(locale);
   }, [locale]);
-
-  // -- Handlers (Defined before effects) --
 
   const handleLoadCustomCss = async (path: string) => {
     try {
@@ -210,27 +172,9 @@ function AppContent() {
     }
   };
 
-  const currentPath = tabs.find((t) => t.id === activeTabId)?.path || "";
-
-  // Tab Handlers
-  const handleAddTab = (path?: string) => {
-    const newTabId = Date.now().toString();
-    const newPath = path || currentPath || "/";
-    const newTab: TabState = {
-      id: newTabId,
-      title: "New Tab",
-      path: newPath,
-      version: 0,
-    };
-    setTabs((prev) => [...prev, newTab]);
-    setActiveTabId(newTabId);
-  };
-
   const loadHome = () => {
     handleAddTab("app://dashboard");
   };
-
-  // -- Effects --
 
   const hasInitialized = useRef(false);
 
@@ -241,7 +185,6 @@ function AppContent() {
     ThemeService.loadTheme();
     ThemeService.init();
 
-    // Check for startup args
     const init = async () => {
       if (window.electron) {
         initDragIcons();
@@ -262,7 +205,6 @@ function AppContent() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Block scroll events when context menu or dialog is open
   useEffect(() => {
     const handler = (e: WheelEvent) => {
       const target = e.target as Node;
@@ -282,126 +224,9 @@ function AppContent() {
     return () => window.removeEventListener('wheel', handler);
   }, []);
 
-  const handleCloseTab = useCallback(
-    (id: string) => {
-      setTabs((prev) => {
-        const newTabs = prev.filter((t) => t.id !== id);
-        return newTabs;
-      });
-
-      // Note: Active tab logic needs to read current state, but strict mode might be tricky.
-      // Simplifying: update active ID separately or rely on effect?
-      // Actually, accessing state inside callback is fine if deps are correct.
-      // Refactoring to use functional updates fully or include deps.
-      // To match original logic's intent without stale closures:
-      setTabs((prevTabs) => {
-        const newTabs = prevTabs.filter((t) => t.id !== id);
-        if (id === activeTabId) {
-          if (newTabs.length > 0) {
-            setActiveTabId(newTabs[newTabs.length - 1].id);
-          } else {
-            setActiveTabId("");
-          }
-        }
-        return newTabs;
-      });
-    },
-    [activeTabId],
-  );
-
-  const handleTabPathUpdate = useCallback((id: string, path: string) => {
-    const folderName = path.split("/").pop() || path;
-    setTabs((prev) =>
-      prev.map((t) => {
-        if (t.id === id) return { ...t, path, title: folderName };
-        return t;
-      }),
-    );
-  }, []);
-
   const toggleTerminal = () => {
     setTerminalOpen((prev) => !prev);
   };
-
-  const handleSidebarNavigate = useCallback(
-    (path: string, selectFileName?: string) => {
-      setTabs((prev) => {
-        if (prev.length === 0) {
-          const newTabId = Date.now().toString();
-          const newTab: TabState = {
-            id: newTabId,
-            title: t("tab.new_tab"),
-            path,
-            version: 0,
-            pendingSelectFile: selectFileName,
-          };
-          setActiveTabId(newTabId);
-          return [newTab];
-        }
-        return prev.map((t) => (t.id === activeTabId ? { ...t, path, pendingSelectFile: selectFileName } : t));
-      });
-    },
-    [activeTabId],
-  );
-
-  const handleScrollToComplete = useCallback(() => {
-    setTabs((prev) =>
-      prev.map((t) => (t.id === activeTabId ? { ...t, pendingSelectFile: undefined } : t)),
-    );
-  }, [activeTabId]);
-
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, file: IFile | null) => {
-      e.preventDefault();
-      e.stopPropagation(); // Prevent bubbling if handled
-      setContextMenu({ x: e.clientX, y: e.clientY, item: file });
-    },
-    [],
-  );
-
-  const handleDeviceContextMenu = useCallback(
-    (e: React.MouseEvent, device: AllDevice) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDeviceContextMenu({ x: e.clientX, y: e.clientY, device });
-    },
-    [],
-  );
-
-  const handleDeviceMount = useCallback(async (devicePath: string) => {
-    showToast(t('device.mounting'), 'info');
-    const result = await FileSystemService.mountDevice(devicePath);
-    if (result.success) {
-      showToast(t('device.mounted'), 'success');
-    } else {
-      showToast(`${t('device.mount_failed')}: ${result.error || ''}`, 'error');
-    }
-    return result;
-  }, []);
-
-  const handleDeviceUnmount = useCallback(async (devicePath: string) => {
-    showToast(t('device.unmounting'), 'info');
-    const result = await FileSystemService.unmountDevice(devicePath);
-    if (result.success) {
-      showToast(t('device.unmounted'), 'success');
-    } else {
-      showToast(`${t('device.unmount_failed')}: ${result.error || ''}`, 'error');
-    }
-  }, []);
-
-  const handleDeviceEject = useCallback(async (devicePath: string) => {
-    showToast(t('device.unmounting'), 'info');
-    const result = await FileSystemService.ejectDevice(devicePath);
-    if (result.success) {
-      showToast(t('device.unmounted'), 'success');
-    } else {
-      showToast(`${t('device.eject_failed')}: ${result.error || ''}`, 'error');
-    }
-  }, []);
-
-  const handleBgMenuItems = useCallback((items: ContextMenuItem[]) => {
-    setBgMenuItems(items);
-  }, []);
 
   const handleOpenWithFile = useCallback((file: IFile) => {
     setOpenWithFile(file);
@@ -414,12 +239,12 @@ function AppContent() {
 
   const handleCopy = (file: IFile) => {
     copy([file]);
-    setContextMenu(null);
+    closeContextMenu();
   };
 
   const handleCut = (file: IFile) => {
     cut([file]);
-    setContextMenu(null);
+    closeContextMenu();
   };
 
   const handlePaste = async () => {
@@ -431,14 +256,9 @@ function AppContent() {
       currentPath,
       [],
       clipboard.operation === "cut" ? clearClipboard : undefined,
-      () =>
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
-          ),
-        ),
+      refreshActiveTab,
     );
-    setContextMenu(null);
+    closeContextMenu();
   };
 
   const menuItems: ContextMenuItem[] = (() => {
@@ -450,7 +270,7 @@ function AppContent() {
           icon: "open_in_new",
           action: () => {
             openFile(item.path);
-            setContextMenu(null);
+            closeContextMenu();
           },
         },
         {
@@ -473,35 +293,21 @@ function AppContent() {
           label: t("context_menu.delete"),
           icon: "delete",
           action: () =>
-            trashFile(item.path, () => {
-              setTabs((prev) =>
-                prev.map((t) =>
-                  t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
-                ),
-              );
-            }),
+            trashFile(item.path, refreshActiveTab),
         },
         {
           label: t("context_menu.extract_here"),
           icon: "unarchive",
           action: () => {
-            extractFile(item.path, () =>
-              setTabs((prev) =>
-                prev.map((t) =>
-                  t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
-                ),
-              ),
-            );
+            extractFile(item.path, refreshActiveTab);
           },
         },
         {
           label: t("context_menu.rename"),
           icon: "edit",
           action: () => {
-            setRenameFile(item);
-            setNewName(item.name);
-            setRenameDialogOpen(true);
-            setContextMenu(null);
+            openRenameDialog(item);
+            closeContextMenu();
           },
         },
       ];
@@ -522,7 +328,7 @@ function AppContent() {
               const targetFileName = item.symlinkTarget!.split("/").pop() || "";
               handleSidebarNavigate(parent || "/", targetFileName);
             }
-            setContextMenu(null);
+            closeContextMenu();
           },
         });
       }
@@ -539,14 +345,13 @@ function AppContent() {
             action: () => {
               const parent = item.mountSource!.substring(0, item.mountSource!.lastIndexOf("/"));
               handleSidebarNavigate(parent || "/", targetFileName);
-              setContextMenu(null);
+              closeContextMenu();
             },
           });
         }
       }
       if (item.mime === 'inode/blockdevice' && item.isExternal) {
         const devPath = item.devicePath || item.path;
-        // Mount/unmount for mountable devices (partitions, dm)
         if (item.isMountable) {
           if (item.mountedAt) {
             specialItems.push({
@@ -554,7 +359,7 @@ function AppContent() {
               icon: "eject",
               action: () => {
                 handleDeviceUnmount(devPath);
-                setContextMenu(null);
+                closeContextMenu();
               },
             });
           } else {
@@ -563,19 +368,18 @@ function AppContent() {
               icon: "hard_drive",
               action: () => {
                 handleDeviceMount(devPath);
-                setContextMenu(null);
+                closeContextMenu();
               },
             });
           }
         }
-        // Eject for disk-level external devices (e.g. /dev/sda, not partitions)
         if (!item.parentDisk && !item.isMountable) {
           specialItems.push({
             label: t("device.eject"),
             icon: "power_settings_new",
             action: () => {
               handleDeviceEject(devPath);
-              setContextMenu(null);
+              closeContextMenu();
             },
           });
         }
@@ -591,7 +395,7 @@ function AppContent() {
           icon: "apps",
           action: () => {
             setOpenWithFile(item);
-            setContextMenu(null);
+            closeContextMenu();
           },
         },
         {
@@ -600,7 +404,7 @@ function AppContent() {
           action: () => {
             setPropertiesFile(item);
             setPropertiesDialogOpen(true);
-            setContextMenu(null);
+            closeContextMenu();
           },
         },
       );
@@ -622,33 +426,8 @@ function AppContent() {
     );
   })();
 
-  const handleRename = async () => {
-    if (renameFile && newName && newName !== renameFile.name) {
-      const lastSlashIndex = renameFile.path.lastIndexOf("/");
-      const parentDir = renameFile.path.substring(0, lastSlashIndex);
-      await renameFileOp(renameFile.path, `${parentDir}/${newName}`, () =>
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === activeTabId ? { ...t, version: t.version + 1 } : t,
-          ),
-        ),
-      );
-    }
-    setRenameDialogOpen(false);
-    setRenameFile(null);
-  };
-
   return (
-    <div
-      className="app-shell"
-      style={{
-        display: "flex",
-        height: "100vh",
-        width: "100vw",
-        background: "var(--md-sys-color-background)",
-      }}
-      onClick={() => setContextMenu(null)}
-    >
+    <div className="app-shell" onClick={closeContextMenu}>
       <NavigationRail
         items={[
           {
@@ -705,7 +484,6 @@ function AppContent() {
         ]}
       />
 
-      {/* Places Sidebar */}
       <Sidebar
         onNavigate={handleSidebarNavigate}
         currentPath={currentPath}
@@ -716,28 +494,8 @@ function AppContent() {
         marqueeEnabled={marqueeEnabled}
       />
 
-      {/* Main Content Area */}
-      <main
-        className="main-content"
-        style={{
-          flex: 1,
-          height: "100%",
-          background: "var(--md-sys-color-background)",
-          borderRadius: "24px 0 0 0",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {/* Top Bar */}
-        <header
-          style={{
-            height: "auto",
-            display: "flex",
-            flexDirection: "column",
-            background: "var(--md-sys-color-surface)",
-          }}
-        >
+      <main className="main-content">
+        <header className="tab-header-bar">
           <TabBar
             tabs={tabs}
             activeTabId={activeTabId}
@@ -747,11 +505,7 @@ function AppContent() {
           />
         </header>
 
-        {/* File Tabs Content */}
-        <div
-          className="content-area"
-          style={{ flex: 1, position: "relative", overflow: "hidden" }}
-        >
+        <div className="content-area">
           {tabs.map((tab) => (
             <div
               key={tab.id}
@@ -785,16 +539,8 @@ function AppContent() {
             </div>
           ))}
           {tabs.length === 0 && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                height: "100%",
-                color: "var(--text-secondary)",
-              }}
-            >
-              <div style={{ textAlign: "center" }}>
+            <div className="empty-state">
+              <div className="empty-state-content">
                 <Icon name="tab" size={48} />
                 <p>{t("empty.no_tabs")}</p>
                 <Button onClick={() => handleAddTab()}>{t("empty.open_new_tab")}</Button>
@@ -803,24 +549,9 @@ function AppContent() {
           )}
         </div>
 
-        {/* Terminal Panel */}
         {terminalOpen && (
-          <div
-            style={{
-              height: "300px",
-              borderTop: "1px solid var(--border-color)",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "4px 8px",
-                background: "var(--surface-variant)",
-              }}
-            >
+          <div className="terminal-panel">
+            <div className="terminal-panel-header">
               <span style={{ fontSize: "12px", fontWeight: 500 }}>
                 {t("terminal.title")}
               </span>
@@ -849,7 +580,7 @@ function AppContent() {
             x={contextMenu.x}
             y={contextMenu.y}
             items={menuItems}
-            onClose={() => setContextMenu(null)}
+            onClose={closeContextMenu}
           />
         )}
 
@@ -865,7 +596,7 @@ function AppContent() {
                 icon: "hard_drive",
                 action: () => {
                   handleSidebarNavigate("/dev", d.name);
-                  setDeviceContextMenu(null);
+                  closeDeviceContextMenu();
                 },
               });
               if (d.mounted) {
@@ -874,7 +605,7 @@ function AppContent() {
                   icon: "eject",
                   action: () => {
                     handleDeviceUnmount(d.devicePath);
-                    setDeviceContextMenu(null);
+                    closeDeviceContextMenu();
                   },
                 });
                 if (d.type !== 'part' && (d.hotplug || d.rm || d.tran === 'usb')) {
@@ -883,7 +614,7 @@ function AppContent() {
                     icon: "power_settings_new",
                     action: () => {
                       handleDeviceEject(d.devicePath);
-                      setDeviceContextMenu(null);
+                      closeDeviceContextMenu();
                     },
                   });
                 }
@@ -893,13 +624,13 @@ function AppContent() {
                   icon: "hard_drive",
                   action: () => {
                     handleDeviceMount(d.devicePath);
-                    setDeviceContextMenu(null);
+                    closeDeviceContextMenu();
                   },
                 });
               }
               return items;
             })()}
-            onClose={() => setDeviceContextMenu(null)}
+            onClose={closeDeviceContextMenu}
           />
         )}
 
@@ -927,7 +658,6 @@ function AppContent() {
           />
         </Dialog>
 
-        {/* Create File/Folder Dialog */}
         {createDialog && (
           <NameInputDialog
             title={createDialog.type === "folder" ? t("dialog.create.folder") : t("dialog.create.file")}
@@ -947,7 +677,6 @@ function AppContent() {
           />
         )}
 
-        {/* Single Conflict Dialog */}
         {singleConflict &&
           (() => {
             const c = singleConflict;
@@ -987,7 +716,6 @@ function AppContent() {
             );
           })()}
 
-        {/* Multi Conflict Dialog */}
         {multiConflict && (
           <ConflictDialog
             conflicts={multiConflict.conflicts}

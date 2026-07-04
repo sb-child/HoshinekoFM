@@ -34,6 +34,8 @@ export interface IElectronAPI {
     getDirectorySize: (path: string) => Promise<number>;
     setIcon: (iconType: string) => Promise<void>;
     exists: (path: string) => Promise<boolean>;
+    existsBatch: (paths: string[]) => Promise<Record<string, boolean>>;
+    trashBatch: (paths: string[]) => Promise<string[]>;
     getStorageUsage: () => Promise<{ total: number; used: number; free: number } | null>;
     getDrives: () => Promise<IDrive[]>;
     getAllDevices: () => Promise<AllDevice[]>;

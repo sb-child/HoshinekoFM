@@ -152,22 +152,14 @@ export async function trashFiles(
   paths: string[],
   onSuccess?: () => void,
 ): Promise<void> {
-  let success = 0;
-  let fail = 0;
-  for (const p of paths) {
-    try {
-      await window.electron.trashFile(p);
-      success++;
-    } catch {
-      fail++;
-    }
-  }
+  const errors = await window.electron.trashBatch(paths);
+  const success = paths.length - errors.length;
   if (success > 0) {
     showToast(t('toast.deleted_items', success), 'success');
     onSuccess?.();
   }
-  if (fail > 0) {
-    showToast(t('toast.failed_items', fail), 'error');
+  if (errors.length > 0) {
+    showToast(t('toast.failed_items', errors.length), 'error');
     showToast(t('toast.delete_fail_permission'), 'error');
   }
 }
@@ -332,20 +324,57 @@ export async function importFiles(
   destDir: string,
   onSuccess?: () => void,
 ): Promise<void> {
-  let count = 0;
-  for (const entry of fileEntries) {
-    const name = fileName(entry.path);
-    const destPath = destDir.endsWith('/') ? destDir + name : destDir + '/' + name;
-    try {
-      await window.electron.copyFile(entry.path, destPath);
-      count++;
-    } catch (e) {
-      console.error(`导入 ${name} 失败:`, e);
+  const base = destDir.endsWith('/') ? destDir : destDir + '/';
+
+  const conflictEntries: { entry: { path: string; name: string; isDir: boolean }; destPath: string }[] = [];
+  const destPaths = fileEntries.map((e) => {
+    const name = fileName(e.path);
+    return { name, destPath: base + name };
+  });
+  const existsMap = await window.electron.existsBatch(destPaths.map((d) => d.destPath));
+
+  for (let i = 0; i < fileEntries.length; i++) {
+    if (existsMap[destPaths[i].destPath]) {
+      conflictEntries.push({ entry: { path: fileEntries[i].path, name: destPaths[i].name, isDir: false }, destPath: destPaths[i].destPath });
     }
   }
-  if (count > 0) {
-    showToast(t('toast.imported_files', count), 'success');
+
+  const conflictNames = new Set(conflictEntries.map((c) => c.entry.name));
+
+  let success = 0;
+  let skip = 0;
+  let fail = 0;
+
+  for (let i = 0; i < fileEntries.length; i++) {
+    const entry = fileEntries[i];
+    const name = destPaths[i].name;
+    if (conflictNames.has(name)) {
+      skip++;
+      continue;
+    }
+    try {
+      await window.electron.copyFile(entry.path, destPaths[i].destPath);
+      success++;
+    } catch (e) {
+      console.error(`导入 ${name} 失败:`, e);
+      showToast(formatFileOpError(t('operation.import_op'), name, e), 'error');
+      fail++;
+    }
+  }
+
+  if (success > 0) {
+    const count = success;
+    if (skip > 0) {
+      showToast(t('toast.imported_skipped', count, skip), 'success');
+    } else {
+      showToast(t('toast.imported_files', count), 'success');
+    }
     onSuccess?.();
+  } else if (skip > 0) {
+    showToast(t('toast.import_all_skipped', skip), 'info');
+  }
+  if (fail > 0) {
+    showToast(t('toast.failed_items', fail), 'error');
   }
 }
 
