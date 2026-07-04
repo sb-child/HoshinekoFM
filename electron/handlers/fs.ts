@@ -8,6 +8,34 @@ import { getMountMap, resolveAccessibleParent } from '../shared';
 
 const execAsync = promisify(exec);
 
+/** Virtual filesystems where MIME detection via `file` command is wasteful */
+const VIRTUAL_FS_TYPES = new Set([
+  'proc', 'sysfs', 'devtmpfs', 'devpts',
+  'debugfs', 'tracefs', 'securityfs', 'configfs',
+  'cgroup', 'cgroup2', 'pstore', 'bpf',
+  'hugetlbfs', 'mqueue', 'fusectl',
+]);
+
+/**
+ * Find the filesystem type for a given path by longest mountpoint prefix match.
+ * Returns null if no mountpoint covers the path.
+ */
+function resolveFstype(
+  mountMap: Map<string, { source: string; fstype: string }>,
+  targetPath: string,
+): string | null {
+  let best: string | null = null;
+  let bestLen = 0;
+  for (const [mp, info] of mountMap) {
+    const mpLen = mp.length;
+    if (mpLen > bestLen && (targetPath === mp || targetPath.startsWith(mp + '/'))) {
+      best = info.fstype;
+      bestLen = mpLen;
+    }
+  }
+  return best;
+}
+
 /**
  * Build a Map from home directory path → `{ username, uid }` by parsing
  * `/etc/passwd`. Falls back to `getent passwd` if the file read fails
@@ -101,6 +129,13 @@ async function listDirectoryContents(targetPath: string): Promise<{
   symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean; mountedAt?: string; canAutoMount?: boolean; homeOwner?: string; homeOwnerUid?: number;
 }[]> {
   const entries = await fs.readdir(targetPath, { withFileTypes: true });
+
+  // Build mount map before processing entries so we can skip MIME detection
+  // on virtual filesystems where `file --mime-type` would be wasteful
+  const mountMap = await getMountMap();
+  const targetFstype = resolveFstype(mountMap, targetPath);
+  const skipMime = targetFstype !== null && VIRTUAL_FS_TYPES.has(targetFstype);
+
   const results = await Promise.all(entries.map(async (entry) => {
     try {
       const fullPath = path.join(targetPath, entry.name);
@@ -192,7 +227,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
             } else if (stats.isSocket()) {
               mime = 'inode/socket';
             } else {
-              mime = await detectMime(symlinkTarget);
+              mime = skipMime ? null : await detectMime(symlinkTarget);
             }
             return {
               name: entry.name,
@@ -231,7 +266,7 @@ async function listDirectoryContents(targetPath: string): Promise<{
       }
 
       const stats = await fs.stat(fullPath);
-      const mime = entry.isDirectory() ? 'inode/directory' : await detectMime(fullPath);
+      const mime = entry.isDirectory() ? 'inode/directory' : (skipMime ? null : await detectMime(fullPath));
       return {
         name: entry.name,
         path: fullPath,
@@ -249,7 +284,6 @@ async function listDirectoryContents(targetPath: string): Promise<{
     symlinkTarget?: string; isMountpoint?: boolean; mountSource?: string; mountFstype?: string; devicePath?: string; isMountable?: boolean; parentDisk?: string; isExternal?: boolean; mountedAt?: string; canAutoMount?: boolean; homeOwner?: string; homeOwnerUid?: number;
   }[];
 
-  const mountMap = await getMountMap();
   const deviceMountMap = new Map<string, { source: string; fstype: string; mountpoint: string }>();
   for (const [mp, info] of mountMap) {
     if (info.source && info.source !== 'none') {

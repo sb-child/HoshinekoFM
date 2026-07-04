@@ -62,6 +62,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const [files, setFiles] = useState<IFile[]>([]);
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
   const suppressWatchRef = useRef(false);
+  const loadPathTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountMapVersionRef = useRef<string | null>(null);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
 
@@ -89,7 +90,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
   // Search State
   const currentPathRef = useRef(currentPath);
-  useEffect(() => { currentPathRef.current = currentPath; });
+  // eslint-disable-next-line react-hooks/refs -- keep ref in sync for stable callbacks during render
+  currentPathRef.current = currentPath;
 
   const lastToastKeyRef = useRef('');
 
@@ -121,7 +123,13 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     }
 
     suppressWatchRef.current = true;
-    setTimeout(() => { suppressWatchRef.current = false; }, 1000);
+    if (loadPathTimeoutRef.current !== null) {
+      clearTimeout(loadPathTimeoutRef.current);
+    }
+    loadPathTimeoutRef.current = setTimeout(() => {
+      loadPathTimeoutRef.current = null;
+      suppressWatchRef.current = false;
+    }, 1000);
     try {
       const { data, actualPath, error } = await FileSystemService.listDir(path);
       setFiles(data);
@@ -222,7 +230,16 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, [isActive, currentPath, loadPath]);
 
-  const handleNavigate = async (file: IFile) => {
+  // Clean up loadPath timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (loadPathTimeoutRef.current !== null) {
+        clearTimeout(loadPathTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleNavigate = useCallback(async (file: IFile) => {
     if (file.isDirectory) {
       loadPath(file.path);
     } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
@@ -244,13 +261,13 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     } else {
       openFile(file.path);
     }
-  };
+  }, [loadPath, onMountDevice]);
 
-  const handleRename = async (file: IFile, newName: string) => {
+  const handleRename = useCallback(async (file: IFile, newName: string) => {
     const lastSlash = file.path.lastIndexOf('/');
     const parentDir = file.path.substring(0, lastSlash);
     await renameFile(file.path, `${parentDir}/${newName}`, () => loadPath(currentPath));
-  };
+  }, [loadPath, currentPath]);
 
   const handleUp = async () => {
     if (window.electron && currentPath) {
@@ -510,7 +527,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     setSelectedFiles(newSelection);
   };
 
-  const executePasteAction = async () => {
+  const executePasteAction = useCallback(async () => {
     if (clipboard && clipboard.files.length > 0) {
       const existingNames = files.map((f) => f.name);
       await pasteFiles(
@@ -523,7 +540,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         (conflicts) => onConflictDialog(conflicts, currentPath, existingNames),
       );
     }
-  };
+  }, [clipboard, files, currentPath, clearClipboard, loadPath, onConflictDialog]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -588,11 +605,9 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, clipboard]);
 
-  // 核心新增：接管空白处右键事件分发逻辑
-  const handleBackgroundContextMenu = (e: React.MouseEvent) => {
+  const handleBackgroundContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
         
-    // 伪装一个代表当前整个目录本身的 IFile 节点，用于无缝丢给属性弹窗
     const currentFolderAsFile: IFile = {
       name: currentPath.split('/').pop() || currentPath,
       path: currentPath,
@@ -668,7 +683,42 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     onContextMenu(e, null);
     onBgMenuItems(customItems);
-  };
+  }, [currentPath, files, clipboard, onCreateDialog, loadPath, executePasteAction, onOpenTerminalAt, onOpenWithFile, onPropertiesFile, onContextMenu, onBgMenuItems]);
+
+  // ── Stable callback wrappers for FileList (ref pattern to prevent unnecessary re-renders) ──
+  const handleSelectRef = useRef(handleSelect);
+  // eslint-disable-next-line react-hooks/refs -- keep ref in sync with latest handler
+  handleSelectRef.current = handleSelect;
+  const selectedFilesForFileListRef = useRef(selectedFiles);
+  // eslint-disable-next-line react-hooks/refs -- keep ref in sync during render for stable callbacks
+  selectedFilesForFileListRef.current = selectedFiles;
+  const filesForFileListRef = useRef(files);
+  // eslint-disable-next-line react-hooks/refs -- keep ref in sync during render for stable callbacks
+  filesForFileListRef.current = files;
+  const handleDropOnTargetRef = useRef(handleDropOnTarget);
+  // eslint-disable-next-line react-hooks/refs -- keep ref in sync with latest handler
+  handleDropOnTargetRef.current = handleDropOnTarget;
+
+  const handleFileContextMenu = useCallback((e: React.MouseEvent, file: IFile) => {
+    if (file && !selectedFilesForFileListRef.current.has(file.path)) {
+      handleSelectRef.current(file, false, false);
+    }
+    onContextMenu(e, file);
+  }, [onContextMenu]);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedFiles(new Set());
+  }, []);
+
+  const handleDropOnFolderCallback = useCallback(
+    (draggedFiles: IFile[], targetPath: string, operation: "move" | "copy") =>
+      handleDropOnTargetRef.current(draggedFiles, targetPath, operation, filesForFileListRef.current, currentPathRef.current),
+    []
+  );
+
+  const stableHandleSelect = useCallback((file: IFile, toggle: boolean, range: boolean) => {
+    handleSelectRef.current(file, toggle, range);
+  }, []);
 
   return (
     <div style={{ display: isActive ? 'flex' : 'none', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
@@ -757,23 +807,16 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             <FileList
               files={sortedFiles}
               selectedFiles={selectedFiles}
-              onSelect={handleSelect}
+              onSelect={stableHandleSelect}
               onNavigate={handleNavigate}
               onRename={handleRename}
-              onContextMenu={(e, file) => {
-                if (file && !selectedFiles.has(file.path)) {
-                  handleSelect(file, false, false);
-                }
-                onContextMenu(e, file);
-              }}
+              onContextMenu={handleFileContextMenu}
               onBackgroundContextMenu={handleBackgroundContextMenu}
-              onDeselectAll={() => setSelectedFiles(new Set())}
+              onDeselectAll={handleDeselectAll}
               onSetSelected={setSelectedFiles}
               onSelectionModeChange={handleSelectionModeChange}
               onHoverFile={handleHoverFile}
-              onDropOnFolder={(draggedFiles, targetPath, operation) =>
-                handleDropOnTarget(draggedFiles, targetPath, operation, files, currentPath)
-              }
+              onDropOnFolder={handleDropOnFolderCallback}
               currentPath={currentPath}
               iconSize={iconSize}
               viewMode={viewMode}

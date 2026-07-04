@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, memo } from "react";
 import type { IFile } from "../types/files";
 import "./FileList.css";
 import { AutoSizer } from "react-virtualized-auto-sizer";
@@ -55,7 +55,7 @@ export function clearPendingNativeDrag() {
   _pendingNativeDragPaths = null;
 }
 
-export const FileList: React.FC<FileListProps> = ({
+const FileListComponent: React.FC<FileListProps> = ({
   files,
   selectedFiles,
   onSelect,
@@ -114,6 +114,12 @@ export const FileList: React.FC<FileListProps> = ({
       }
     };
   }, []);
+
+  // Reset failed images when directory changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale failed images on dir change
+    setFailedImages(new Set());
+  }, [currentPath]);
 
   // Scroll to file when scrollToFileName changes and files are loaded
   const prevScrollTargetRef = useRef<string | undefined>(undefined);
@@ -524,3 +530,5 @@ export const FileList: React.FC<FileListProps> = ({
     </div>
   );
 };
+
+export const FileList = memo(FileListComponent);
