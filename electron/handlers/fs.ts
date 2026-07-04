@@ -13,6 +13,9 @@ const execAsync = promisify(exec);
  * `/etc/passwd`. Falls back to `getent passwd` if the file read fails
  * (e.g. in NIS/LDAP environments where not all users are in `/etc/passwd`).
  *
+ * Entries with home directory `/` (root) are excluded to avoid treating
+ * system accounts as "home directory" owners of the entire filesystem.
+ *
  * Memoized at module level — the map does not change during the app
  * lifetime, so we read it once and reuse across all `listDirectoryContents`
  * calls.
@@ -45,7 +48,7 @@ async function getPasswdHomeMap(): Promise<Map<string, { username: string; uid: 
     const username = fields[0];
     const uid = parseInt(fields[2], 10);
     const home = fields[5];
-    if (!home || isNaN(uid)) continue;
+    if (!home || isNaN(uid) || home === '/') continue;
     map.set(home, { username, uid });
   }
 
@@ -466,6 +469,16 @@ export function registerFsHandlers() {
   // Return the user's home directory path.
   ipcMain.handle('fs:get-home', () => {
     return app.getPath('home');
+  });
+
+  // Return the full passwd home directory map for breadcrumbs multi-user home detection.
+  ipcMain.handle('fs:get-home-map', async () => {
+    const passwdMap = await getPasswdHomeMap();
+    const result: Record<string, { username: string; uid: number }> = {};
+    for (const [home, info] of passwdMap) {
+      result[home] = info;
+    }
+    return result;
   });
 
   // Resolve a symlink target. Returns { isSymlink, target?, targetExists? }.

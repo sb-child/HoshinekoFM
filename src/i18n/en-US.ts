@@ -244,6 +244,8 @@ const enUS = {
 
   // ── 面包屑 ──
   'breadcrumbs.root': 'Root',
+  'breadcrumbs.home': (user: string, dir: string) => `${user}'s Home\n${dir}`,
+  'breadcrumbs.go_to_root': 'Go to root',
 
   // ── Tab 标题 ──
   'tab.dashboard': 'Dashboard',

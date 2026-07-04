@@ -234,6 +234,8 @@ const zhHK = {
 
   // ── 麵包屑 ──
   'breadcrumbs.root': '根目錄',
+  'breadcrumbs.home': (user: string, dir: string) => `${user} 的家目錄\n${dir}`,
+  'breadcrumbs.go_to_root': '轉到根目錄',
 
   // ── Tab 標題 ──
   'tab.dashboard': '儀表板',

@@ -53,4 +53,6 @@ No test framework, no test files.
 
 ## 注意事项
 
-一定要写jsdoc！写字段说明！！！
+一定要写jsdoc！写字段说明！！！写i18n！！
+
+先检查会不会破坏别的代码逻辑和功能。会的话跟我说！！

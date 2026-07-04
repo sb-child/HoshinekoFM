@@ -63,6 +63,6 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
-.toast-action-btn .material-symbols-rounded {
+.toast-action-btn md-icon {
   font-size: 16px;
 }

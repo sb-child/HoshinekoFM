@@ -234,6 +234,8 @@ const koKR = {
 
   // ── 面包屑 ──
   'breadcrumbs.root': '루트 디렉터리',
+  'breadcrumbs.home': (user: string, dir: string) => `${user} 홈 디렉터리\n${dir}`,
+  'breadcrumbs.go_to_root': '루트로 이동',
 
   // ── Tab 标题 ──
   'tab.dashboard': '대시보드',

@@ -20,6 +20,10 @@
     --md-list-item-one-line-container-height: 40px;
     --md-list-item-label-text-size: 14px;
     --md-list-item-supporting-text-size: 12px;
+    --md-list-item-top-space: 4px;
+    --md-list-item-bottom-space: 4px;
+    --md-list-item-leading-space: 10px;
+    --md-list-item-trailing-space: 10px;
 }
 
 .context-menu-icon {

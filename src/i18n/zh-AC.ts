@@ -236,6 +236,8 @@ const zhAC = {
 
   // ── 面包屑 ──
   'breadcrumbs.root': '根目录',
+  'breadcrumbs.home': (user: string, dir: string) => `${user} 的家目录\n${dir}`,
+  'breadcrumbs.go_to_root': '转到根目录',
 
   // ── Tab 标题 ──
   'tab.dashboard': '仪表板',

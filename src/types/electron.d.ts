@@ -15,6 +15,7 @@ export interface IElectronAPI {
     listDir: (path: string) => Promise<{ data: IFile[]; actualPath: string; error?: { code: string; originalPath: string } }>;
     getParentPath: (path: string) => Promise<string>;
     getHomePath: () => Promise<string>;
+    getHomeMap: () => Promise<Record<string, { username: string; uid: number }>>;
     getPlaces: () => Promise<Array<{ name: string; path: string; icon: string }>>;
     copyFile: (source: string, dest: string) => Promise<boolean>;
     moveFile: (source: string, dest: string) => Promise<boolean>;

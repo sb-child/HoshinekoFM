@@ -24,6 +24,17 @@ md-icon-button.breadcrumb-root {
     color: var(--md-sys-color-on-surface);
 }
 
+md-suggestion-chip.breadcrumb-chip {
+    --md-suggestion-chip-container-height: 28px;
+    --md-suggestion-chip-with-leading-icon-leading-space: 4px;
+    --md-suggestion-chip-trailing-space: 8px;
+    --md-suggestion-chip-icon-label-space: 2px;
+    padding-left: 6px;
+    border-radius: 14px;
+    flex-shrink: 0;
+    color: var(--md-sys-color-on-surface);
+}
+
 .breadcrumb-separator {
     flex-shrink: 0;
     color: var(--md-sys-color-on-surface-variant);
@@ -35,14 +46,16 @@ md-icon-button.breadcrumb-root {
 }
 
 .breadcrumb-item.drag-over,
-.breadcrumb-root.drag-over {
+.breadcrumb-root.drag-over,
+.breadcrumb-chip.drag-over {
     background-color: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent) !important;
     outline: 2px dashed var(--md-sys-color-primary);
     outline-offset: -2px;
 }
 
 .breadcrumb-item.drag-over *,
-.breadcrumb-root.drag-over * {
+.breadcrumb-root.drag-over *,
+.breadcrumb-chip.drag-over * {
     pointer-events: none;
 }
 

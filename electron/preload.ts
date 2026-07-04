@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electron', {
   listDir: (path: string) => ipcRenderer.invoke('fs:list-dir', path),
   getParentPath: (path: string) => ipcRenderer.invoke('fs:get-parent', path),
   getHomePath: () => ipcRenderer.invoke('fs:get-home'),
+  getHomeMap: () => ipcRenderer.invoke('fs:get-home-map'),
   getPlaces: () => ipcRenderer.invoke('fs:get-places'),
   copyFile: (source: string, dest: string) => ipcRenderer.invoke('fs:copy', source, dest),
   moveFile: (source: string, dest: string) => ipcRenderer.invoke('fs:move', source, dest),

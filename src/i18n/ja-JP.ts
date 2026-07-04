@@ -234,6 +234,8 @@ const jaJP = {
 
   // ── 面包屑 ──
   'breadcrumbs.root': 'ルートディレクトリ',
+  'breadcrumbs.home': (user: string, dir: string) => `${user} のホームディレクトリ\n${dir}`,
+  'breadcrumbs.go_to_root': 'ルートへ移動',
 
   // ── Tab 标题 ──
   'tab.dashboard': 'ダッシュボード',

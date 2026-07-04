@@ -3,6 +3,10 @@ import { toast, type ToastOptions } from "react-toastify";
 import { t } from "../i18n";
 import "./toast.css";
 
+/** Renders a Material Web md-icon element */
+const MdIcon = ({ name }: { name: string }) =>
+  React.createElement("md-icon", null, name);
+
 export function showToast(
   message: string,
   type: "success" | "error" | "info" | "warning" = "info",
@@ -23,14 +27,14 @@ export function showToast(
           }}
           title={t("toast.copy_action")}
         >
-          <span className="material-symbols-rounded">content_copy</span>
+          <MdIcon name="content_copy" />
         </button>
         <button
           className="toast-action-btn"
           onClick={closeToast}
           title={t("toast.close_action")}
         >
-          <span className="material-symbols-rounded">close</span>
+          <MdIcon name="close" />
         </button>
       </div>
     ),
