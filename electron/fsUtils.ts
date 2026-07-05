@@ -135,6 +135,7 @@ export async function detectMimeByMagic(filePath: string): Promise<string | null
 // ── Cached MIME detection (4-tier hybrid) ────────────────────────
 
 const MIME_CACHE_TTL = 30_000; // 30 seconds
+const MIME_CACHE_MAX_SIZE = 5000; // prevent unbounded growth across long sessions
 const mimeCache = new Map<string, { mime: string; ts: number }>();
 
 /** Run `file --mime-type --brief` as an external subprocess. Returns stdout or null. */
@@ -183,10 +184,13 @@ const CONTAINER_TYPES = new Set([
  *   - All other magic/ext conflicts → trust magic bytes, warn to console
  */
 export async function detectMime(filePath: string): Promise<string | null> {
-  // Check cache
+  // Check cache — also evict expired entries on access
   const cached = mimeCache.get(filePath);
   if (cached && Date.now() - cached.ts < MIME_CACHE_TTL) {
     return cached.mime || null;
+  }
+  if (cached) {
+    mimeCache.delete(filePath); // evict stale entry
   }
 
   const ext = path.extname(filePath).toLowerCase();
@@ -243,6 +247,17 @@ export async function detectMime(filePath: string): Promise<string | null> {
 
   // Cache result
   mimeCache.set(filePath, { mime: mime ?? '', ts: Date.now() });
+  // Evict oldest entries if cache exceeds max size
+  if (mimeCache.size > MIME_CACHE_MAX_SIZE) {
+    const entries = [...mimeCache.entries()];
+    const toDelete = entries.length - Math.floor(MIME_CACHE_MAX_SIZE * 0.75);
+    if (toDelete > 0) {
+      entries.sort((a, b) => a[1].ts - b[1].ts);
+      for (let i = 0; i < toDelete; i++) {
+        mimeCache.delete(entries[i][0]);
+      }
+    }
+  }
   return mime ?? null;
 }
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import "./Breadcrumbs.css";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
@@ -140,7 +140,7 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
   const sanitizedPath = currentPath.startsWith("/")
     ? currentPath
     : "/" + currentPath;
-  const parts = sanitizedPath.split("/").filter(Boolean);
+  const parts = useMemo(() => sanitizedPath.split("/").filter(Boolean), [sanitizedPath]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastRef = useRef<HTMLSpanElement>(null);
 

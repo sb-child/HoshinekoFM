@@ -43,12 +43,17 @@ export function useTabs() {
 
   const handleTabPathUpdate = useCallback((id: string, path: string) => {
     const folderName = path.split("/").pop() || path;
-    setTabs((prev) =>
-      prev.map((t) => {
+    setTabs((prev) => {
+      // Skip update if path and title are unchanged to avoid cascading re-renders
+      const existing = prev.find((t) => t.id === id);
+      if (existing && existing.path === path && existing.title === folderName) {
+        return prev;
+      }
+      return prev.map((t) => {
         if (t.id === id) return { ...t, path, title: folderName };
         return t;
-      }),
-    );
+      });
+    });
   }, []);
 
   const handleSidebarNavigate = useCallback(

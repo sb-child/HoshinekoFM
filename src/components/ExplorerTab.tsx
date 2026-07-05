@@ -204,6 +204,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   // Poll mount map to detect device mount/unmount changes
   useEffect(() => {
     if (!isActive || currentPath === 'app://dashboard') return;
+    // Reset on path change so stale mount map from previous dir
+    // doesn't trigger a spurious loadPath on the first poll
+    mountMapVersionRef.current = null;
+    let lastMountMapLoadPath = 0; // rate limit: 30s cooldown
     let cancelled = false;
     let pollTimer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -214,12 +218,18 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         // Filter to only block-device-backed mounts — ignoring virtual
         // filesystems (proc, sysfs, cgroup, tmpfs, snap squashfs overlays)
         // whose entries churn frequently and would trigger unnecessary reloads
-        const relevantEntries = Object.entries(map).filter(([_, info]) =>
+        const relevantEntries = Object.entries(map).filter(([, info]) =>
           info.source.startsWith('/dev/')
         );
+        // Sort by mount point for stable JSON comparison across polls
+        relevantEntries.sort(([a], [b]) => a.localeCompare(b));
         const json = JSON.stringify(Object.fromEntries(relevantEntries));
         if (mountMapVersionRef.current !== null && mountMapVersionRef.current !== json) {
-          loadPath(currentPathRef.current);
+          const now = Date.now();
+          if (now - lastMountMapLoadPath >= 30000) {
+            lastMountMapLoadPath = now;
+            loadPath(currentPathRef.current);
+          }
         }
         mountMapVersionRef.current = json;
       } catch {
@@ -743,7 +753,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               onDropExternalFiles={handleExternalDropOnBreadcrumb}
             />
           </div>
-          {/* Sort Controls */}
           <div style={{ display: 'flex', gap: '4px' }}>
             <IconButton
               variant={groupingEnabled ? 'filled' : 'standard'}
