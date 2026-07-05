@@ -10,6 +10,7 @@ import { startWatching, stopWatching, stopAllWatching } from './fsWatcher';
 import { registerFsHandlers } from './handlers/fs';
 import { registerSystemHandlers, setupUdisks2Monitor } from './handlers/system';
 import { registerWindowHandlers } from './handlers/window';
+import { initJobHandlers } from './jobs';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -81,6 +82,7 @@ ipcMain.handle('fs:unwatch-dir', (_event, dir: string) => {
 registerFsHandlers();
 registerSystemHandlers(getMainWindow);
 registerWindowHandlers(getMainWindow);
+initJobHandlers();
 
 app.whenReady().then(() => {
   protocol.handle('media', async (request) => {

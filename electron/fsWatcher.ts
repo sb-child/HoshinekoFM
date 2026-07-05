@@ -35,6 +35,7 @@ export function startWatching(
 
     watcher.on('error', (err: Error) => {
       console.warn(`[fsWatcher] error on "${normalized}":`, err.message);
+      onChange(normalized);
       stopWatching(normalized);
     });
 

@@ -1,4 +1,5 @@
 import { showToast } from './toast';
+import { t } from '../i18n';
 
 export interface ConflictEntry {
   entry: { path: string; name: string };
@@ -77,7 +78,7 @@ export async function prepareDestParent(fullDestPath: string): Promise<boolean> 
     await window.electron.createDirectory(parent);
     return true;
   } catch {
-    showToast(`创建目标目录失败: ${parent}`, 'error');
+    showToast(t('error.create_parent_failed', parent), 'error');
     return false;
   }
 }

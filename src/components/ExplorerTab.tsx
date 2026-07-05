@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { showToast } from '../utils/toast';
+import { showToast, showProgressToast, updateProgress, finishToast, dismissToast, shortPath } from '../utils/toast';
 import { useClipboard } from '../contexts/ClipboardContext';
 import { StatusBar } from './StatusBar';
 import { FileList } from './FileList';
@@ -63,7 +63,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
   const suppressWatchRef = useRef(false);
   const loadPathTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingReloadRef = useRef(false);
   const mountMapVersionRef = useRef<string | null>(null);
+  const loadingPathRef = useRef<string | null>(null);
+  const lastNavRef = useRef<{ path: string; time: number } | null>(null);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
 
   // Track recents
@@ -101,18 +104,28 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const handleSearch = async (query: string) => {
     setSearchActive(true);
     setSearchQuery(query);
+    let toastId: ReturnType<typeof showProgressToast> | null = null;
+    const timer = setTimeout(() => {
+      toastId = showProgressToast(t('toast.searching'));
+    }, 500);
+    const clearToast = () => {
+      clearTimeout(timer);
+      if (toastId) dismissToast(toastId);
+    };
     try {
       if (window.electron && window.electron.search) {
         const results = await window.electron.search(currentPath, query);
         setFiles(results);
       }
+      clearToast();
     } catch (e) {
+      clearToast();
       console.error(e);
       showToast(t('error.search_failed', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
   };
 
-  const loadPath = useCallback(async (path: string) => {
+  const loadPath = useCallback(async (path: string, showDelayedToast = false) => {
     setSearchActive(false); // Reset search
     setSearchQuery('');
 
@@ -122,6 +135,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       return;
     }
 
+    loadingPathRef.current = path;
+
     suppressWatchRef.current = true;
     if (loadPathTimeoutRef.current !== null) {
       clearTimeout(loadPathTimeoutRef.current);
@@ -129,9 +144,29 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     loadPathTimeoutRef.current = setTimeout(() => {
       loadPathTimeoutRef.current = null;
       suppressWatchRef.current = false;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        loadPath(currentPathRef.current);
+      }
     }, 1000);
+
+    let toastId: ReturnType<typeof showProgressToast> | null = null;
+    let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearToast() {
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+      if (toastId) { dismissToast(toastId); toastId = null; }
+    }
+
+    if (showDelayedToast) {
+      toastTimer = setTimeout(() => {
+        toastId = showProgressToast(t('toast.loading_dir', shortPath(path)));
+      }, 500);
+    }
+
     try {
       const { data, actualPath, error } = await FileSystemService.listDir(path);
+      clearToast();
       setFiles(data);
       setCurrentPath(actualPath);
       onPathChange(tabId, actualPath);
@@ -147,20 +182,21 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
               ? t('error.not_found')
               : t('error.cannot_access');
           showToast(
-            `"${error.originalPath}" ${reason}，已切换到 "${actualPath}"`,
+            t('error.path_fallback', error.originalPath, reason, actualPath),
             'warning',
           );
         }
       }
     } catch (e) {
+      clearToast();
       console.error('Failed to load path', path, e);
       showToast(t('error.cannot_open_dir', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
   }, [onPathChange, tabId, addToRecents]);
 
   useEffect(() => {
-    if (initialPath) {
-      loadPath(initialPath); // eslint-disable-line react-hooks/set-state-in-effect
+    if (initialPath && loadingPathRef.current !== initialPath) {
+      loadPath(initialPath, true);
     }
   }, [initialPath, loadPath]);
 
@@ -188,7 +224,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     window.electron?.watchDirectory?.(currentPath);
     const cleanup = window.electron?.onDirChanged?.((dir: string) => {
-      if (suppressWatchRef.current) return;
+      if (suppressWatchRef.current) {
+        pendingReloadRef.current = true;
+        return;
+      }
       if (dir === currentPathRef.current) {
         loadPath(currentPathRef.current);
       }
@@ -257,23 +296,26 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
   const handleNavigate = useCallback(async (file: IFile) => {
     if (file.isDirectory) {
-      loadPath(file.path);
+      const now = Date.now();
+      const last = lastNavRef.current;
+      if (last?.path === file.path && now - last.time < 300) return;
+      lastNavRef.current = { path: file.path, time: now };
+      loadPath(file.path, true);
     } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
       const devPath = file.devicePath || file.path;
       if (file.mountedAt) {
-        loadPath(file.mountedAt);
+        loadPath(file.mountedAt, true);
       } else if (file.canAutoMount && onMountDevice) {
         const result = await onMountDevice(devPath);
         if (result && 'success' in result && result.success && result.mountpoint) {
-          loadPath(result.mountpoint);
-        } else if (result && 'error' in result) {
-          showToast(`${t('device.mount_failed')}: ${result.error || ''}`, 'error');
+          loadPath(result.mountpoint, true);
         }
+        // error toast handled by useDeviceActions
       } else {
-        showToast(t('device.needs_auth') || 'This device requires authentication to mount', 'warning');
+        showToast(t('device.needs_auth'), 'warning');
       }
     } else if (file.mime === 'inode/blockdevice') {
-      showToast(t('device.cannot_mount') || 'Cannot mount this device type', 'warning');
+      showToast(t('device.cannot_mount'), 'warning');
     } else {
       openFile(file.path);
     }
@@ -288,7 +330,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const handleUp = async () => {
     if (window.electron && currentPath) {
       const parent = await window.electron.getParentPath(currentPath);
-      loadPath(parent);
+      loadPath(parent, true);
     }
   };
 
@@ -313,8 +355,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       const conflictNames = new Set(conflictList.map((c) => c.entry.name));
       const usedNames = new Set(existingNames);
 
-      let success = 0;
-      let fail = 0;
+      const toProcess: { src: string; dest: string }[] = [];
 
       for (const entry of entries) {
         let destName = entry.name;
@@ -334,28 +375,47 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         const destPath = (targetPath === "/" ? "" : targetPath) + '/' + destName;
         if (destName.includes('/') || destName.includes('..')) {
           const ok = await prepareDestParent(destPath);
-          if (!ok) { fail++; continue; }
+          if (!ok) continue;
         }
+        toProcess.push({ src: entry.path, dest: destPath });
+      }
 
-        try {
-          if (operation === 'copy') {
-            await window.electron.copyFile(entry.path, destPath);
-          } else {
-            await window.electron.moveFile(entry.path, destPath);
+      if (toProcess.length === 0) return;
+
+      const jobId = await window.electron.startJob({
+        type: operation,
+        items: toProcess,
+      });
+
+      const toastId = showProgressToast(t('toast.pasting_items'), {
+        total: toProcess.length,
+        onCancel: () => { window.electron.cancelJob(jobId); },
+      });
+
+      const unsubProgress = window.electron.onJobProgress(jobId, (data) => {
+        updateProgress(toastId, data.current);
+      });
+
+      window.electron.onJobComplete(jobId, (data) => {
+        unsubProgress();
+
+        if (data.cancelled) {
+          finishToast(toastId, t('toast.operation_cancelled'), 'warning');
+        } else if (data.success > 0) {
+          finishToast(
+            toastId,
+            operation === 'copy' ? t('toast.copied_items', data.success) : t('toast.moved_items', data.success),
+            'success',
+          );
+          if (data.fail > 0) {
+            showToast(t('toast.failed_items', data.fail), 'error');
           }
-          success++;
-        } catch {
-          fail++;
+        } else {
+          finishToast(toastId, t('toast.failed_items', data.fail), 'error');
         }
-      }
 
-      if (success > 0) {
-        showToast(operation === 'copy' ? t('toast.copied_items', success) : t('toast.moved_items', success), 'success');
-      }
-      if (fail > 0) {
-        showToast(t('toast.failed_items', fail), 'error');
-      }
-      loadPath(currentPath);
+        loadPath(currentPath);
+      });
     },
     [onConflictDialog, loadPath, currentPath],
   );
@@ -747,7 +807,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <Omnibar
               currentPath={currentPath}
-              onNavigate={loadPath}
+              onNavigate={(p: string) => loadPath(p, true)}
               onSearch={handleSearch}
               onDropFiles={handleDropOnBreadcrumb}
               onDropExternalFiles={handleExternalDropOnBreadcrumb}
@@ -788,7 +848,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
       {currentPath === 'app://dashboard' ? (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
-          <Dashboard onNavigate={loadPath} />
+          <Dashboard onNavigate={(p: string) => loadPath(p, true)} />
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
@@ -796,7 +856,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Icon name="search" />
               <span>{t('search.results', files.length, searchQuery)}</span>
-              <IconButton onClick={() => loadPath(currentPath)} variant="standard" title={t('search.clear')}>
+              <IconButton onClick={() => loadPath(currentPath, true)} variant="standard" title={t('search.clear')}>
                 <Icon name="close" />
               </IconButton>
             </div>

@@ -144,6 +144,7 @@ const zhCN = {
   'error.unsupported_format': '不支持的压缩格式',
   'error.file_open_failed': (name: string, err: string) => `打开 ${name} 失败: ${err}`,
   'error.create_parent_failed': (parent: string) => `创建目标目录失败: ${parent}`,
+  'error.path_fallback': (path: string, reason: string, fallback: string) => `无法访问 "${path}"（${reason}），已切换到 "${fallback}"`,
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 存在重名文件`,
@@ -369,6 +370,15 @@ const zhCN = {
 
   // ── Toast 操作 ──
   'toast.copy_action': '复制',
+  'toast.loading_dir': (path: string) => `正在加载 ${path}…`,
+  'toast.opening_file': '正在打开文件…',
+  'toast.searching': '正在搜索…',
+  'toast.cancel_action': '取消',
+  'toast.deleting_items': '正在删除…',
+  'toast.pasting_items': '正在粘贴…',
+  'toast.importing_items': '正在导入…',
+  'toast.progress_count': (current: number, total: number) => `${current} / ${total}`,
+  'toast.operation_cancelled': '操作已取消',
   'toast.close_action': '关闭',
 
   // ── 设备操作 ──
@@ -376,17 +386,19 @@ const zhCN = {
   'device.unmount': '卸载',
   'device.eject': '弹出',
   'device.power_off': '关闭硬盘',
-  'device.mounting': '正在挂载...',
-  'device.unmounting': '正在卸载...',
-  'device.mounted': '已挂载',
-  'device.unmounted': '未挂载',
-  'device.mount_failed': '挂载失败',
-  'device.unmount_failed': '卸载失败',
-  'device.eject_failed': '弹出失败',
+  'device.mounting': (path: string) => `正在挂载 ${path}…`,
+  'device.unmounting': (path: string) => `正在卸载 ${path}…`,
+  'device.mounted': (device: string, mountpoint: string) => `已挂载 ${device} → ${mountpoint}`,
+  'device.unmounted': (device: string) => `已卸载 ${device}`,
+  'device.mount_failed': (device: string, error?: string) => `挂载 ${device} 失败` + (error ? `: ${error}` : ''),
+  'device.unmount_failed': (device: string, error?: string) => `卸载 ${device} 失败` + (error ? `: ${error}` : ''),
+  'device.eject_failed': (device: string, error?: string) => `弹出 ${device} 失败` + (error ? `: ${error}` : ''),
   'device.already_mounted': '设备已挂载',
   'device.go_to_source': '转到源设备',
   'device.type_usb': 'USB 设备',
   'device.type_removable': '可移动设备',
+  'device.needs_auth': '设备需要认证才能挂载',
+  'device.cannot_mount': '无法挂载此设备类型',
   'device.type_disk': '磁盘',
 
   // ── 软链接操作 ──

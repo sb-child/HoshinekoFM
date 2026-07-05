@@ -260,7 +260,7 @@ function ListRowItem({
         onRenameInputChange={data.onRenameInputChange}
         onRenameSubmit={data.onRenameSubmit}
         onRenameCancel={data.onRenameCancel}
-        style={isRenaming ? { flex: 1, minWidth: 0 } : undefined}
+        style={{ flex: 1, minWidth: 0 }}
         marqueeTextStyle={{ paddingRight: sp.paddingH }}
         marqueeEnabled={data.marqueeEnabled}
       />

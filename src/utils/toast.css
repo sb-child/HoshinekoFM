@@ -1,21 +1,21 @@
+/* ── Base toast sizing ──────────────────────────── */
 .Toastify__toast {
   padding: 8px 10px 8px 14px;
   min-height: unset;
 }
-
 .Toastify__toast-body {
   padding: 0;
   margin: 0;
   align-items: flex-start;
   min-width: 0;
 }
-
 .Toastify__toast-body > div:last-child {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
 }
 
+/* ── Message text ──────────────────────────────── */
 .toast-message {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -26,16 +26,40 @@
   word-break: break-all;
 }
 
+/* ── Icon sizing ───────────────────────────────── */
 .Toastify__toast-icon {
   width: 18px;
   margin-inline-end: 8px;
   flex-shrink: 0;
 }
 
-.Toastify__progress-bar {
-  height: 3px;
+/* ── Material Design 3 color tokens ────────────── */
+.Toastify__toast--success {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.Toastify__toast--error {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.Toastify__toast--warning {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+.Toastify__toast--info,
+.Toastify__toast--default {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
 }
 
+/* ── Progress bar (auto-close countdown) ──────── */
+.Toastify__progress-bar {
+  height: 3px;
+  background: currentColor;
+  opacity: 0.3;
+}
+
+/* ── Action buttons (copy / close / cancel) ────── */
 .toast-actions {
   position: absolute;
   top: 4px;
@@ -44,7 +68,6 @@
   gap: 2px;
   z-index: 1;
 }
-
 .toast-action-btn {
   background: none;
   border: none;
@@ -56,13 +79,71 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
-
 .toast-action-btn:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.15);
 }
-
 .toast-action-btn md-icon {
   font-size: 16px;
+}
+
+/* ── Progress toast layout ─────────────────────── */
+.toast-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.toast-progress-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.toast-progress-header .toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.toast-progress-header .toast-action-btn {
+  position: static;
+  flex-shrink: 0;
+}
+
+/* ── Custom progress bar ───────────────────────── */
+.toast-progress-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.toast-progress-track {
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+.toast-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+.toast-progress-count {
+  font-size: 11px;
+  opacity: 0.7;
+  line-height: 1.2;
+}
+
+/* ── Indeterminate md-linear-progress sizing ───── */
+.toast-progress md-linear-progress {
+  width: 100%;
+  --md-linear-progress-track-height: 3px;
+  --md-linear-progress-active-indicator-height: 3px;
+}
+
+/* Hide react-toastify's default spinner when isLoading */
+.Toastify__toast--loading .Toastify__spinner {
+  display: none;
 }

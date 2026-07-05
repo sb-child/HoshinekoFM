@@ -510,19 +510,6 @@ export function registerFsHandlers() {
     return true;
   });
 
-  // Move multiple files to the system trash. Returns list of paths that failed.
-  ipcMain.handle('fs:trash-batch', async (_, filePaths: string[]) => {
-    const errors: string[] = [];
-    for (const filePath of filePaths) {
-      try {
-        await shell.trashItem(filePath);
-      } catch {
-        errors.push(filePath);
-      }
-    }
-    return errors;
-  });
-
   // Rename oldPath to newPath.
   ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string) => {
     await fs.rename(oldPath, newPath);

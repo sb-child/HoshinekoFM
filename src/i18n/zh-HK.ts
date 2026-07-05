@@ -144,6 +144,7 @@ const zhHK = {
   'error.unsupported_format': '不支援的壓縮格式',
   'error.file_open_failed': (name: string, err: string) => `開啟 ${name} 失敗：${err}`,
   'error.create_parent_failed': (parent: string) => `建立目標目錄失敗：${parent}`,
+  'error.path_fallback': (path: string, reason: string, fallback: string) => `無法存取 "${path}"（${reason}），已切換至 "${fallback}"`,
 
   // ── fileOperations 錯誤格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 存在同名檔案`,
@@ -369,6 +370,15 @@ const zhHK = {
 
   // ── Toast 操作 ──
   'toast.copy_action': '複製',
+  'toast.loading_dir': (path: string) => `正在載入 ${path}…`,
+  'toast.opening_file': '正在開啟檔案…',
+  'toast.searching': '正在搜尋…',
+  'toast.cancel_action': '取消',
+  'toast.deleting_items': '正在刪除…',
+  'toast.pasting_items': '正在貼上…',
+  'toast.importing_items': '正在匯入…',
+  'toast.progress_count': (current: number, total: number) => `${current} / ${total}`,
+  'toast.operation_cancelled': '操作已取消',
   'toast.close_action': '關閉',
 
   // ── 裝置操作 ──
@@ -376,17 +386,19 @@ const zhHK = {
   'device.unmount': '卸載',
   'device.eject': '退出',
   'device.power_off': '關閉磁碟',
-  'device.mounting': '掛載中...',
-  'device.unmounting': '卸載中...',
-  'device.mounted': '已掛載',
-  'device.unmounted': '已卸載',
-  'device.mount_failed': '掛載失敗',
-  'device.unmount_failed': '卸載失敗',
-  'device.eject_failed': '退出失敗',
+  'device.mounting': (path: string) => `正在掛載 ${path}…`,
+  'device.unmounting': (path: string) => `正在卸載 ${path}…`,
+  'device.mounted': (device: string, mountpoint: string) => `已掛載 ${device} → ${mountpoint}`,
+  'device.unmounted': (device: string) => `已卸載 ${device}`,
+  'device.mount_failed': (device: string, error?: string) => `掛載 ${device} 失敗` + (error ? `: ${error}` : ''),
+  'device.unmount_failed': (device: string, error?: string) => `卸載 ${device} 失敗` + (error ? `: ${error}` : ''),
+  'device.eject_failed': (device: string, error?: string) => `退出 ${device} 失敗` + (error ? `: ${error}` : ''),
   'device.already_mounted': '裝置已掛載',
   'device.go_to_source': '前往來源裝置',
   'device.type_usb': 'USB 裝置',
   'device.type_removable': '卸除式裝置',
+  'device.needs_auth': '裝置需要驗證才能掛載',
+  'device.cannot_mount': '無法掛載此裝置類型',
   'device.type_disk': '磁碟',
 
   // ── 符號連結操作 ──

@@ -1,5 +1,11 @@
 import { t } from '../i18n';
-import { showToast } from './toast';
+import {
+  showToast,
+  showProgressToast,
+  updateProgress,
+  finishToast,
+  dismissToast,
+} from './toast';
 import {
   checkConflicts,
   generateSafeName,
@@ -152,16 +158,42 @@ export async function trashFiles(
   paths: string[],
   onSuccess?: () => void,
 ): Promise<void> {
-  const errors = await window.electron.trashBatch(paths);
-  const success = paths.length - errors.length;
-  if (success > 0) {
-    showToast(t('toast.deleted_items', success), 'success');
-    onSuccess?.();
-  }
-  if (errors.length > 0) {
-    showToast(t('toast.failed_items', errors.length), 'error');
-    showToast(t('toast.delete_fail_permission'), 'error');
-  }
+  if (paths.length === 0) return;
+  if (paths.length === 1) return trashFile(paths[0], onSuccess);
+
+  const items = paths.map((p) => ({ path: p }));
+  const jobId = await window.electron.startJob({ type: 'trash', items });
+
+  const toastId = showProgressToast(t('toast.deleting_items'), {
+    total: items.length,
+    onCancel: () => { window.electron.cancelJob(jobId); },
+  });
+
+  const unsubProgress = window.electron.onJobProgress(jobId, (data) => {
+    updateProgress(toastId, data.current);
+  });
+
+  window.electron.onJobComplete(jobId, (data) => {
+    unsubProgress();
+
+    if (data.cancelled) {
+      finishToast(toastId, t('toast.operation_cancelled'), 'warning');
+      return;
+    }
+
+    if (data.success > 0) onSuccess?.();
+
+    if (data.success > 0 && data.fail === 0) {
+      finishToast(toastId, t('toast.deleted_items', data.success), 'success');
+    } else if (data.success > 0 && data.fail > 0) {
+      finishToast(toastId, t('toast.deleted_items', data.success), 'warning');
+      showToast(t('toast.failed_items', data.fail), 'error');
+      showToast(t('toast.delete_fail_permission'), 'warning');
+    } else {
+      finishToast(toastId, t('toast.failed_items', data.fail), 'error');
+      showToast(t('toast.delete_fail_permission'), 'warning');
+    }
+  });
 }
 
 export async function copyFile(
@@ -275,35 +307,57 @@ export async function pasteFiles(
     }
   }
 
-  let success = 0;
-  let fail = 0;
-  for (const { entry, destName } of toProcess) {
-    const destPath = baseDir + destName;
+  if (toProcess.length === 0) return;
+
+  // Ensure parent directories exist for nested destination names
+  for (const { destName } of toProcess) {
     if (destName.includes('/') || destName.includes('..')) {
-      const ok = await prepareDestParent(destPath);
-      if (!ok) { fail++; continue; }
-    }
-    try {
-      if (operation === 'copy') {
-        await window.electron.copyFile(entry.path, destPath);
-      } else {
-        await window.electron.moveFile(entry.path, destPath);
-      }
-      success++;
-    } catch (e) {
-      fail++;
-      console.error(`${operation} ${entry.name} 失败:`, e);
+      const ok = await prepareDestParent(baseDir + destName);
+      if (!ok) return;
     }
   }
 
-  if (success > 0) {
-    showToast(t('toast.pasted_items', success), 'success');
-    if (operation === 'cut') clearClipboard?.();
-    onSuccess?.();
-  }
-  if (fail > 0) {
-    showToast(t('toast.failed_items', fail), 'error');
-  }
+  // Build job items and start batch operation
+  const jobItems = toProcess.map(({ entry, destName }) => ({
+    src: entry.path,
+    dest: baseDir + destName,
+  }));
+
+  const jobId = await window.electron.startJob({
+    type: operation === 'copy' ? 'copy' : 'move',
+    items: jobItems,
+  });
+
+  const toastId = showProgressToast(t('toast.pasting_items'), {
+    total: jobItems.length,
+    onCancel: () => { window.electron.cancelJob(jobId); },
+  });
+
+  const unsubProgress = window.electron.onJobProgress(jobId, (data) => {
+    updateProgress(toastId, data.current);
+  });
+
+  window.electron.onJobComplete(jobId, (data) => {
+    unsubProgress();
+
+    if (data.cancelled) {
+      finishToast(toastId, t('toast.operation_cancelled'), 'warning');
+      return;
+    }
+
+    if (data.success > 0) {
+      if (data.fail === 0) {
+        finishToast(toastId, t('toast.pasted_items', data.success), 'success');
+      } else {
+        finishToast(toastId, t('toast.pasted_items', data.success), 'warning');
+        showToast(t('toast.failed_items', data.fail), 'error');
+      }
+      if (operation === 'cut') clearClipboard?.();
+      onSuccess?.();
+    } else if (data.fail > 0) {
+      finishToast(toastId, t('toast.failed_items', data.fail), 'error');
+    }
+  });
 }
 
 export async function openFile(
@@ -326,56 +380,70 @@ export async function importFiles(
 ): Promise<void> {
   const base = destDir.endsWith('/') ? destDir : destDir + '/';
 
-  const conflictEntries: { entry: { path: string; name: string; isDir: boolean }; destPath: string }[] = [];
   const destPaths = fileEntries.map((e) => {
     const name = fileName(e.path);
     return { name, destPath: base + name };
   });
   const existsMap = await window.electron.existsBatch(destPaths.map((d) => d.destPath));
 
-  for (let i = 0; i < fileEntries.length; i++) {
-    if (existsMap[destPaths[i].destPath]) {
-      conflictEntries.push({ entry: { path: fileEntries[i].path, name: destPaths[i].name, isDir: false }, destPath: destPaths[i].destPath });
-    }
-  }
-
-  const conflictNames = new Set(conflictEntries.map((c) => c.entry.name));
-
-  let success = 0;
+  const conflictNames = new Set<string>();
+  const jobItems: { src: string; dest: string }[] = [];
   let skip = 0;
-  let fail = 0;
 
   for (let i = 0; i < fileEntries.length; i++) {
-    const entry = fileEntries[i];
-    const name = destPaths[i].name;
-    if (conflictNames.has(name)) {
+    const dp = destPaths[i];
+    if (existsMap[dp.destPath]) {
+      conflictNames.add(dp.name);
       skip++;
       continue;
     }
-    try {
-      await window.electron.copyFile(entry.path, destPaths[i].destPath);
-      success++;
-    } catch (e) {
-      console.error(`导入 ${name} 失败:`, e);
-      showToast(formatFileOpError(t('operation.import_op'), name, e), 'error');
-      fail++;
-    }
+    jobItems.push({ src: fileEntries[i].path, dest: dp.destPath });
   }
 
-  if (success > 0) {
-    const count = success;
-    if (skip > 0) {
-      showToast(t('toast.imported_skipped', count, skip), 'success');
-    } else {
-      showToast(t('toast.imported_files', count), 'success');
+  if (jobItems.length === 0) {
+    if (skip > 0) showToast(t('toast.import_all_skipped', skip), 'info');
+    return;
+  }
+
+  const jobId = await window.electron.startJob({ type: 'copy', items: jobItems });
+
+  const toastId = showProgressToast(t('toast.importing_items'), {
+    total: jobItems.length,
+    onCancel: () => { window.electron.cancelJob(jobId); },
+  });
+
+  const unsubProgress = window.electron.onJobProgress(jobId, (data) => {
+    updateProgress(toastId, data.current);
+  });
+
+  window.electron.onJobComplete(jobId, (data) => {
+    unsubProgress();
+
+    if (data.cancelled) {
+      finishToast(toastId, t('toast.operation_cancelled'), 'warning');
+      return;
     }
-    onSuccess?.();
-  } else if (skip > 0) {
-    showToast(t('toast.import_all_skipped', skip), 'info');
-  }
-  if (fail > 0) {
-    showToast(t('toast.failed_items', fail), 'error');
-  }
+
+    const success = data.success;
+    const fail = data.fail;
+
+    if (success > 0) {
+      if (skip > 0) {
+        finishToast(toastId, t('toast.imported_skipped', success, skip), 'success');
+      } else {
+        finishToast(toastId, t('toast.imported_files', success), 'success');
+      }
+      onSuccess?.();
+    } else if (skip > 0) {
+      finishToast(toastId, t('toast.import_all_skipped', skip), 'info');
+    } else {
+      dismissToast(toastId);
+    }
+
+    if (fail > 0) {
+      showToast(t('toast.failed_items', fail), 'error');
+    }
+  });
 }
 
 export function copyToClipboard(

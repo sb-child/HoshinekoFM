@@ -144,6 +144,7 @@ const koKR = {
   'error.unsupported_format': '지원되지 않는 압축 형식입니다',
   'error.file_open_failed': (name: string, err: string) => `${name} 열기 실패: ${err}`,
   'error.create_parent_failed': (parent: string) => `대상 디렉터리 생성 실패: ${parent}`,
+  'error.path_fallback': (path: string, reason: string, fallback: string) => `"${path}"에 접근할 수 없습니다 (${reason}), "${fallback}"으로 전환되었습니다`,
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 동일한 이름의 파일이 존재합니다`,
@@ -369,6 +370,15 @@ const koKR = {
 
   // ── Toast 操作 ──
   'toast.copy_action': '복사',
+  'toast.loading_dir': (path: string) => `${path} 로딩 중…`,
+  'toast.opening_file': '파일 열기 중…',
+  'toast.searching': '검색 중…',
+  'toast.cancel_action': '취소',
+  'toast.deleting_items': '삭제 중…',
+  'toast.pasting_items': '붙여넣기 중…',
+  'toast.importing_items': '가져오기 중…',
+  'toast.progress_count': (current: number, total: number) => `${current} / ${total}`,
+  'toast.operation_cancelled': '작업이 취소되었습니다',
   'toast.close_action': '닫기',
 
   // ── 设备操作 ──
@@ -376,17 +386,19 @@ const koKR = {
   'device.unmount': '마운트 해제',
   'device.eject': '꺼내기',
   'device.power_off': '디스크 끄기',
-  'device.mounting': '마운트 중...',
-  'device.unmounting': '마운트 해제 중...',
-  'device.mounted': '마운트됨',
-  'device.unmounted': '마운트 해제됨',
-  'device.mount_failed': '마운트 실패',
-  'device.unmount_failed': '마운트 해제 실패',
-  'device.eject_failed': '꺼내기 실패',
+  'device.mounting': (path: string) => `${path} 마운트 중…`,
+  'device.unmounting': (path: string) => `${path} 마운트 해제 중…`,
+  'device.mounted': (device: string, mountpoint: string) => `${device} → ${mountpoint}에 마운트되었습니다`,
+  'device.unmounted': (device: string) => `${device} 마운트 해제됨`,
+  'device.mount_failed': (device: string, error?: string) => `${device} 마운트 실패` + (error ? `: ${error}` : ''),
+  'device.unmount_failed': (device: string, error?: string) => `${device} 마운트 해제 실패` + (error ? `: ${error}` : ''),
+  'device.eject_failed': (device: string, error?: string) => `${device} 꺨내기 실패` + (error ? `: ${error}` : ''),
   'device.already_mounted': '장치가 이미 마운트되었습니다',
   'device.go_to_source': '원본 장치로 이동',
   'device.type_usb': 'USB 장치',
   'device.type_removable': '이동식 장치',
+  'device.needs_auth': '인증이 필요한 장치입니다',
+  'device.cannot_mount': '이 장치 유형은 마운트할 수 없습니다',
   'device.type_disk': '디스크',
 
   // ── 软链接操作 ──

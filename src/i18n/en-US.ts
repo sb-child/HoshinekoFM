@@ -154,6 +154,7 @@ const enUS = {
   'error.unsupported_format': 'Unsupported archive format',
   'error.file_open_failed': (name: string, err: string) => `Failed to open ${name}: ${err}`,
   'error.create_parent_failed': (parent: string) => `Failed to create destination directory: ${parent}`,
+  'error.path_fallback': (path: string, reason: string, fallback: string) => `Cannot access "${path}" (${reason}), switched to "${fallback}"`,
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: A file with the same name already exists`,
@@ -378,6 +379,15 @@ const enUS = {
 
   // ── Toast 操作 ──
   'toast.copy_action': 'Copy',
+  'toast.loading_dir': (path: string) => `Loading ${path}...`,
+  'toast.opening_file': 'Opening file...',
+  'toast.searching': 'Searching...',
+  'toast.cancel_action': 'Cancel',
+  'toast.deleting_items': 'Deleting items...',
+  'toast.pasting_items': 'Pasting items...',
+  'toast.importing_items': 'Importing items...',
+  'toast.progress_count': (current: number, total: number) => `${current} / ${total}`,
+  'toast.operation_cancelled': 'Operation cancelled',
   'toast.close_action': 'Close',
 
   // ── 设备操作 ──
@@ -385,17 +395,19 @@ const enUS = {
   'device.unmount': 'Unmount',
   'device.eject': 'Eject',
   'device.power_off': 'Power Off Drive',
-  'device.mounting': 'Mounting...',
-  'device.unmounting': 'Unmounting...',
-  'device.mounted': 'Mounted',
-  'device.unmounted': 'Not Mounted',
-  'device.mount_failed': 'Mount failed',
-  'device.unmount_failed': 'Unmount failed',
-  'device.eject_failed': 'Eject failed',
+  'device.mounting': (path: string) => `Mounting ${path}...`,
+  'device.unmounting': (path: string) => `Unmounting ${path}...`,
+  'device.mounted': (device: string, mountpoint: string) => `Mounted ${device} → ${mountpoint}`,
+  'device.unmounted': (device: string) => `Unmounted ${device}`,
+  'device.mount_failed': (device: string, error?: string) => `Mount ${device} failed` + (error ? `: ${error}` : ''),
+  'device.unmount_failed': (device: string, error?: string) => `Unmount ${device} failed` + (error ? `: ${error}` : ''),
+  'device.eject_failed': (device: string, error?: string) => `Eject ${device} failed` + (error ? `: ${error}` : ''),
   'device.already_mounted': 'Device is already mounted',
   'device.go_to_source': 'Go to Source Device',
   'device.type_usb': 'USB Device',
   'device.type_removable': 'Removable Device',
+  'device.needs_auth': 'Device needs authentication to mount',
+  'device.cannot_mount': 'Cannot mount this device type',
   'device.type_disk': 'Disk',
 
   // ── 软链接操作 ──

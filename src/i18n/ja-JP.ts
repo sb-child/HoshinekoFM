@@ -144,6 +144,7 @@ const jaJP = {
   'error.unsupported_format': 'サポートされていない圧縮フォーマットです',
   'error.file_open_failed': (name: string, err: string) => `${name} を開けませんでした: ${err}`,
   'error.create_parent_failed': (parent: string) => `ターゲットディレクトリの作成に失敗しました: ${parent}`,
+  'error.path_fallback': (path: string, reason: string, fallback: string) => `"${path}" にアクセスできません（${reason}）、"${fallback}" に切り替えました`,
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 同名のファイルが存在します`,
@@ -369,6 +370,15 @@ const jaJP = {
 
   // ── Toast 操作 ──
   'toast.copy_action': 'コピー',
+  'toast.loading_dir': (path: string) => `${path} を読み込み中…`,
+  'toast.opening_file': 'ファイルを開いています…',
+  'toast.searching': '検索中…',
+  'toast.cancel_action': 'キャンセル',
+  'toast.deleting_items': '削除中…',
+  'toast.pasting_items': '貼り付け中…',
+  'toast.importing_items': 'インポート中…',
+  'toast.progress_count': (current: number, total: number) => `${current} / ${total}`,
+  'toast.operation_cancelled': '操作がキャンセルされました',
   'toast.close_action': '閉じる',
 
   // ── 设备操作 ──
@@ -376,17 +386,19 @@ const jaJP = {
   'device.unmount': 'アンマウント',
   'device.eject': '取り出し',
   'device.power_off': 'ディスクの電源を切る',
-  'device.mounting': 'マウント中...',
-  'device.unmounting': 'アンマウント中...',
-  'device.mounted': 'マウント済み',
-  'device.unmounted': 'アンマウント済み',
-  'device.mount_failed': 'マウントに失敗しました',
-  'device.unmount_failed': 'アンマウントに失敗しました',
-  'device.eject_failed': '取り出しに失敗しました',
+  'device.mounting': (path: string) => `${path} をマウント中…`,
+  'device.unmounting': (path: string) => `${path} をアンマウント中…`,
+  'device.mounted': (device: string, mountpoint: string) => `${device} → ${mountpoint} にマウントしました`,
+  'device.unmounted': (device: string) => `${device} をアンマウントしました`,
+  'device.mount_failed': (device: string, error?: string) => `${device} のマウントに失敗しました` + (error ? `: ${error}` : ''),
+  'device.unmount_failed': (device: string, error?: string) => `${device} のアンマウントに失敗しました` + (error ? `: ${error}` : ''),
+  'device.eject_failed': (device: string, error?: string) => `${device} の取り出しに失敗しました` + (error ? `: ${error}` : ''),
   'device.already_mounted': 'デバイスは既にマウントされています',
   'device.go_to_source': 'ソースデバイスへ移動',
   'device.type_usb': 'USB デバイス',
   'device.type_removable': 'リムーバブルデバイス',
+  'device.needs_auth': '認証が必要なデバイスです',
+  'device.cannot_mount': 'このデバイスタイプはマウントできません',
   'device.type_disk': 'ディスク',
 
   // ── 软链接操作 ──

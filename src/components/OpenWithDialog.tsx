@@ -67,7 +67,7 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps & { path: string }> = 
         onClose();
       } catch (error) {
         console.error(ti('toast.launch_failed', selectedApp.exec, String(error)));
-        showToast(formatFileOpError('启动程序', selectedApp.name, error), 'error');
+        showToast(formatFileOpError(ti('operation.launch_app'), selectedApp.name, error), 'error');
       }
     }
   };

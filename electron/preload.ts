@@ -24,7 +24,6 @@ contextBridge.exposeInMainWorld('electron', {
   getStartupPath: () => ipcRenderer.invoke('app:get-startup-path'),
   exists: (path: string) => ipcRenderer.invoke('fs:exists', path),
   existsBatch: (paths: string[]) => ipcRenderer.invoke('fs:exists-batch', paths),
-  trashBatch: (paths: string[]) => ipcRenderer.invoke('fs:trash-batch', paths),
   setIcon: (iconPath: string) => ipcRenderer.invoke('window:set-icon', iconPath),
   search: (dir: string, query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => ipcRenderer.invoke('system:search', dir, query, options),
   getDirectorySize: (path: string) => ipcRenderer.invoke('system:get-directory-size', path),
@@ -72,4 +71,25 @@ contextBridge.exposeInMainWorld('electron', {
     return () => ipcRenderer.removeListener('system:devices-changed', handler);
   },
   hasDeviceWatcher: () => ipcRenderer.invoke('system:has-device-watcher'),
+
+  // Job system (batch file operations with progress + cancel)
+  startJob: (params: unknown) => ipcRenderer.invoke('job:start', params),
+  cancelJob: (jobId: string) => ipcRenderer.invoke('job:cancel', jobId),
+  onJobProgress: (jobId: string, callback: (data: unknown) => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: unknown) => {
+      if ((data as { jobId?: string }).jobId === jobId) callback(data);
+    };
+    ipcRenderer.on('job:progress', handler);
+    return () => ipcRenderer.removeListener('job:progress', handler);
+  },
+  onJobComplete: (jobId: string, callback: (data: unknown) => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: unknown) => {
+      if ((data as { jobId?: string }).jobId === jobId) {
+        callback(data);
+        ipcRenderer.removeListener('job:complete', handler);
+      }
+    };
+    ipcRenderer.on('job:complete', handler);
+    return () => ipcRenderer.removeListener('job:complete', handler);
+  },
 });
