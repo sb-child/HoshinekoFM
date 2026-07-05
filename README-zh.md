@@ -41,13 +41,13 @@ Hoshineko 文件管理器是一款基于 Material 3 设计语言、Electron 和 
 | **en-US** | English | 英语 | English |
 | **ja-JP** | 日本語 | 日语 | Japanese |
 | **ko-KR** | 한국어（대한민국） | 韩语（大韩民国） | Korean (Republic of Korea) |
+| **ko-KP** | 한국어（조선민주주의인민공화국） | 韩语（朝鲜民主主义人民共和国） | Korean (Democratic People's Republic of Korea) |
+| **ko-CN** | 조선어（중국） | 朝鲜语（中国） | Korean (China) |
 
 ### 计划支持 / Planned Support
 
 | 代码 (Code) | 本地语言名称 (Native Name) | 中文描述 (Chinese Description) | 英语描述 (English Description) |
 | :--- | :--- | :--- | :--- |
-| **ko-KP** | 한국어（조선민주주의인민공화국） | 韩语（朝鲜民主主义人民共和国） | Korean (Democratic People's Republic of Korea) |
-| **ko-CN** | 조선어（중국） | 朝鲜语（中国） | Korean (China) |
 | **ru-UA** | Русский（Украина） | 俄语（乌克兰） | Russian (Ukraine) |
 | **uk-UA** | Українська（Україна） | 乌克兰语（乌克兰） | Ukrainian (Ukraine) |
 
