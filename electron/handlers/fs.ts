@@ -654,6 +654,12 @@ export function registerFsHandlers() {
     }
   });
 
+  // Resolve a path to its canonical absolute path, following all symlinks.
+  // Uses fs.realpath — throws ENOENT if the path does not exist.
+  ipcMain.handle('fs:realpath', async (_, p: string) => {
+    return fs.realpath(p);
+  });
+
   // Compute directory size in bytes using du -sb. Returns 0 on failure.
   ipcMain.handle('system:get-directory-size', async (_, dirPath: string) => {
     try {

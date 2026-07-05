@@ -231,6 +231,7 @@ const jaJP = {
   // ── Omnibar ──
   'omnibar.placeholder': 'パスを入力するか検索...',
   'omnibar.button_tip': 'クリックしてパスを編集または検索',
+  'omnibar.flatten_symlinks': 'シンボリックリンクを解決',
 
   // ── 面包屑 ──
   'breadcrumbs.root': 'ルートディレクトリ',

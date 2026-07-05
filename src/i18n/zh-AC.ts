@@ -233,6 +233,7 @@ const zhAC = {
   // ── Omnibar ──
   'omnibar.placeholder': '输入路径或搜索...',
   'omnibar.button_tip': '点击编辑路径或搜索',
+  'omnibar.flatten_symlinks': '展平软链接',
 
   // ── 面包屑 ──
   'breadcrumbs.root': '根目录',

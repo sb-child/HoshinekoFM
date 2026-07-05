@@ -231,6 +231,7 @@ const koKR = {
   // ── Omnibar ──
   'omnibar.placeholder': '경로 입력 또는 검색...',
   'omnibar.button_tip': '클릭하여 경로 편집 또는 검색',
+  'omnibar.flatten_symlinks': '심볼릭 링크 해결',
 
   // ── 面包屑 ──
   'breadcrumbs.root': '루트 디렉터리',

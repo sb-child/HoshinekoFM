@@ -231,6 +231,7 @@ const zhHK = {
   // ── Omnibar ──
   'omnibar.placeholder': '輸入路徑或搜尋...',
   'omnibar.button_tip': '點擊編輯路徑或搜尋',
+  'omnibar.flatten_symlinks': '展平符號連結',
 
   // ── 麵包屑 ──
   'breadcrumbs.root': '根目錄',

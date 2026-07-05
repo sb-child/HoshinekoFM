@@ -81,6 +81,7 @@ function findSpecialMount(
  * @param mountpoint - 挂载点完整路径
  * @param bold - 若为 true，路径段（或标签）以 600 weight 显示
  * @param folded - 若为 true，隐藏标签仅显示最后一段路径名（用于多个 showPath chip 场景）
+ * @param italic - 若为 true，整体文字以斜体显示（用于软链接 Chip）
  * @returns React 节点
  */
 function buildSpecialLabel(
@@ -88,24 +89,32 @@ function buildSpecialLabel(
   mountpoint: string,
   bold = false,
   folded = false,
+  italic = false,
 ): React.ReactNode {
   const base = t(config.labelKey);
   const segments = mountpoint.split('/').filter(Boolean);
   const last = segments[segments.length - 1];
 
-  if (folded) {
+  const content = (() => {
+    if (folded) {
+      return bold
+        ? <span style={{ fontWeight: 600 }}>{last}</span>
+        : last;
+    }
+    if (!config.showPath) {
+      return bold
+        ? <span style={{ fontWeight: 600 }}>{base}</span>
+        : base;
+    }
     return bold
-      ? <span style={{ fontWeight: 600 }}>{last}</span>
-      : last;
+      ? <>{base} <span style={{ fontWeight: 600 }}>{last}</span></>
+      : <>{base} {last}</>;
+  })();
+
+  if (italic) {
+    return <span style={{ fontStyle: 'italic' }}>{content}</span>;
   }
-  if (!config.showPath) {
-    return bold
-      ? <span style={{ fontWeight: 600 }}>{base}</span>
-      : base;
-  }
-  return bold
-    ? <>{base} <span style={{ fontWeight: 600 }}>{last}</span></>
-    : <>{base} {last}</>;
+  return content;
 }
 
 interface BreadcrumbsProps {
@@ -129,6 +138,8 @@ interface BreadcrumbCtxMenuState {
   y: number;
   realPath: string;
   isChip: boolean;
+  /** 当 Chip 是软链接时，记录软链接目标路径 */
+  symlinkTarget?: string;
 }
 
 export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
@@ -258,9 +269,16 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
     (e: React.MouseEvent, realPath: string, isChip = false) => {
       e.preventDefault();
       e.stopPropagation();
-      setBreadcrumbCtxMenu({ x: e.clientX, y: e.clientY, realPath, isChip });
+      const info = symlinkInfo.get(realPath);
+      setBreadcrumbCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        realPath,
+        isChip,
+        symlinkTarget: info?.isSymlink && info.target ? info.target : undefined,
+      });
     },
-    [],
+    [symlinkInfo],
   );
 
   const matchedHome = findBestHome(sanitizedPath, homeMap);
@@ -324,11 +342,14 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
         if (segSpecial) {
           const folded = segSpecial.config.showPath && showPathSeen > 0;
           if (segSpecial.config.showPath) showPathSeen++;
+          const segSymlink = symlinkInfo.get(segmentPath);
+          const isSegSymlink = segSymlink?.isSymlink && segSymlink.target;
+          const segTitle = t(segSpecial.config.titleKey, segSpecial.mountpoint);
           return (
             <React.Fragment key={segmentPath}>
               <span className="breadcrumb-separator">/</span>
               <Chip
-                title={t(segSpecial.config.titleKey, segSpecial.mountpoint)}
+                title={isSegSymlink ? `${segTitle}\n${t("symlink.tooltip", segSymlink!.target!)}` : segTitle}
                 onClick={() => onNavigate(segmentPath)}
                 onDragOver={handleDragOver}
                 onDragEnter={(e) => handleDragEnter(e, segmentPath)}
@@ -338,7 +359,7 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
                 className={`breadcrumb-chip${dragOverPath === segmentPath ? " drag-over" : ""}`}
               >
                 <Icon name={segSpecial.config.icon} slot="icon" />
-                {buildSpecialLabel(segSpecial.config, segSpecial.mountpoint, false, folded)}
+                {buildSpecialLabel(segSpecial.config, segSpecial.mountpoint, false, folded, isSegSymlink)}
               </Chip>
             </React.Fragment>
           );
@@ -397,7 +418,11 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
       {/* 优先级: home → special mount → root */}
       {isInHome && homeMatchPath ? (
         <Chip
-          title={t("breadcrumbs.home", ownerName, homeMatchPath)}
+          title={
+            (symlinkInfo.get(homeMatchPath)?.isSymlink && symlinkInfo.get(homeMatchPath)?.target)
+              ? `${t("breadcrumbs.home", ownerName, homeMatchPath)}\n${t("symlink.tooltip", symlinkInfo.get(homeMatchPath)!.target!)}`
+              : t("breadcrumbs.home", ownerName, homeMatchPath)
+          }
           onClick={() => onNavigate(homeMatchPath)}
           onDragOver={handleDragOver}
           onDragEnter={(e) => handleDragEnter(e, homeMatchPath)}
@@ -407,9 +432,12 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
           className={`breadcrumb-chip${dragOverPath === homeMatchPath ? " drag-over" : ""}`}
         >
           <Icon name="home" slot="icon" />
-          {homeIsLast
-            ? <span style={{ fontWeight: 600 }}>{ownerName}</span>
-            : ownerName
+          {symlinkInfo.get(homeMatchPath)?.isSymlink
+            ? <span style={{ fontStyle: 'italic', fontWeight: homeIsLast ? 600 : 400 }}>{ownerName}</span>
+            : (homeIsLast
+              ? <span style={{ fontWeight: 600 }}>{ownerName}</span>
+              : ownerName
+            )
           }
         </Chip>
       ) : isInSpecial ? (
@@ -431,26 +459,36 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
           {(() => {
             const mainFolded = matchedSpecial!.config.showPath && showPathSeen > 0;
             if (matchedSpecial!.config.showPath) showPathSeen++;
+            const mountPath = matchedSpecial!.mountpoint;
+            const isMountSymlink = !!(symlinkInfo.get(mountPath)?.isSymlink && symlinkInfo.get(mountPath)?.target);
             return (
               <Chip
-                title={t(matchedSpecial!.config.titleKey, matchedSpecial!.mountpoint)}
-                onClick={() => onNavigate(matchedSpecial!.mountpoint)}
+                title={
+                  isMountSymlink
+                    ? `${t(matchedSpecial!.config.titleKey, mountPath)}\n${t("symlink.tooltip", symlinkInfo.get(mountPath)!.target!)}`
+                    : t(matchedSpecial!.config.titleKey, mountPath)
+                }
+                onClick={() => onNavigate(mountPath)}
                 onDragOver={handleDragOver}
-                onDragEnter={(e) => handleDragEnter(e, matchedSpecial!.mountpoint)}
+                onDragEnter={(e) => handleDragEnter(e, mountPath)}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, matchedSpecial!.mountpoint)}
-                onContextMenu={(e) => handleBreadcrumbContextMenu(e, matchedSpecial!.mountpoint, true)}
-                className={`breadcrumb-chip${dragOverPath === matchedSpecial!.mountpoint ? " drag-over" : ""}`}
+                onDrop={(e) => handleDrop(e, mountPath)}
+                onContextMenu={(e) => handleBreadcrumbContextMenu(e, mountPath, true)}
+                className={`breadcrumb-chip${dragOverPath === mountPath ? " drag-over" : ""}`}
               >
                 <Icon name={matchedSpecial!.config.icon} slot="icon" />
-                {buildSpecialLabel(matchedSpecial!.config, matchedSpecial!.mountpoint, specialIsLast, mainFolded)}
+                {buildSpecialLabel(matchedSpecial!.config, mountPath, specialIsLast, mainFolded, isMountSymlink)}
               </Chip>
             );
           })()}
         </>
       ) : parts.length === 0 ? (
         <Chip
-          title={t("breadcrumbs.root_title", "/")}
+          title={
+            (symlinkInfo.get("/")?.isSymlink && symlinkInfo.get("/")?.target)
+              ? `${t("breadcrumbs.root_title", "/")}\n${t("symlink.tooltip", symlinkInfo.get("/")!.target!)}`
+              : t("breadcrumbs.root_title", "/")
+          }
           onClick={() => onNavigate("/")}
           onDragOver={handleDragOver}
           onDragEnter={(e) => handleDragEnter(e, "/")}
@@ -460,7 +498,10 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
           className={`breadcrumb-chip${dragOverPath === "/" ? " drag-over" : ""}`}
         >
           <Icon name="tag" slot="icon" />
-          <span style={{ fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
+          {(symlinkInfo.get("/")?.isSymlink && symlinkInfo.get("/")?.target)
+            ? <span style={{ fontStyle: 'italic', fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
+            : <span style={{ fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
+          }
         </Chip>
       ) : (
         <IconButton
@@ -491,6 +532,16 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
           items={
             breadcrumbCtxMenu.isChip
               ? [
+                ...(breadcrumbCtxMenu.symlinkTarget
+                  ? [{
+                    label: t("symlink.go_to_target"),
+                    icon: "arrow_forward",
+                    action: () => {
+                      onNavigate(breadcrumbCtxMenu.symlinkTarget!);
+                      setBreadcrumbCtxMenu(null);
+                    },
+                  }]
+                  : []),
                 {
                   label: t("breadcrumbs.go_to_root"),
                   icon: "home",

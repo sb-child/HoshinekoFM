@@ -241,6 +241,7 @@ const enUS = {
   // ── Omnibar ──
   'omnibar.placeholder': 'Enter path or search...',
   'omnibar.button_tip': 'Click to edit path or search',
+  'omnibar.flatten_symlinks': 'Resolve Symlinks',
 
   // ── 面包屑 ──
   'breadcrumbs.root': 'Root',

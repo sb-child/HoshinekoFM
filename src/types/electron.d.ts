@@ -46,6 +46,7 @@ export interface IElectronAPI {
     ejectDevice: (devicePath: string) => Promise<{ success: boolean; error?: string }>;
     getSymlinkTarget: (path: string) => Promise<{ isSymlink: boolean; target?: string; targetExists: boolean }>;
     checkSymlinks: (paths: string[]) => Promise<{ path: string; isSymlink: boolean; target?: string }[]>;
+    realpath: (path: string) => Promise<string>;
     getRecommendedApps: (path: string) => Promise<{ name: string; icon: string | null; exec: string; path: string; }[]>;
 
     // PTY

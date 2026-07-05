@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electron', {
   ejectDevice: (devicePath: string) => ipcRenderer.invoke('system:eject-device', devicePath),
   getSymlinkTarget: (path: string) => ipcRenderer.invoke('fs:get-symlink-target', path),
   checkSymlinks: (paths: string[]) => ipcRenderer.invoke('fs:check-symlinks', paths),
+  realpath: (path: string) => ipcRenderer.invoke('fs:realpath', path),
   getRecommendedApps: (path: string) => ipcRenderer.invoke('system:get-recommended-apps', path),
 
   // PTY

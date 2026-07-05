@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
+import { ContextMenu } from "./ContextMenu";
+import type { ContextMenuItem } from "./ContextMenu";
 import type { IFile } from "../types/files";
 import { t } from "../i18n";
 import "./Omnibar.css";
@@ -12,6 +14,11 @@ interface OmnibarProps {
   onSearch: (query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => void;
   onDropFiles: (targetPath: string, files: IFile[], operation: "move" | "copy") => void;
   onDropExternalFiles: (targetPath: string, filePaths: string[]) => void;
+}
+
+interface OmnibarCtxMenuState {
+  x: number;
+  y: number;
 }
 
 export const Omnibar: React.FC<OmnibarProps> = ({
@@ -25,6 +32,12 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   const [inputValue, setInputValue] = useState(currentPath);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /** 当前路径中是否存在软链接目录段 */
+  const [hasPathSymlinks, setHasPathSymlinks] = useState(false);
+
+  /** 编辑按钮右键菜单位置 */
+  const [omnibarCtxMenu, setOmnibarCtxMenu] = useState<OmnibarCtxMenuState | null>(null);
+
   useEffect(() => {
     if (!isEditing) {
       setInputValue(currentPath); // eslint-disable-line react-hooks/set-state-in-effect
@@ -37,6 +50,49 @@ export const Omnibar: React.FC<OmnibarProps> = ({
       inputRef.current.select();
     }
   }, [isEditing]);
+
+  /** 检测当前路径中是否有任意段是软链接 */
+  useEffect(() => {
+    const segments = currentPath.split('/').filter(Boolean)
+      .map((_, i, arr) => '/' + arr.slice(0, i + 1).join('/'));
+
+    let cancelled = false;
+    if (segments.length > 0) {
+      window.electron.checkSymlinks(segments).then((results) => {
+        if (cancelled) return;
+        setHasPathSymlinks(results.some((r) => r.isSymlink));
+      }).catch(() => {
+        if (!cancelled) setHasPathSymlinks(false);
+      });
+    }
+    setOmnibarCtxMenu(null); // eslint-disable-line react-hooks/set-state-in-effect
+    return () => { cancelled = true; };
+  }, [currentPath]);
+
+  /**
+   * 编辑按钮右键菜单：仅在当前路径包含软链接时显示"展平软链接"选项。
+   * 点击后通过 `fs:realpath` 解析并跳转到真实路径。
+   */
+  const handleEditContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOmnibarCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const omnibarCtxMenuItems: ContextMenuItem[] = hasPathSymlinks
+    ? [{
+      label: t("omnibar.flatten_symlinks"),
+      icon: "link",
+      action: async () => {
+        try {
+          const resolved = await window.electron.realpath(currentPath);
+          onNavigate(resolved);
+        } catch {
+          // realpath failed — do nothing
+        }
+      },
+    }]
+    : [];
 
   const handleSubmit = () => {
     setIsEditing(false);
@@ -107,11 +163,21 @@ export const Omnibar: React.FC<OmnibarProps> = ({
             variant="standard"
             className="omnibar-trigger"
             onClick={() => setIsEditing(true)}
+            onContextMenu={handleEditContextMenu}
             title={t("omnibar.button_tip")}
           >
             <Icon name="edit" className="edit-icon" />
           </IconButton>
         </div>
+      )}
+
+      {omnibarCtxMenu && omnibarCtxMenuItems.length > 0 && (
+        <ContextMenu
+          x={omnibarCtxMenu.x}
+          y={omnibarCtxMenu.y}
+          items={omnibarCtxMenuItems}
+          onClose={() => setOmnibarCtxMenu(null)}
+        />
       )}
     </div>
   );
