@@ -24,13 +24,11 @@ interface RowData {
   onImageError: (path: string) => void;
   onItemClick: (e: React.MouseEvent, file: IFile) => void;
   onItemDoubleClick: (file: IFile) => void;
-  onFileDragStart: (e: React.DragEvent, file: IFile) => void;
+  /** Mouse-down on a file row — may become a drag gesture. */
+  onItemMouseDown: (e: React.MouseEvent, file: IFile) => void;
   onRenameInputChange: (value: string) => void;
   onRenameSubmit: () => void;
   onRenameCancel: () => void;
-  onFolderDragOver: (e: React.DragEvent, file: IFile) => void;
-  onFolderDragLeave: () => void;
-  onFolderDrop: (e: React.DragEvent, file: IFile) => void;
   onHoverFile?: (file: IFile | null) => void;
   dragOverPath: string | null;
   iconSize: number;
@@ -207,6 +205,8 @@ function ListRowItem({
   return (
     <div
       className={`file-list-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+      data-file-path={file.path}
+      data-is-dir={file.isDirectory ? "1" : "0"}
       style={{
         display: "flex",
         alignItems: "center",
@@ -223,6 +223,7 @@ function ListRowItem({
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         triggerRipple(e, e.currentTarget as HTMLElement);
+        data.onItemMouseDown(e, file);
       }}
       onClick={(e) => data.onItemClick(e, file)}
       onDoubleClick={() => data.onItemDoubleClick(file)}
@@ -232,17 +233,6 @@ function ListRowItem({
         e.stopPropagation();
         data.onContextMenu?.(e, file);
       }}
-      draggable={!isRenaming}
-      onDragStart={(e) => data.onFileDragStart(e, file)}
-      onDragOver={
-        file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined
-      }
-      onDragLeave={
-        file.isDirectory ? () => data.onFolderDragLeave() : undefined
-      }
-      onDrop={
-        file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
-      }
       tabIndex={0}
       role="button"
     >
@@ -296,11 +286,14 @@ function GridRowItem({
     <div
       key={file.path}
       className={`file-list-item file-grid-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+      data-file-path={file.path}
+      data-is-dir={file.isDirectory ? "1" : "0"}
       onMouseEnter={() => data.onHoverFile?.(file)}
       onMouseLeave={() => data.onHoverFile?.(null)}
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         triggerRipple(e, e.currentTarget as HTMLElement);
+        data.onItemMouseDown(e, file);
       }}
       onClick={(e) => data.onItemClick(e, file)}
       onDoubleClick={() => data.onItemDoubleClick(file)}
@@ -310,17 +303,6 @@ function GridRowItem({
         e.stopPropagation();
         data.onContextMenu?.(e, file);
       }}
-      draggable={!isRenaming}
-      onDragStart={(e) => data.onFileDragStart(e, file)}
-      onDragOver={
-        file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined
-      }
-      onDragLeave={
-        file.isDirectory ? () => data.onFolderDragLeave() : undefined
-      }
-      onDrop={
-        file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
-      }
       tabIndex={0}
       role="button"
     >

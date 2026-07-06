@@ -1,0 +1,14 @@
+{
+  "name": "linux-dnd-native",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "build/Release/linux_dnd.node",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  }
+}

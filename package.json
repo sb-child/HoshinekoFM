@@ -6,10 +6,10 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
+    "build": "tsc -b && vite build && node scripts/build-native.cjs && tsc -p electron/tsconfig.json && node scripts/copy-native.cjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on tcp:5173 && tsc -p electron/tsconfig.json && node scripts/set-cjs.cjs && cross-env NODE_ENV=development electron .\"",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on tcp:5173 && node scripts/build-native.cjs && tsc -p electron/tsconfig.json && node scripts/set-cjs.cjs && node scripts/copy-native.cjs && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && node scripts/set-cjs.cjs && electron-builder"
   },
   "dependencies": {

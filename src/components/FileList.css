@@ -150,6 +150,24 @@
     -webkit-user-select: none;
 }
 
+/* Suppress hover effects on file rows during active mouse drag
+   (the transparent overlay blocks mouse events, but hover may
+   still fire as the overlay appears). */
+.file-list-container.is-dragging .file-list-item:hover {
+    background-color: inherit;
+}
+
+/* Transparent drag overlay — blocks hover/click on rows underneath */
+.drag-overlay {
+    cursor: grabbing;
+}
+
+/* Floating drag preview — follows the mouse cursor */
+.drag-preview {
+    --drag-preview-bg: var(--md-sys-color-surface-container-high, #2a2a2a);
+    --drag-preview-fg: var(--md-sys-color-on-surface, #fff);
+}
+
 .selection-box {
     background: color-mix(in srgb, var(--md-sys-color-primary) 15%, transparent);
     border: 1px solid var(--md-sys-color-primary);

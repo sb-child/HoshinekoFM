@@ -6,7 +6,6 @@ import { Icon } from "./Icon";
 import { Chip } from "./md";
 import { ContextMenu } from "./ContextMenu";
 import { useDrag } from "../contexts/DragContext";
-import { clearPendingNativeDrag } from "./FileList";
 import type { IFile } from "../types/files";
 import { t } from "../i18n";
 
@@ -249,7 +248,6 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
           return;
         }
         const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
-        clearPendingNativeDrag();
         onDropFiles(targetPath, dragState.files, operation);
         endDrag();
         return;

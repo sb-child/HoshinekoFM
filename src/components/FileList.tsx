@@ -45,15 +45,23 @@ interface FileListProps {
   marqueeEnabled: boolean;
 }
 
-// --- Main component ---
-
-let _draggedPaths: Set<string> = new Set();
-let _pendingNativeDragPaths: string[] | null = null;
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function clearPendingNativeDrag() {
-  _pendingNativeDragPaths = null;
+/** Internal drag session — stored in a ref to avoid React re-renders during
+ *  frequent mousemove events. */
+interface DragSession {
+  files: IFile[];
+  sourcePath: string;
+  startX: number;
+  startY: number;
 }
+
+/** Minimum mouse movement (px) before a drag is initiated. */
+const DRAG_THRESHOLD = 5;
+
+/** Offset of the drag preview from the cursor (top-left). */
+const DRAG_PREVIEW_OFFSET_X = 16;
+const DRAG_PREVIEW_OFFSET_Y = 16;
+
+// --- Main component ---
 
 const FileListComponent: React.FC<FileListProps> = ({
   files,
@@ -82,13 +90,22 @@ const FileListComponent: React.FC<FileListProps> = ({
   const [renameValue, setRenameValue] = useState("");
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
 
+  // --- Drag simulation state (mouse-based, replaces HTML5 DnD) ---
+  const [isDragging, setIsDragging] = useState(false);
+  // Ref mirror — event handlers need the current value without closure staleness
+  const isDraggingRef = useRef(false);
+  const dragSessionRef = useRef<DragSession | null>(null);
+  const dragPendingRef = useRef(false); // mousedown but not yet moved past threshold
+  const dragPreviewElRef = useRef<HTMLDivElement | null>(null);
+  const lastHoveredFolderRef = useRef<IFile | null>(null);
+  const rafRef = useRef(0);
+
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
-  const lastDragRef = useRef<{ path: string; time: number } | null>(null);
   const renameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const listImperativeRef = useListRef(null);
-  const lastDragOverFolderRef = useRef<IFile | null>(null);
+
   const itemBoxesRef = useRef<ItemBox[]>([]);
 
   const {
@@ -105,7 +122,7 @@ const FileListComponent: React.FC<FileListProps> = ({
     onSelectionModeChange,
   );
 
-  const { startDrag, endDrag, getDragState } = useDrag();
+  const { startDrag, endDrag } = useDrag();
 
   useEffect(() => {
     return () => {
@@ -139,7 +156,6 @@ const FileListComponent: React.FC<FileListProps> = ({
     const listEl = listImperativeRef.current;
     if (!listEl) return;
 
-    // Compute flattened index using the same logic as the render
     const containerWidth = listEl.element?.parentElement?.clientWidth ?? 600;
     const columns =
       viewMode === "grid"
@@ -193,9 +209,12 @@ const FileListComponent: React.FC<FileListProps> = ({
     });
   }, []);
 
-  // --- Item click ---
+  // --- Item click (unchanged, but no longer handles dragstart) ---
   const handleItemClick = useCallback(
     (e: React.MouseEvent, file: IFile) => {
+      // Ignore if we were dragging — mouseup handles that
+      if (isDraggingRef.current || dragPendingRef.current) return;
+
       document.activeElement?.blur();
       if (renamingPath) return;
       if (isSelectingRef.current) return;
@@ -213,15 +232,6 @@ const FileListComponent: React.FC<FileListProps> = ({
       }
 
       const now = Date.now();
-
-      if (
-        lastDragRef.current?.path === file.path &&
-        now - lastDragRef.current.time < 100
-      ) {
-        lastDragRef.current = null;
-        return;
-      }
-      lastDragRef.current = null;
       const last = lastClickRef.current;
 
       if (last?.path === file.path) {
@@ -245,76 +255,6 @@ const FileListComponent: React.FC<FileListProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [onSelect, onNavigate, renamingPath],
   );
-
-  // --- Drag start (HTML5 DnD for internal, native file drag for external) ---
-  const handleFileDragStart = useCallback(
-    (e: React.DragEvent, file: IFile) => {
-      console.warn("[drag] dragstart entered:", file.name);
-
-      lastDragRef.current = { path: file.path, time: Date.now() };
-      lastClickRef.current = null;
-
-      const filesToDrag = selectedFiles.has(file.path)
-        ? files.filter((f) => selectedFiles.has(f.path))
-        : [file];
-
-      _draggedPaths = new Set(filesToDrag.map((f) => f.path));
-      startDrag(filesToDrag, currentPath || "");
-      lastDragOverFolderRef.current = null;
-
-      // Native file drag — deferred to dragend so internal HTML5 drops still work.
-      // On dragend, if _pendingNativeDragPaths is still set (no internal drop consumed it),
-      // we call startDrag to hand over to the OS compositor for external drop targets.
-      if (window.electron) {
-        _pendingNativeDragPaths = filesToDrag.map((f) => f.path);
-      }
-
-      // HTML5 DnD for internal drops
-      e.dataTransfer.effectAllowed = "copyMove";
-      const uris = filesToDrag
-        .map((f) => "file://" + encodeURI(f.path))
-        .join("\r\n");
-      e.dataTransfer.setData("text/uri-list", uris);
-      e.dataTransfer.setData("text/plain", uris);
-    },
-    [selectedFiles, files, currentPath, startDrag],
-  );
-
-  // Cleanup drag state on dragend.
-  // If _pendingNativeDragPaths is still set (no internal drop consumed it),
-  // fire the native drag for external apps before cleaning up.
-  useEffect(() => {
-    const onDragEnd = () => {
-      console.warn("[drag] dragend fired, cleaning up");
-      if (_pendingNativeDragPaths && window.electron) {
-        window.electron.startDrag(_pendingNativeDragPaths);
-      }
-      setDragOverPath(null);
-      lastDragOverFolderRef.current = null;
-      _draggedPaths = new Set();
-      _pendingNativeDragPaths = null;
-      endDrag();
-    };
-    document.addEventListener("dragend", onDragEnd, true);
-    return () => document.removeEventListener("dragend", onDragEnd, true);
-  }, [endDrag]);
-
-  // Debug: catch ALL drop events (capture phase, document level)
-  useEffect(() => {
-    const onDocDrop = (e: Event) => {
-      const de = e as DragEvent;
-      console.warn(
-        "[drag] DOCUMENT capture drop:",
-        (e.target as HTMLElement)?.tagName,
-        "class:",
-        (e.target as HTMLElement)?.className?.slice(0, 40),
-        "types:",
-        de.dataTransfer?.types,
-      );
-    };
-    document.addEventListener("drop", onDocDrop, true);
-    return () => document.removeEventListener("drop", onDocDrop, true);
-  }, []);
 
   const handleItemDoubleClick = useCallback(
     (file: IFile) => {
@@ -346,63 +286,214 @@ const FileListComponent: React.FC<FileListProps> = ({
     setRenameValue("");
   }, []);
 
-  // --- Folder drop handlers ---
+  // ═══════════════════════════════════════════════════════════════
+  //  Mouse-based drag simulation (replaces HTML5 DnD)
+  // ═══════════════════════════════════════════════════════════════
 
-  const handleFolderDragOver = useCallback(
-    (e: React.DragEvent, file: IFile) => {
-      console.warn(
-        "[drag] dragover on folder:",
-        file.name,
-        "types:",
-        e.dataTransfer.types,
-      );
-      if (_draggedPaths.has(file.path)) {
-        e.dataTransfer.dropEffect = "none";
-        return;
+  /** Create the floating drag preview element. */
+  const createDragPreview = useCallback(
+    (dfs: IFile[], x: number, y: number) => {
+      const el = document.createElement("div");
+      el.className = "drag-preview";
+      el.style.cssText = `
+        position:fixed; pointer-events:none; z-index:999999;
+        left:${x + DRAG_PREVIEW_OFFSET_X}px;
+        top:${y + DRAG_PREVIEW_OFFSET_Y}px;
+        background:var(--md-sys-color-surface-container-high,#2a2a2a);
+        color:var(--md-sys-color-on-surface,#fff);
+        border-radius:8px; padding:6px 12px;
+        font-size:14px; line-height:1.3;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);
+        display:flex; align-items:center; gap:6px;
+        white-space:nowrap; user-select:none;
+      `;
+      if (dfs.length === 1) {
+        el.textContent = dfs[0].name;
+      } else {
+        el.textContent = `${dfs.length} 个项目`;
       }
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = e.shiftKey ? "copy" : "move";
-      setDragOverPath(file.path);
-      // Track for internal drop (native drag kills HTML5 drop events)
-      lastDragOverFolderRef.current = file;
+      document.body.appendChild(el);
+      dragPreviewElRef.current = el;
     },
     [],
   );
 
-  const handleFolderDragLeave = useCallback(() => {
+  /** Find a folder file-list-item at the given coordinates. */
+  const findFolderAtPoint = useCallback(
+    (x: number, y: number): IFile | null => {
+      const target = document.elementFromPoint(x, y);
+      if (!target) return null;
+      const row = target.closest("[data-file-path]") as HTMLElement | null;
+      if (!row) return null;
+      const filePath = row.getAttribute("data-file-path");
+      const isDir = row.getAttribute("data-is-dir") === "1";
+      if (!isDir || !filePath) return null;
+      // Look up the IFile from our file list
+      // We search by path since file objects may be different references
+      return files.find((f) => f.path === filePath) ?? null;
+    },
+    [files],
+  );
+
+  /** Clean up all drag state (called on drop, cancel, or native handoff). */
+  const cleanupDrag = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    if (dragPreviewElRef.current) {
+      dragPreviewElRef.current.remove();
+      dragPreviewElRef.current = null;
+    }
+    dragSessionRef.current = null;
+    dragPendingRef.current = false;
+    isDraggingRef.current = false;
+    setIsDragging(false);
     setDragOverPath(null);
+    lastHoveredFolderRef.current = null;
+    endDrag();
+  }, [endDrag]);
+
+  /** Hand over to native OS drag-and-drop (Electron startDrag). */
+  const triggerNativeDrag = useCallback(() => {
+    const session = dragSessionRef.current;
+    if (!session || !window.electron) return;
+    window.electron.startDrag(session.files.map((f) => f.path));
   }, []);
 
-  const handleFolderDrop = useCallback(
-    (e: React.DragEvent, targetFile: IFile) => {
-      console.warn("[drag] drop on folder:", targetFile.name);
-      _pendingNativeDragPaths = null;
-      const dragState = getDragState();
-      console.warn("[drag] drop getDragState:", dragState);
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOverPath(null);
+  // ── mousemove (document) ────────────────────────────────────
+  const handleDocumentMouseMove = useCallback(
+    (e: MouseEvent) => {
+      if (!dragPendingRef.current && !isDraggingRef.current) return;
 
-      if (!dragState || !onDropOnFolder) {
-        console.warn("[drag] drop NO dragState or NO onDropOnFolder");
-        _draggedPaths = new Set();
-        endDrag();
+      if (dragPendingRef.current) {
+        const session = dragSessionRef.current;
+        if (!session) return;
+        const dx = e.clientX - session.startX;
+        const dy = e.clientY - session.startY;
+        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+
+        // Enter drag mode
+        dragPendingRef.current = false;
+        isDraggingRef.current = true;
+        setIsDragging(true);
+        startDrag(session.files, session.sourcePath);
+        createDragPreview(session.files, e.clientX, e.clientY);
         return;
       }
 
-      if (_draggedPaths.has(targetFile.path)) {
-        _draggedPaths = new Set();
-        endDrag();
-        return;
-      }
+      // Update drag preview position (throttled via rAF)
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = 0;
+          if (dragPreviewElRef.current) {
+            dragPreviewElRef.current.style.left = `${e.clientX + DRAG_PREVIEW_OFFSET_X}px`;
+            dragPreviewElRef.current.style.top = `${e.clientY + DRAG_PREVIEW_OFFSET_Y}px`;
+          }
 
-      const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
-      onDropOnFolder(dragState.files, targetFile.path, operation);
-      _draggedPaths = new Set();
-      endDrag();
+          // Check hover target for internal folder drops
+          const hoveredFile = findFolderAtPoint(e.clientX, e.clientY);
+          const prev = lastHoveredFolderRef.current;
+          if (hoveredFile?.path !== prev?.path) {
+            lastHoveredFolderRef.current = hoveredFile;
+            setDragOverPath(hoveredFile?.path ?? null);
+          }
+        });
+      }
     },
-    [getDragState, onDropOnFolder, endDrag],
+    [isDragging, startDrag, createDragPreview, findFolderAtPoint],
+  );
+
+  // ── mouseup (document) ──────────────────────────────────────
+  const handleDocumentMouseUp = useCallback(
+    (e: MouseEvent) => {
+      if (!isDraggingRef.current) {
+        dragPendingRef.current = false;
+        dragSessionRef.current = null;
+        return;
+      }
+
+      const hoveredFile = findFolderAtPoint(e.clientX, e.clientY);
+      const session = dragSessionRef.current;
+
+      if (hoveredFile && session && onDropOnFolder) {
+        const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
+        onDropOnFolder(session.files, hoveredFile.path, operation);
+      }
+
+      cleanupDrag();
+    },
+    [isDragging, findFolderAtPoint, onDropOnFolder, cleanupDrag],
+  );
+
+  // ── mouseout (window) → hand over to native drag ────────────
+  const handleWindowMouseOut = useCallback(
+    (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      // Only fire when truly leaving the window (not entering a child element)
+      if (e.relatedTarget !== null) return;
+      // User dragged outside the window — switch to OS-level drag
+      triggerNativeDrag();
+      cleanupDrag();
+    },
+    [isDragging, triggerNativeDrag, cleanupDrag],
+  );
+
+  // ── keydown (Escape) ────────────────────────────────────────
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!isDraggingRef.current && !dragPendingRef.current) return;
+      if (e.key === "Escape") {
+        cleanupDrag();
+      }
+    },
+    [isDragging, cleanupDrag],
+  );
+
+  // Register document/window listeners during drag
+  useEffect(() => {
+    if (!isDragging) return;
+
+    document.addEventListener("mousemove", handleDocumentMouseMove);
+    document.addEventListener("mouseup", handleDocumentMouseUp);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("mouseout", handleWindowMouseOut);
+
+    return () => {
+      document.removeEventListener("mousemove", handleDocumentMouseMove);
+      document.removeEventListener("mouseup", handleDocumentMouseUp);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mouseout", handleWindowMouseOut);
+    };
+  }, [isDragging, handleDocumentMouseMove, handleDocumentMouseUp, handleKeyDown, handleWindowMouseOut]);
+
+  // ═══════════════════════════════════════════════════════════════
+  //  End of drag simulation
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Mouse-down on a file row — prepares for potential drag. */
+  const handleItemMouseDown = useCallback(
+    (e: React.MouseEvent, file: IFile) => {
+      if (e.button !== 0) return;
+      if (renamingPath) return;
+      if (didSelectRef.current) {
+        didSelectRef.current = false;
+        return;
+      }
+
+      const filesToDrag = selectedFiles.has(file.path)
+        ? files.filter((f) => selectedFiles.has(f.path))
+        : [file];
+
+      dragSessionRef.current = {
+        files: filesToDrag,
+        sourcePath: currentPath || "",
+        startX: e.clientX,
+        startY: e.clientY,
+      };
+      dragPendingRef.current = true;
+    },
+    [selectedFiles, files, currentPath, renamingPath],
   );
 
   // --- Rubber-band selection ---
@@ -418,7 +509,7 @@ const FileListComponent: React.FC<FileListProps> = ({
   return (
     <div
       ref={containerRef}
-      className="file-list-container"
+      className={`file-list-container${isDragging ? " is-dragging" : ""}`}
       style={{ width: "100%", height: "100%", position: "relative" }}
       onMouseDown={handleBackgroundMouseDown}
       onContextMenu={(e) => {
@@ -443,7 +534,6 @@ const FileListComponent: React.FC<FileListProps> = ({
             return;
           }
           lastClickRef.current = null;
-          lastDragRef.current = null;
           if (renameTimeoutRef.current !== null) {
             clearTimeout(renameTimeoutRef.current);
             renameTimeoutRef.current = null;
@@ -484,13 +574,10 @@ const FileListComponent: React.FC<FileListProps> = ({
             onImageError: handleImageError,
             onItemClick: handleItemClick,
             onItemDoubleClick: handleItemDoubleClick,
-            onFileDragStart: handleFileDragStart,
+            onItemMouseDown: handleItemMouseDown,
             onRenameInputChange: handleRenameInputChange,
             onRenameSubmit: handleRenameSubmit,
             onRenameCancel: handleRenameCancel,
-            onFolderDragOver: handleFolderDragOver,
-            onFolderDragLeave: handleFolderDragLeave,
-            onFolderDrop: handleFolderDrop,
             onHoverFile,
             dragOverPath,
             iconSize,
@@ -524,6 +611,23 @@ const FileListComponent: React.FC<FileListProps> = ({
             height: selectionBox.h,
             pointerEvents: "none",
             zIndex: 9999,
+          }}
+        />
+      )}
+      {/* Transparent overlay — blocks hover/click effects on underlying
+          elements during drag while allowing elementFromPoint to see through */}
+      {isDragging && (
+        <div
+          className="drag-overlay"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 9998,
+            pointerEvents: "all",
+          }}
+          onMouseEnter={(e) => {
+            // Prevent propagation of mouseenter to underlying elements
+            e.stopPropagation();
           }}
         />
       )}
