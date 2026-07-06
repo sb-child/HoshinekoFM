@@ -32,3 +32,5 @@ pkg/
 src-pkg/
 
 *.bundle
+
+devlog
