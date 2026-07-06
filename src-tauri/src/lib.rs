@@ -1,6 +1,7 @@
 pub mod app;
 pub mod appreuse;
 pub mod cli;
+pub mod drag;
 pub mod fsworker;
 
 // // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
