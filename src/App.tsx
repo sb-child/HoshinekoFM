@@ -57,6 +57,7 @@ function AppContent() {
     handleSidebarNavigate,
     handleScrollToComplete,
     refreshActiveTab,
+    handleDetachTab,
   } = useTabs();
 
   const {
@@ -98,6 +99,21 @@ function AppContent() {
     handleDeviceUnmount,
     handleDeviceEject,
   } = useDeviceActions();
+
+  /** Tab 右键菜单状态（"在新窗口中打开"等操作） */
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number;
+    y: number;
+    tabId: string;
+  } | null>(null);
+
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTabContextMenu({ x: e.clientX, y: e.clientY, tabId });
+  }, []);
+
+  const closeTabContextMenu = useCallback(() => setTabContextMenu(null), []);
 
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalCwd, setTerminalCwd] = useState<string | undefined>(undefined);
@@ -203,7 +219,31 @@ function AppContent() {
     if (storedCssPath) {
       handleLoadCustomCss(storedCssPath); // eslint-disable-line react-hooks/set-state-in-effect
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * 监听 Tauri 后端发来的 "navigate-to" 事件。
+   * 
+   * 当后端通过 create_window() 创建新窗口并 emit 路径时，
+   * 前端据此创建对应的 tab。
+   * 
+   * 仅在 Tauri 环境下注册（浏览器中由 electron mock 处理）。
+   */
+  useEffect(() => {
+    // @ts-expect-error __TAURI__ is injected by Tauri runtime
+    if (!window.__TAURI__) return;
+
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const ul = await listen<string>("navigate-to", (event) => {
+        handleAddTab(event.payload);
+      });
+      unlisten = ul;
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, [handleAddTab]);
 
   useEffect(() => {
     const handler = (e: WheelEvent) => {
@@ -427,7 +467,7 @@ function AppContent() {
   })();
 
   return (
-    <div className="app-shell" onClick={closeContextMenu}>
+    <div className="app-shell" onClick={() => { closeContextMenu(); closeTabContextMenu(); }}>
       <NavigationRail
         items={[
           {
@@ -502,6 +542,7 @@ function AppContent() {
             onTabClick={setActiveTabId}
             onTabClose={handleCloseTab}
             onNewTab={() => handleAddTab()}
+            onTabContextMenu={handleTabContextMenu}
           />
         </header>
 
@@ -633,6 +674,28 @@ function AppContent() {
             onClose={closeDeviceContextMenu}
           />
         )}
+
+        {tabContextMenu && (() => {
+          const tab = tabs.find((t) => t.id === tabContextMenu.tabId);
+          const tabItems: ContextMenuItem[] = [
+            {
+              label: t("context_menu.open_in_new_window"),
+              icon: "open_in_new",
+              action: () => {
+                if (tab) handleDetachTab(tab.id, tab.path);
+                closeTabContextMenu();
+              },
+            },
+          ];
+          return (
+            <ContextMenu
+              x={tabContextMenu.x}
+              y={tabContextMenu.y}
+              items={tabItems}
+              onClose={closeTabContextMenu}
+            />
+          );
+        })()}
 
         <Dialog
           title={t("dialog.rename.title")}

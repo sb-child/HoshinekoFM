@@ -21,6 +21,7 @@ const zhTW = {
   'context_menu.open': '開啟',
   'context_menu.open_with': '選擇其他應用程式...',
   'context_menu.open_terminal': '在內建終端機開啟',
+  'context_menu.open_in_new_window': '在新視窗中開啟',
   'context_menu.copy': '複製',
   'context_menu.cut': '剪下',
   'context_menu.paste': '貼上',

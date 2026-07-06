@@ -36,9 +36,9 @@ fn main() {
                     paths: cmd.paths,
                 });
             } else if !cmd.new_instance {
-                // 3b. 不是 primary 且未指定 --new-instance → 复用已有 primary
+                // 3b. 不是 primary 且未指定 --new-instance → 复用已有 primary（打开新窗口）
                 tracing::info!(
-                    "primary already exists, connecting to send open_tabs request"
+                    "primary already exists, connecting to send open window request"
                 );
                 rt.block_on(hnfm_lib::appreuse::run_app_reuse(
                     None, // 连接到 primary

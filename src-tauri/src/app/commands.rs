@@ -77,28 +77,24 @@ pub async fn tab_event_sink(
 // 多窗口命令
 // ---------------------------------------------------------------------------
 
-/// 创建新窗口。
+/// 创建新窗口（公共函数，供 command 和 InstanceServer 共用）。
 ///
-/// 新窗口加载相同的前端（默认 URL），共享 AppState。
-#[command]
-pub async fn new_window(
-    app: tauri::AppHandle,
-    label: Option<String>,
-    path: Option<String>,
-) -> Result<String, String> {
+/// 创建新窗口并 emit `navigate-to` 事件给每个 path。
+/// 返回新窗口的 label。
+pub fn create_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<String, String> {
     use tauri::WebviewWindowBuilder;
 
-    let label = label.unwrap_or_else(|| {
+    let label = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
         format!("window-{ts:x}")
-    });
+    };
 
     let builder = WebviewWindowBuilder::new(
-        &app,
+        app,
         &label,
         tauri::WebviewUrl::App("index.html".into()),
     )
@@ -114,11 +110,31 @@ pub async fn new_window(
     // 递增全局窗口计数
     super::WINDOW_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-    if let Some(p) = path {
+    // 向新窗口发送导航路径，前端需要监听 "navigate-to" 创建 tab
+    for p in &paths {
         let _ = window.emit("navigate-to", p);
+    }
+    if paths.is_empty() {
+        // 默认打开 home
+        let _ = window.emit("navigate-to", "/");
     }
 
     Ok(label)
+}
+
+/// 创建新窗口（Tauri 命令）。
+///
+/// 新窗口加载相同的前端（默认 URL），共享 AppState。
+#[command]
+pub async fn new_window(
+    app: tauri::AppHandle,
+    label: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<String, String> {
+    // label 参数暂未使用（未来可支持指定 label 创建具名窗口）
+    let _ = label;
+    let paths = paths.unwrap_or_default();
+    create_window(&app, paths)
 }
 
 /// 获取当前窗口的 label。

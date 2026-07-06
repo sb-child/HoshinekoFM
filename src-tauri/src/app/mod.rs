@@ -175,13 +175,17 @@ pub fn run_app(opts: RunOpts) {
 // ---------------------------------------------------------------------------
 
 /// 接受实例间连接。
-async fn accept_instance_connections(listener: UnixListener, _app_handle: tauri::AppHandle) {
+async fn accept_instance_connections(listener: UnixListener, app_handle: tauri::AppHandle) {
     info!("accepting instance connections...");
+    let server = InstanceServer {
+        app_handle: app_handle.clone(),
+    };
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 debug!("instance connection from {addr:?}");
-                tokio::spawn(handle_instance_connection(stream));
+                let server = server.clone();
+                tokio::spawn(handle_instance_connection(stream, server));
             }
             Err(e) => {
                 error!("instance listener error: {e}");
@@ -192,23 +196,22 @@ async fn accept_instance_connections(listener: UnixListener, _app_handle: tauri:
 }
 
 /// 处理一个实例间连接。
-async fn handle_instance_connection(stream: tokio::net::UnixStream) {
-    use tarpc::{
-        serde_transport,
-        server::{BaseChannel, Channel},
-        tokio_util::codec::length_delimited::LengthDelimitedCodec,
-    };
+///
+/// 使用 `LengthDelimitedCodec` + `Bincode` 传输层接收 tarpc RPC 请求，
+/// 由 `InstanceServer` 处理。
+async fn handle_instance_connection(stream: tokio::net::UnixStream, server: InstanceServer) {
+    use tarpc::server::{BaseChannel, Channel};
     use futures::prelude::*;
 
-    let codec_builder = LengthDelimitedCodec::builder();
-    let framed = codec_builder.new_framed(stream);
-    let transport = serde_transport::new(framed, tarpc::tokio_serde::formats::Bincode::default());
+    let transport = tarpc::serde_transport::new(
+        crate::ipc::frame_stream(stream),
+        tarpc::tokio_serde::formats::Bincode::default(),
+    );
 
     async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(fut);
     }
 
-    let server = InstanceServer;
     tokio::spawn(
         BaseChannel::with_defaults(transport)
             .execute(server.serve())
@@ -217,8 +220,12 @@ async fn handle_instance_connection(stream: tokio::net::UnixStream) {
 }
 
 /// InstanceService server 实现。
+///
+/// 持有 `AppHandle` 以创建新窗口和操作 tab。
 #[derive(Clone)]
-struct InstanceServer;
+struct InstanceServer {
+    app_handle: tauri::AppHandle,
+}
 
 impl InstanceService for InstanceServer {
     async fn open_tabs(
@@ -226,8 +233,11 @@ impl InstanceService for InstanceServer {
         _ctx: tarpc::context::Context,
         paths: Vec<String>,
     ) {
-        info!("received open_tabs request: {paths:?}");
-        // TODO: 通过 AppHandle 操作 TabManager 打开 tab
+        info!("received open_tabs request (new window): {paths:?}");
+        match commands::create_window(&self.app_handle, paths) {
+            Ok(label) => info!("opened new window: {label}"),
+            Err(e) => tracing::error!("failed to open window: {e}"),
+        }
     }
 
     async fn transfer_tab(
@@ -236,7 +246,10 @@ impl InstanceService for InstanceServer {
         tab: TabState,
     ) {
         info!("received transfer_tab request: id={}", tab.id);
-        // TODO: 将 tab 加入当前实例
+        // TODO: 将 tab 加入当前实例的 TabManager，然后创建新窗口加载此 tab
+        // 实现步骤：
+        //   1. 通过 AppState 获取 TabManager，调用 tabs.transfer_in(tab)
+        //   2. create_window(&self.app_handle, vec![tab.path.to_string_lossy().to_string()])
     }
 
     async fn ping(self, _ctx: tarpc::context::Context) -> bool {

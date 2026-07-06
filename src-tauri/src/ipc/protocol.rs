@@ -90,7 +90,7 @@ pub enum DirChangeEvent {
 /// 主实例作为 server，其他实例（或 CLI `--attach`）作为 client。
 #[tarpc::service]
 pub trait InstanceService {
-    /// 请求在当前实例中打开一组路径的 tab。
+    /// 请求在当前实例中打开新窗口（每个 path 作为一个 tab）。
     async fn open_tabs(paths: Vec<String>);
 
     /// 将一个 tab 从其他实例移动到当前实例。

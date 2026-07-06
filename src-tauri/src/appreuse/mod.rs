@@ -15,7 +15,7 @@
 //! 2. 如果成功 → 自身成为 primary，启动 Tauri + 监听实例间连接
 //! 3. 如果失败：
 //!    - `--new-instance` → 仍启动，但不设 primary
-//!    - 否则 → 连接 primary，发送 `open_tabs`，自身退出
+//!    - 否则 → 连接 primary，发送打开新窗口请求，自身退出
 
 use std::{fs, io, path::PathBuf};
 
@@ -169,45 +169,72 @@ pub async fn connect_to_primary() -> io::Result<UnixStream> {
 }
 
 // ---------------------------------------------------------------------------
-// 实例间消息发送 (tarpc)
+// 实例间 RPC (tarpc)
 // ---------------------------------------------------------------------------
+//
+// 实例间通信使用 tarpc 框架，传输层为：
+//   - 编解码: `LengthDelimitedCodec` (帧边界) + `Bincode` (序列化)
+//   - 传输: `tokio::net::UnixStream` (Unix Domain Socket)
+//   - 服务定义: `crate::ipc::protocol::InstanceService`
+//
+// 每次 RPC 调用都是短连接：连接 → 发送请求 → 断开。
 
-/// 向实例发送 `open_tabs` 请求。
-pub async fn send_open_tabs(stream: UnixStream, paths: &[String]) -> io::Result<()> {
-    use tarpc::tokio_util::codec::length_delimited::LengthDelimitedCodec;
+/// 为给定的 UnixStream 创建 tarpc 客户端。
+///
+/// 封装了 `LengthDelimitedCodec` + `Bincode` 传输层初始化样板代码，
+/// 避免在多个请求函数中重复。
+///
+/// # 返回
+/// - `InstanceServiceClient` —— 可直接调用 `.open_tabs()` / `.transfer_tab()` / `.ping()`
+fn make_instance_client(stream: UnixStream) -> InstanceServiceClient {
+    let transport = tarpc::serde_transport::new(
+        crate::ipc::frame_stream(stream),
+        tarpc::tokio_serde::formats::Bincode::default(),
+    );
+    InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn()
+}
 
-    let codec_builder = LengthDelimitedCodec::builder();
-    let framed = codec_builder.new_framed(stream);
-    let transport = tarpc::serde_transport::new(framed, tarpc::tokio_serde::formats::Bincode::default());
-
-    let client = InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn();
+/// 请求 primary 实例打开新窗口。
+///
+/// 通过 tarpc RPC 调用 primary 实例的 `open_tabs()`，
+/// 该调用会在 primary 进程中创建一个新窗口并为每个 path 创建 tab。
+///
+/// # 参数
+/// - `stream`: 已连接 primary 实例的 UnixStream
+/// - `paths`: 新窗口中要打开的路径列表
+pub async fn request_open_window(stream: UnixStream, paths: &[String]) -> io::Result<()> {
+    let client = make_instance_client(stream);
 
     if let Err(e) = client
         .open_tabs(context::current(), paths.to_vec())
         .await
     {
-        error!("failed to send open_tabs: {e}");
+        error!("failed to request open_window: {e}");
     } else {
-        info!("sent open_tabs request: {paths:?}");
+        info!("sent open_window request: {paths:?}");
     }
     Ok(())
 }
 
-/// 向实例发送 `transfer_tab` 请求。
-pub async fn send_transfer_tab(stream: UnixStream, tab: TabState) -> io::Result<()> {
-    use tarpc::tokio_util::codec::length_delimited::LengthDelimitedCodec;
-
-    let codec_builder = LengthDelimitedCodec::builder();
-    let framed = codec_builder.new_framed(stream);
-    let transport = tarpc::serde_transport::new(framed, tarpc::tokio_serde::formats::Bincode::default());
-
-    let client = InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn();
+/// 请求 primary 实例接收一个跨实例迁移的 tab。
+///
+/// 通过 tarpc RPC 调用 primary 实例的 `transfer_tab()`，
+/// 将序列化后的 `TabState` 发送给目标实例。
+///
+/// # 参数
+/// - `stream`: 已连接目标实例的 UnixStream
+/// - `tab`: 要迁移的标签页完整状态
+pub async fn request_transfer_tab(stream: UnixStream, tab: TabState) -> io::Result<()> {
+    let client = make_instance_client(stream);
+    let tab_id = tab.id;
 
     if let Err(e) = client
         .transfer_tab(context::current(), tab)
         .await
     {
-        error!("failed to send transfer_tab: {e}");
+        error!("failed to request transfer_tab: {e}");
+    } else {
+        info!("sent transfer_tab request: id={tab_id}");
     }
     Ok(())
 }
@@ -216,7 +243,7 @@ pub async fn send_transfer_tab(stream: UnixStream, tab: TabState) -> io::Result<
 // run_app_reuse
 // ---------------------------------------------------------------------------
 
-/// 连接到指定 instance_id，发送 `open_tabs` 请求，然后退出进程。
+/// 连接到指定 instance_id，发送打开新窗口请求，然后退出进程。
 pub async fn run_app_reuse(instance_id: Option<u64>, paths: &[String]) -> ! {
     let connect_result = if let Some(id) = instance_id {
         connect_to_instance(id).await
@@ -226,8 +253,8 @@ pub async fn run_app_reuse(instance_id: Option<u64>, paths: &[String]) -> ! {
 
     match connect_result {
         Ok(stream) => {
-            send_open_tabs(stream, paths).await.ok();
-            info!("sent open_tabs request, exiting");
+            request_open_window(stream, paths).await.ok();
+            info!("sent open new window request to primary, exiting");
             std::process::exit(0);
         }
         Err(e) => {

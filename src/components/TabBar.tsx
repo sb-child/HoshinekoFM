@@ -14,6 +14,8 @@ interface TabBarProps {
     onTabClick: (id: string) => void;
     onTabClose: (id: string) => void;
     onNewTab: () => void;
+    /** Tab 右键菜单回调（用于"在新窗口中打开"等操作） */
+    onTabContextMenu?: (e: React.MouseEvent, tabId: string) => void;
 }
 
 const getTabTitle = (title: string): string => {
@@ -40,7 +42,7 @@ const getTabTitle = (title: string): string => {
   }
 };
 
-export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onTabClick, onTabClose, onNewTab }) => {
+export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onTabClick, onTabClose, onNewTab, onTabContextMenu }) => {
   return (
     <div className="tab-bar">
       {tabs.map(tab => (
@@ -48,6 +50,7 @@ export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onTabClick, o
           key={tab.id}
           className={`tab-item ${tab.id === activeTabId ? 'active' : ''}`}
           onClick={() => onTabClick(tab.id)}
+          onContextMenu={(e) => onTabContextMenu?.(e, tab.id)}
         >
           <span className="tab-title">{getTabTitle(tab.title)}</span>
           <button

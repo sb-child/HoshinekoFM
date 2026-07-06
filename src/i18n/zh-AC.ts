@@ -21,6 +21,7 @@ const zhAC = {
   'context_menu.open': '打开',
   'context_menu.open_with': '打开方式...',
   'context_menu.open_terminal': '在内建终端打开',
+  'context_menu.open_in_new_window': '在新窗口中打开',
   'context_menu.copy': '复制',
   'context_menu.cut': '剪切',
   'context_menu.paste': '粘贴',

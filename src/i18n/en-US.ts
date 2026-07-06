@@ -21,6 +21,7 @@ const enUS = {
   'context_menu.open': 'Open',
   'context_menu.open_with': 'Open with...',
   'context_menu.open_terminal': 'Open in built-in terminal',
+  'context_menu.open_in_new_window': 'Open in new window',
   'context_menu.copy': 'Copy',
   'context_menu.cut': 'Cut',
   'context_menu.paste': 'Paste',

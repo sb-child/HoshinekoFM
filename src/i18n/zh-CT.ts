@@ -21,6 +21,7 @@ const zhCT = {
   'context_menu.open': '打開',
   'context_menu.open_with': '打開方式...',
   'context_menu.open_terminal': '喺內置終端打開',
+  'context_menu.open_in_new_window': '喺新視窗度打開',
   'context_menu.copy': '複製',
   'context_menu.cut': '剪下',
   'context_menu.paste': '貼上',

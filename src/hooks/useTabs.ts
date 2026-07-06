@@ -96,6 +96,22 @@ export function useTabs() {
     );
   }, [activeTabId]);
 
+  /**
+   * 分离标签页到新窗口（右键菜单）。
+   * 
+   * TODO: 实现分离逻辑。
+   * 实现计划：
+   *   1. invoke("new_window", { paths: [tabPath] }) → 在后端创建新窗口
+   *   2. invoke("close_tab", { id: tabId }) → 关闭当前窗口中的此 tab
+   *   3. 或后端实现 transfer_tab RPC，将 tab 完整状态跨实例迁移
+   * 
+   * @param tabId 要分离的标签页 ID
+   * @param tabPath 当前 tab 浏览的路径
+   */
+  const handleDetachTab = useCallback((_tabId: string, _tabPath: string) => {
+    // 预留：分离标签页到新窗口
+  }, []);
+
   const currentPath = tabs.find((t) => t.id === activeTabId)?.path || "";
 
   return {
@@ -110,5 +126,6 @@ export function useTabs() {
     handleSidebarNavigate,
     handleScrollToComplete,
     refreshActiveTab,
+    handleDetachTab,
   };
 }
