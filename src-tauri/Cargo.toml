@@ -28,6 +28,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["full"] }
 thiserror = "2"
 base64 = "0.22"
+tarpc = { version = "0.37", features = ["serde-transport"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+nix = { version = "0.31", features = ["fs", "process", "user"] }
+notify = { version = "7", features = ["macos_kqueue"] }
+tokio-serde = { version = "0.9.0", features = ["bincode"] }
+futures = "0.3.32"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
