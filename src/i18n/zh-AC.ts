@@ -415,6 +415,6 @@ const zhAC = {
   'language_auto': '跟随系统',
 } as const;
 
-export const match = (lang: string) => false;
+export const match = (_lang: string) => false;
 
 export default zhAC;

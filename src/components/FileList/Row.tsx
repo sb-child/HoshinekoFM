@@ -10,6 +10,7 @@ import {
   formatSize,
   listSpacing,
 } from "./utils";
+import { useFileDraggable, useFolderDroppable, useDragOver } from "../../utils/dnd";
 
 interface RowData {
   items: ListItem[];
@@ -24,20 +25,17 @@ interface RowData {
   onImageError: (path: string) => void;
   onItemClick: (e: React.MouseEvent, file: IFile) => void;
   onItemDoubleClick: (file: IFile) => void;
-  onFileDragStart: (e: React.DragEvent, file: IFile) => void;
   onRenameInputChange: (value: string) => void;
   onRenameSubmit: () => void;
   onRenameCancel: () => void;
-  onFolderDragOver: (e: React.DragEvent, file: IFile) => void;
-  onFolderDragLeave: () => void;
-  onFolderDrop: (e: React.DragEvent, file: IFile) => void;
   onHoverFile?: (file: IFile | null) => void;
-  dragOverPath: string | null;
   iconSize: number;
   filledIcons: boolean;
   viewMode: "grid" | "list";
   columns: number;
   marqueeEnabled: boolean;
+  /** 当前目录所有文件（用于 dnd-kit 拖拽） */
+  allFiles: IFile[];
 }
 
 function FileIconDisplay({
@@ -186,7 +184,14 @@ function FileNameDisplay({
   );
 }
 
-function ListRowItem({
+/**
+ * 可拖拽的文件项（使用 dnd-kit）。
+ *
+ * 文件项使用 useDraggable，文件夹额外注册 useDroppable（供 collisionDetection 测量）。
+ * 拖拽高亮由 DragOverContext 管理（不依赖 useDroppable 的 isOver，避免与 useDraggable 冲突）。
+ * 通过 data-droppable-id 属性供 Tauri onDragDropEvent 查找目标文件夹。
+ */
+function DraggableFileItem({
   data,
   file,
   sp,
@@ -202,11 +207,35 @@ function ListRowItem({
   const isSelected = data.selectedFiles.has(file.path);
   const hasFailed = data.failedImages.has(file.path);
   const isRenaming = data.renamingPath === file.path;
-  const isDragOver = file.isDirectory && data.dragOverPath === file.path;
+
+  // dnd-kit: 文件可拖拽
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useFileDraggable(file, data.selectedFiles, data.allFiles);
+
+  // dnd-kit: 文件夹可放置（注册 droppable DOM 节点供 collisionDetection 测量）
+  const { setNodeRef: setDropRef } = useFolderDroppable(file);
+
+  // 从 DragOverContext 读取当前悬停目标（替代 useDroppable 的 isOver）
+  const dragOverPath = useDragOver();
+  const isOver = file.isDirectory && dragOverPath === file.path;
+
+  // 合并 drag 和 drop 的 ref
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      setDragRef(el);
+      setDropRef(el);
+    },
+    [setDragRef, setDropRef],
+  );
 
   return (
     <div
-      className={`file-list-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+      ref={setRef}
+      className={`file-list-item ${isSelected ? "selected" : ""} ${isOver ? "drag-over" : ""}`}
       style={{
         display: "flex",
         alignItems: "center",
@@ -217,7 +246,9 @@ function ListRowItem({
         borderRadius: `${sp.borderRadius}px`,
         cursor: "pointer",
         boxSizing: "border-box",
+        opacity: isDragging ? 0.5 : 1,
       }}
+      data-droppable-id={file.isDirectory ? `folder:${file.path}` : undefined}
       onMouseEnter={() => data.onHoverFile?.(file)}
       onMouseLeave={() => data.onHoverFile?.(null)}
       onMouseDown={(e) => {
@@ -232,17 +263,8 @@ function ListRowItem({
         e.stopPropagation();
         data.onContextMenu?.(e, file);
       }}
-      draggable={!isRenaming}
-      onDragStart={(e) => data.onFileDragStart(e, file)}
-      onDragOver={
-        file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined
-      }
-      onDragLeave={
-        file.isDirectory ? () => data.onFolderDragLeave() : undefined
-      }
-      onDrop={
-        file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
-      }
+      {...dragAttributes}
+      {...dragListeners}
       tabIndex={0}
       role="button"
     >
@@ -290,12 +312,38 @@ function GridRowItem({
   const isSelected = data.selectedFiles.has(file.path);
   const hasFailed = data.failedImages.has(file.path);
   const isRenaming = data.renamingPath === file.path;
-  const isDragOver = file.isDirectory && data.dragOverPath === file.path;
+
+  // dnd-kit: 文件可拖拽
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useFileDraggable(file, data.selectedFiles, data.allFiles);
+
+  // dnd-kit: 文件夹可放置（注册 droppable DOM 节点供 collisionDetection 测量）
+  const { setNodeRef: setDropRef } = useFolderDroppable(file);
+
+  // 从 DragOverContext 读取当前悬停目标（替代 useDroppable 的 isOver）
+  const dragOverPath = useDragOver();
+  const isOver = file.isDirectory && dragOverPath === file.path;
+
+  // 合并 drag 和 drop 的 ref
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      setDragRef(el);
+      setDropRef(el);
+    },
+    [setDragRef, setDropRef],
+  );
 
   return (
     <div
+      ref={setRef}
       key={file.path}
-      className={`file-list-item file-grid-item ${isSelected ? "selected" : ""} ${isDragOver ? "drag-over" : ""}`}
+      className={`file-list-item file-grid-item ${isSelected ? "selected" : ""} ${isOver ? "drag-over" : ""}`}
+      style={{ opacity: isDragging ? 0.5 : 1 }}
+      data-droppable-id={file.isDirectory ? `folder:${file.path}` : undefined}
       onMouseEnter={() => data.onHoverFile?.(file)}
       onMouseLeave={() => data.onHoverFile?.(null)}
       onMouseDown={(e) => {
@@ -310,17 +358,8 @@ function GridRowItem({
         e.stopPropagation();
         data.onContextMenu?.(e, file);
       }}
-      draggable={!isRenaming}
-      onDragStart={(e) => data.onFileDragStart(e, file)}
-      onDragOver={
-        file.isDirectory ? (e) => data.onFolderDragOver(e, file) : undefined
-      }
-      onDragLeave={
-        file.isDirectory ? () => data.onFolderDragLeave() : undefined
-      }
-      onDrop={
-        file.isDirectory ? (e) => data.onFolderDrop(e, file) : undefined
-      }
+      {...dragAttributes}
+      {...dragListeners}
       tabIndex={0}
       role="button"
     >
@@ -434,7 +473,7 @@ function Row({ index, style, ...data }: RowComponentProps<RowData>) {
     const sp = listSpacing(data.iconSize);
     return (
       <div style={style}>
-        <ListRowItem
+        <DraggableFileItem
           data={data}
           file={item.file}
           sp={sp}

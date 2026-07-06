@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import { showToast, showProgressToast, updateProgress, finishToast, dismissToast, shortPath } from '../utils/toast';
 import { useClipboard } from '../contexts/ClipboardContext';
 import { StatusBar } from './StatusBar';
@@ -18,6 +19,8 @@ import {
   copyToClipboard,
   cutToClipboard,
 } from '../utils/fileOperations';
+import { FileDndProvider, type DndDragData, parseDropPaths, useSetDragOver } from '../utils/dnd';
+import type { DragEndEvent } from '@dnd-kit/core';
 
 import { Omnibar } from './Omnibar';
 import { Dashboard } from './Dashboard';
@@ -167,10 +170,13 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     try {
       const { data, actualPath, error } = await FileSystemService.listDir(path);
       clearToast();
+      console.log(`[explorer] loadPath("${path}") → ${data.length} files, actualPath="${actualPath}"`);
       setFiles(data);
       setCurrentPath(actualPath);
       onPathChange(tabId, actualPath);
       addToRecents(actualPath);
+      // 更新 sessionStorage，供 onDragDropEvent 使用
+      sessionStorage.setItem('hnfm-current-path', actualPath);
 
       if (error && actualPath !== path) {
         const toastKey = `${error.code}:${error.originalPath}`;
@@ -193,6 +199,77 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       showToast(t('error.cannot_open_dir', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
   }, [onPathChange, tabId, addToRecents]);
+
+  /**
+   * 浏览器环境下的外部拖入处理。
+   *
+   * Tauri 环境下由 App.tsx 的 onDragDropEvent 处理。
+   * 浏览器环境下需要通过 HTML5 DnD 的 drop 事件处理。
+   * 这不会与 dnd-kit 冲突，因为 dnd-kit 使用 Pointer Events。
+   */
+  const setDragOverPath = useSetDragOver();
+  const setDragOverPathRef = useRef(setDragOverPath);
+  setDragOverPathRef.current = setDragOverPath;
+
+  useEffect(() => {
+    // HTML5 DnD handler 在 Tauri 和浏览器环境下都生效
+    // Tauri 的 onDragDropEvent 处理 text/uri-list（Nautilus 等）
+    // 这里的 handler 处理 text/plain（VSCode 等）
+    // 两者共存，互不冲突
+
+    const handleDocDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+
+      // 检测鼠标下方的文件夹元素，更新 DragOverContext
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const folderItem = el?.closest('[data-droppable-id^="folder:"]');
+      if (folderItem) {
+        const droppableId = folderItem.getAttribute("data-droppable-id");
+        const folderPath = droppableId?.replace("folder:", "");
+        if (folderPath) {
+          setDragOverPathRef.current(folderPath);
+          return;
+        }
+      }
+      setDragOverPathRef.current(null);
+    };
+
+    const handleDocDrop = (e: DragEvent) => {
+      setDragOverPathRef.current(null);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const paths = parseDropPaths(dt);
+      if (paths.length > 0) {
+        e.preventDefault();
+        const targetFolder = sessionStorage.getItem("hnfm-dragover-folder");
+        const target = targetFolder || currentPathRef.current || "/";
+        importFiles(
+          paths.map((p) => ({ path: p })),
+          target,
+          () => loadPath(currentPathRef.current),
+        ).then(() => {
+          showToast(t("toast.imported_files", paths.length), "success");
+        });
+      }
+    };
+
+    const handleDocDragLeave = (e: DragEvent) => {
+      // 只在真正离开窗口时清除（relatedTarget 为 null）
+      if (!e.relatedTarget) {
+        setDragOverPathRef.current(null);
+      }
+    };
+
+    document.addEventListener("dragover", handleDocDragOver, true);
+    document.addEventListener("drop", handleDocDrop, true);
+    document.addEventListener("dragleave", handleDocDragLeave, true);
+    return () => {
+      document.removeEventListener("dragover", handleDocDragOver, true);
+      document.removeEventListener("drop", handleDocDrop, true);
+      document.removeEventListener("dragleave", handleDocDragLeave, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (initialPath && loadingPathRef.current !== initialPath) {
@@ -336,6 +413,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
   const handleDropOnTarget = useCallback(
     async (draggedFiles: IFile[], targetPath: string, operation: "move" | "copy", targetDirFiles: IFile[], sourcePath: string) => {
+      console.log(`[drop] handleDropOnTarget: ${draggedFiles.length} files → "${targetPath}", op=${operation}`);
       const entries = draggedFiles
         .filter((f) => f.path !== targetPath)
         .map((f) => ({ path: f.path, name: f.name, isDir: f.isDirectory }));
@@ -418,28 +496,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       });
     },
     [onConflictDialog, loadPath, currentPath],
-  );
-
-  const handleDropOnBreadcrumb = useCallback(
-    async (targetPath: string, draggedFiles: IFile[], operation: "move" | "copy") => {
-      const { data: targetFiles } = await FileSystemService.listDir(targetPath);
-      const sourcePath = draggedFiles.length > 0
-        ? draggedFiles[0].path.substring(0, draggedFiles[0].path.lastIndexOf('/'))
-        : currentPath;
-      handleDropOnTarget(draggedFiles, targetPath, operation, targetFiles, sourcePath);
-    },
-    [handleDropOnTarget, currentPath],
-  );
-
-  const handleExternalDropOnBreadcrumb = useCallback(
-    async (targetPath: string, filePaths: string[]) => {
-      await importFiles(
-        filePaths.map((p) => ({ path: p })),
-        targetPath,
-      );
-      loadPath(currentPath);
-    },
-    [loadPath, currentPath],
   );
 
   // Sort State
@@ -786,9 +842,53 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     setSelectedFiles(new Set());
   }, []);
 
-  const handleDropOnFolderCallback = useCallback(
-    (draggedFiles: IFile[], targetPath: string, operation: "move" | "copy") =>
-      handleDropOnTargetRef.current(draggedFiles, targetPath, operation, filesForFileListRef.current, currentPathRef.current),
+  /**
+   * dnd-kit 拖放结束回调。
+   *
+   * - 拖放到文件夹/背景：执行 move/copy 操作
+   * - 拖放到外部（over 为 null）：调用 startDrag 触发原生拖放
+   */
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent, shiftKey: boolean) => {
+      const { active, over } = event;
+
+      const dragData = active.data.current as DndDragData | undefined;
+      if (!dragData || dragData.files.length === 0) return;
+
+      // 拖放到外部（没有 over 目标）→ 调用 startDrag 触发原生拖放
+      if (!over) {
+        const paths = dragData.files.map((f) => f.path);
+        if (isTauri()) {
+          import("../utils/drag").then(({ startDrag }) => {
+            startDrag({ item: paths }, (payload) => {
+              console.log("[dnd] drag result:", payload.result);
+            }).catch((e) => {
+              console.error("[dnd] startDrag failed:", e);
+            });
+          });
+        } else {
+          console.log("[mock] startDrag:", paths);
+        }
+        return;
+      }
+
+      const overData = over.data.current as { path?: string; isDirectory?: boolean; isBackground?: boolean } | undefined;
+      if (!overData?.path) return;
+
+      // 不允许拖到自身
+      if (dragData.files.some((f) => f.path === overData.path)) return;
+
+      const targetPath = overData.path;
+      const operation = shiftKey ? "copy" : "move";
+
+      handleDropOnTargetRef.current(
+        dragData.files,
+        targetPath,
+        operation,
+        filesForFileListRef.current,
+        dragData.sourcePath,
+      );
+    },
     []
   );
 
@@ -796,118 +896,130 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     handleSelectRef.current(file, toggle, range);
   }, []);
 
+  /** 拖拽离开窗口 → 触发 Tauri 原生拖放（App→外部应用） */
+  const handleDragLeaveWindow = useCallback((draggedFiles: IFile[]) => {
+    const paths = draggedFiles.map((f) => f.path);
+    if (isTauri()) {
+      import("../utils/drag").then(({ startDrag }) => {
+        startDrag({ item: paths }, (payload) => {
+          console.log("[dnd] drag result:", payload.result);
+        }).catch((e) => {
+          console.error("[dnd] startDrag failed:", e);
+        });
+      });
+    } else {
+      console.log("[mock] startDrag (leave window):", paths);
+    }
+  }, []);
+
+  /** 拖拽开始 → emit 数据到其他窗口（跨窗口拖放） */
+  const handleDragStart = useCallback((info: { files: IFile[]; sourcePath: string }) => {
+    if (isTauri()) {
+      import("@tauri-apps/api/event").then(({ emit }) => {
+        emit("dnd:drag-start", {
+          files: info.files.map((f) => ({ path: f.path, name: f.name, isDirectory: f.isDirectory })),
+          sourcePath: info.sourcePath,
+        }).catch((e: unknown) => {
+          console.error("[dnd] emit drag-start failed:", e);
+        });
+      });
+    }
+  }, []);
+
   return (
-    <div style={{ display: isActive ? 'flex' : 'none', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
-      {/* Top Bar */}
-      {(currentPath !== 'app://dashboard') && (
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', padding: '8px 24px 0' }}>
-          <IconButton onClick={handleUp} variant="standard">
-            <Icon name="arrow_upward" />
-          </IconButton>
-          <div style={{ flex: 1, overflow: 'hidden' }}>
+    <FileDndProvider onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragLeaveWindow={handleDragLeaveWindow}>
+      <div style={{ display: isActive ? 'flex' : 'none', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
+        {/* Top Bar */}
+        {(currentPath !== 'app://dashboard') && (
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', padding: '8px 24px 0' }}>
+            <IconButton onClick={handleUp} variant="standard">
+              <Icon name="arrow_upward" />
+            </IconButton>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
             <Omnibar
               currentPath={currentPath}
               onNavigate={(p: string) => loadPath(p, true)}
               onSearch={handleSearch}
-              onDropFiles={handleDropOnBreadcrumb}
-              onDropExternalFiles={handleExternalDropOnBreadcrumb}
             />
-          </div>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <IconButton
-              variant={groupingEnabled ? 'filled' : 'standard'}
-              onClick={() => setGroupingEnabled(!groupingEnabled)}
-              title={t('sort.toggle_grouping')}
-            >
-              <Icon name="view_agenda" />
-            </IconButton>
-            <div style={{ width: '1px', background: 'var(--md-sys-color-outline-variant)', margin: '0 4px' }} />
-            <IconButton
-              variant={sortBy === 'name' ? 'filled' : 'standard'}
-              onClick={() => {
-                if (sortBy === 'name') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-                else { setSortBy('name'); setSortOrder('asc'); }
-              }}
-              title={t('sort.by_name')}
-            >
-              <Icon name="sort_by_alpha" />
-            </IconButton>
-            <IconButton
-              variant={sortBy === 'date' ? 'filled' : 'standard'}
-              onClick={() => {
-                if (sortBy === 'date') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-                else { setSortBy('date'); setSortOrder('desc'); }
-              }}
-              title={t('sort.by_date')}
-            >
-              <Icon name="calendar_today" />
-            </IconButton>
-          </div>
-        </div>
-      )}
-
-      {currentPath === 'app://dashboard' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
-          <Dashboard onNavigate={(p: string) => loadPath(p, true)} />
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-          {searchActive && (
-            <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Icon name="search" />
-              <span>{t('search.results', files.length, searchQuery)}</span>
-              <IconButton onClick={() => loadPath(currentPath, true)} variant="standard" title={t('search.clear')}>
-                <Icon name="close" />
+            </div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <IconButton
+                variant={groupingEnabled ? 'filled' : 'standard'}
+                onClick={() => setGroupingEnabled(!groupingEnabled)}
+                title={t('sort.toggle_grouping')}
+              >
+                <Icon name="view_agenda" />
+              </IconButton>
+              <div style={{ width: '1px', background: 'var(--md-sys-color-outline-variant)', margin: '0 4px' }} />
+              <IconButton
+                variant={sortBy === 'name' ? 'filled' : 'standard'}
+                onClick={() => {
+                  if (sortBy === 'name') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                  else { setSortBy('name'); setSortOrder('asc'); }
+                }}
+                title={t('sort.by_name')}
+              >
+                <Icon name="sort_by_alpha" />
+              </IconButton>
+              <IconButton
+                variant={sortBy === 'date' ? 'filled' : 'standard'}
+                onClick={() => {
+                  if (sortBy === 'date') setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                  else { setSortBy('date'); setSortOrder('desc'); }
+                }}
+                title={t('sort.by_date')}
+              >
+                <Icon name="calendar_today" />
               </IconButton>
             </div>
-          )}
-          <div
-            style={{ flex: 1, overflow: 'hidden' }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'copy';
-            }}
-            onDrop={async (e) => {
-              e.preventDefault();
-              const droppedFiles = Array.from(e.dataTransfer.files).filter(f => (f as unknown as { path?: string }).path);
-              if (droppedFiles.length > 0 && currentPath) {
-                await importFiles(
-                  droppedFiles.map(f => ({ path: (f as unknown as { path: string }).path })),
-                  currentPath,
-                  () => loadPath(currentPath),
-                );
-              }
-            }}
-          >
-            <FileList
-              files={sortedFiles}
-              selectedFiles={selectedFiles}
-              onSelect={stableHandleSelect}
-              onNavigate={handleNavigate}
-              onRename={handleRename}
-              onContextMenu={handleFileContextMenu}
-              onBackgroundContextMenu={handleBackgroundContextMenu}
-              onDeselectAll={handleDeselectAll}
-              onSetSelected={setSelectedFiles}
-              onSelectionModeChange={handleSelectionModeChange}
-              onHoverFile={handleHoverFile}
-              onDropOnFolder={handleDropOnFolderCallback}
-              currentPath={currentPath}
-              iconSize={iconSize}
-              viewMode={viewMode}
-              filledIcons={filledIcons}
-              groupingEnabled={groupingEnabled}
-              scrollToFileName={scrollToFileName}
-              onScrollToComplete={onScrollToComplete}
-              marqueeEnabled={marqueeEnabled}
-            />
           </div>
-        </div>
-      )}
+        )}
 
-      {currentPath !== 'app://dashboard' && (
-        <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} selectionHint={selectionHint} hoveredFile={hoveredFile} />
-      )}
-    </div>
+        {currentPath === 'app://dashboard' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
+            <Dashboard onNavigate={(p: string) => loadPath(p, true)} />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+            {searchActive && (
+              <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Icon name="search" />
+                <span>{t('search.results', files.length, searchQuery)}</span>
+                <IconButton onClick={() => loadPath(currentPath, true)} variant="standard" title={t('search.clear')}>
+                  <Icon name="close" />
+                </IconButton>
+              </div>
+            )}
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <FileList
+                files={sortedFiles}
+                selectedFiles={selectedFiles}
+                onSelect={stableHandleSelect}
+                onNavigate={handleNavigate}
+                onRename={handleRename}
+                onContextMenu={handleFileContextMenu}
+                onBackgroundContextMenu={handleBackgroundContextMenu}
+                onDeselectAll={handleDeselectAll}
+                onSetSelected={setSelectedFiles}
+                onSelectionModeChange={handleSelectionModeChange}
+                onHoverFile={handleHoverFile}
+                currentPath={currentPath}
+                iconSize={iconSize}
+                viewMode={viewMode}
+                filledIcons={filledIcons}
+                groupingEnabled={groupingEnabled}
+                scrollToFileName={scrollToFileName}
+                onScrollToComplete={onScrollToComplete}
+                marqueeEnabled={marqueeEnabled}
+              />
+            </div>
+          </div>
+        )}
+
+        {currentPath !== 'app://dashboard' && (
+          <StatusBar totalItems={files.length} selectedCount={selectedFiles.size} selectionHint={selectionHint} hoveredFile={hoveredFile} />
+        )}
+      </div>
+    </FileDndProvider>
   );
 }

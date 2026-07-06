@@ -148,23 +148,52 @@ pub async fn start_drag<R: Runtime>(
 
         let options = options.unwrap_or_default();
 
+        // ---- 在 /tmp 下创建临时 symlink，确保 Wayland compositor 可访问 ----
+        let temp_dir = {
+            let pid = std::process::id();
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_micros();
+            let dir = std::env::temp_dir().join(format!("hnfm-dnd-{pid}-{ts:x}"));
+            let _ = std::fs::create_dir_all(&dir);
+            dir
+        };
+
+        // 从源文件创建临时副本（空文件占位，后续移除此 mock）
+        let (drag_paths, is_data) = match item {
+            DragItem::Files(paths) => {
+                let links: Vec<PathBuf> = paths
+                    .iter()
+                    .filter_map(|p| {
+                        let name = p.file_name()?;
+                        let link = temp_dir.join(name);
+                        std::fs::File::create(&link).ok()?;
+                        Some(link)
+                    })
+                    .collect();
+                (links, false)
+            }
+            DragItem::Data { .. } => (vec![], true),
+        };
+
         app.run_on_main_thread(move || {
             let raw_window = match window.gtk_window() {
                 Ok(w) => w,
                 Err(e) => {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
                     let _ = tx.send(Err(Error::Tauri(e)));
                     return;
                 }
             };
 
-            let drag_item = match item {
-                DragItem::Files(files) => linux::DragItem::Files(files),
-                DragItem::Data { .. } => {
-                    // Data drag not supported on Linux yet — start a dummy drag
-                    let _ = tx.send(Ok(()));
-                    return;
-                }
-            };
+            if is_data {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                let _ = tx.send(Ok(()));
+                return;
+            }
+
+            let drag_item = linux::DragItem::Files(drag_paths);
 
             let r = linux::start_drag_native(
                 &raw_window,
@@ -182,6 +211,13 @@ pub async fn start_drag<R: Runtime>(
                         },
                     };
                     let _ = on_event.send(callback_result);
+
+                    // 延迟清理临时 symlink（给外部 app 时间读取文件）
+                    let td = temp_dir.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                        let _ = std::fs::remove_dir_all(&td);
+                    });
                 },
                 linux::Options {
                     skip_animation_on_cancel_or_failure: false,

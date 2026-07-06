@@ -1,3 +1,5 @@
+import { isTauri } from '@tauri-apps/api/core';
+
 const ICON_NAMES = [
   'folder',
   'image',
@@ -40,34 +42,54 @@ function renderIcon(name: string, size: number, filled: boolean): Promise<Blob> 
 
 let initialized = false;
 
+/**
+ * 预渲染拖放图标并缓存到后端（Electron 时代 API）。
+ *
+ * 在 Tauri 迁移阶段，浏览器 mock 环境下不需要真正的拖放图标，
+ * 此函数在非 Tauri 环境中跳过，避免不必要的 canvas 操作。
+ */
 export async function initDragIcons(): Promise<void> {
   if (initialized) return;
   initialized = true;
 
-  const size = 96;
-
-  await document.fonts.ready;
-
-  const tasks: Promise<void>[] = [];
-  for (const name of ICON_NAMES) {
-    for (const filled of [false, true]) {
-      const key = filled ? `${name}:filled` : name;
-      tasks.push(
-        renderIcon(name, size, filled)
-          .then(async (blob) => {
-            const buf = await blob.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            const base64 = btoa(binary);
-            window.electron.cacheDragIcon(key, base64);
-          })
-          .catch(() => {})
-      );
-    }
+  // 仅在 Tauri 环境中执行（需要原生拖放图标）
+  if (!isTauri()) {
+    console.log("[mock] initDragIcons: skipped (browser)");
+    return;
   }
 
-  await Promise.allSettled(tasks);
+  try {
+    const size = 96;
+
+    if (!document?.fonts?.ready) {
+      console.warn("[mock] initDragIcons: document.fonts not available, skipping");
+      return;
+    }
+    await document.fonts.ready;
+
+    const tasks: Promise<void>[] = [];
+    for (const name of ICON_NAMES) {
+      for (const filled of [false, true]) {
+        const key = filled ? `${name}:filled` : name;
+        tasks.push(
+          renderIcon(name, size, filled)
+            .then(async (blob) => {
+              const buf = await blob.arrayBuffer();
+              const bytes = new Uint8Array(buf);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              const base64 = btoa(binary);
+              window.electron.cacheDragIcon(key, base64);
+            })
+            .catch(() => {})
+        );
+      }
+    }
+
+    await Promise.allSettled(tasks);
+  } catch (e) {
+    console.warn("[mock] initDragIcons: failed", e);
+  }
 }

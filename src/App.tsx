@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { showToast } from "./utils/toast";
 import { t, setLocale, getLocale, type Locale } from "./i18n";
-import { initDragIcons } from "./utils/dragIconRenderer";
 import "./index.css";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import "./utils/toast.css";
 import { ClipboardProvider, useClipboard } from "./contexts/ClipboardContext";
-import { DragProvider } from "./contexts/DragContext";
 import { ThemeService } from "./services/ThemeService";
 import { NavigationRail } from "./components/NavigationRail";
 import { Sidebar } from "./components/Sidebar";
@@ -26,6 +25,8 @@ import { ExplorerTab } from "./components/ExplorerTab";
 import { OpenWithDialog } from "./components/OpenWithDialog";
 import { PropertiesDialog } from "./components/PropertiesDialog";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import { importFiles } from "./utils/fileOperations";
+import { DragOverProvider, useSetDragOver } from "./utils/dnd";
 import {
   trashFile,
   pasteFiles,
@@ -59,6 +60,9 @@ function AppContent() {
     refreshActiveTab,
     handleDetachTab,
   } = useTabs();
+
+  const setDragOverPath = useSetDragOver();
+  const lastDropTimeRef = useRef(0);
 
   const {
     contextMenu,
@@ -202,15 +206,26 @@ function AppContent() {
     ThemeService.init();
 
     const init = async () => {
-      if (window.electron) {
-        initDragIcons();
+      try {
+        console.log("[init] starting...");
+        const tauriEnv = isTauri();
+        console.log("[init] runtime:", tauriEnv ? "Tauri" : "Browser");
 
-        const startupPath = await window.electron.getStartupPath();
-        if (startupPath) {
-          handleAddTab(startupPath);
+        if (window.electron) {
+          const startupPath = await window.electron.getStartupPath();
+          console.log("[init] startupPath:", startupPath);
+          if (startupPath) {
+            handleAddTab(startupPath);
+          } else {
+            loadHome();
+          }
         } else {
+          console.warn("[init] window.electron not available");
           loadHome();
         }
+      } catch (e) {
+        console.error("[init] failed:", e);
+        loadHome();
       }
     };
     init();
@@ -230,8 +245,7 @@ function AppContent() {
    * 仅在 Tauri 环境下注册（浏览器中由 electron mock 处理）。
    */
   useEffect(() => {
-    // @ts-expect-error __TAURI__ is injected by Tauri runtime
-    if (!window.__TAURI__) return;
+    if (!isTauri()) return;
 
     let unlisten: (() => void) | undefined;
     const setup = async () => {
@@ -244,6 +258,141 @@ function AppContent() {
     setup();
     return () => { unlisten?.(); };
   }, [handleAddTab]);
+
+  /**
+   * 监听 Tauri 原生拖放事件（外部→内部）。
+   *
+   * 当文件从桌面/其他应用拖入窗口时，Tauri 触发 onDragDropEvent。
+   * - over 事件：用坐标检测鼠标下方的文件夹元素
+   * - drop 事件：导入文件到目标文件夹或当前目录
+   *
+   * 仅在 Tauri 环境下注册。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        const ul = await win.onDragDropEvent((event) => {
+          const payload = event.payload;
+          console.log("[dnd] onDragDropEvent:", payload.type);
+          switch (payload.type) {
+            case "over": {
+              // 用坐标查找鼠标下方的文件夹元素
+              const pos = payload.position;
+              const el = document.elementFromPoint(pos.x, pos.y);
+              const folderItem = el?.closest('[data-droppable-id^="folder:"]');
+              if (folderItem) {
+                const droppableId = folderItem.getAttribute("data-droppable-id");
+                const folderPath = droppableId?.replace("folder:", "");
+                if (folderPath) {
+                  setDragOverPath(folderPath);
+                  sessionStorage.setItem("hnfm-dragover-folder", folderPath);
+                }
+              } else {
+                setDragOverPath(null);
+                sessionStorage.removeItem("hnfm-dragover-folder");
+              }
+              break;
+            }
+            case "drop": {
+              // 防重入：1秒内忽略重复 drop
+              const now = Date.now();
+              if (now - lastDropTimeRef.current < 1000) {
+                console.log("[dnd] drop ignored (duplicate)");
+                break;
+              }
+              lastDropTimeRef.current = now;
+
+              setDragOverPath(null);
+              let paths = payload.paths;
+              console.log("[dnd] drop paths:", paths);
+
+              // 如果没有路径，检查跨窗口拖放数据
+              if (paths.length === 0) {
+                const crossWindowData = sessionStorage.getItem("hnfm-cross-window-drag");
+                if (crossWindowData) {
+                  try {
+                    const { files } = JSON.parse(crossWindowData);
+                    paths = files.map((f: { path: string }) => f.path);
+                    console.log("[dnd] cross-window drag data:", paths);
+                  } catch (e) {
+                    console.error("[dnd] failed to parse cross-window drag data:", e);
+                  }
+                  sessionStorage.removeItem("hnfm-cross-window-drag");
+                }
+              }
+
+              if (paths.length === 0) {
+                console.log("[dnd] no paths to import");
+                break;
+              }
+
+              const targetFolder = sessionStorage.getItem("hnfm-dragover-folder");
+              const currentPath = sessionStorage.getItem("hnfm-current-path") || "/";
+              const target = targetFolder || currentPath;
+              console.log("[dnd] importing to:", target);
+              try {
+                importFiles(
+                  paths.map((p: string) => ({ path: p })),
+                  target,
+                  () => refreshActiveTab(),
+                ).then(() => {
+                  showToast(t("toast.imported_files", paths.length), "success");
+                }).catch((e) => {
+                  console.error("[dnd] importFiles failed:", e);
+                  showToast(t("error.import_failed"), "error");
+                });
+              } catch (e) {
+                console.error("[dnd] importFiles exception:", e);
+                showToast(t("error.import_failed"), "error");
+              }
+              sessionStorage.removeItem("hnfm-dragover-folder");
+              break;
+            }
+            case "leave":
+              console.log("[dnd] leave");
+              setDragOverPath(null);
+              sessionStorage.removeItem("hnfm-dragover-folder");
+              break;
+          }
+        });
+        unlisten = ul;
+      } catch (e) {
+        console.error("[dnd] Failed to setup onDragDropEvent:", e);
+      }
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, [refreshActiveTab]);
+
+  /**
+   * 监听跨窗口拖放事件。
+   *
+   * 当用户从一个窗口拖拽文件到另一个窗口时，
+   * 源窗口通过 emit("dnd:drag-start") 发送拖拽数据，
+   * 目标窗口通过 listen("dnd:drag-start") 接收数据并存储。
+   *
+   * 仅在 Tauri 环境下注册。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const ul = await listen<{ files: { path: string; name: string; isDirectory: boolean }[]; sourcePath: string }>("dnd:drag-start", (event) => {
+        console.log("[dnd] cross-window drag-start received:", event.payload);
+        sessionStorage.setItem("hnfm-cross-window-drag", JSON.stringify(event.payload));
+      });
+      unlisten = ul;
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, []);
 
   useEffect(() => {
     const handler = (e: WheelEvent) => {
@@ -852,9 +1001,9 @@ function App() {
   return (
     <>
       <ClipboardProvider>
-        <DragProvider>
+        <DragOverProvider>
           <AppContent />
-        </DragProvider>
+        </DragOverProvider>
       </ClipboardProvider>
       <ToastContainer
         position="bottom-right"

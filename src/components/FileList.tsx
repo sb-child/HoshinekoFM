@@ -3,7 +3,6 @@ import type { IFile } from "../types/files";
 import "./FileList.css";
 import { AutoSizer } from "react-virtualized-auto-sizer";
 import { List, useListRef } from "react-window";
-import { useDrag } from "../contexts/DragContext";
 import {
   type ItemBox,
   DOUBLE_CLICK_THRESHOLD,
@@ -25,11 +24,6 @@ interface FileListProps {
   onContextMenu?: (e: React.MouseEvent, file: IFile) => void;
   onBackgroundContextMenu?: (e: React.MouseEvent) => void;
   onDeselectAll?: () => void;
-  onDropOnFolder?: (
-    files: IFile[],
-    targetPath: string,
-    operation: "move" | "copy",
-  ) => void;
   onSetSelected?: (paths: Set<string>) => void;
   onSelectionModeChange?: (
     mode: "replace" | "union" | "intersection" | "difference" | null,
@@ -45,16 +39,6 @@ interface FileListProps {
   marqueeEnabled: boolean;
 }
 
-// --- Main component ---
-
-let _draggedPaths: Set<string> = new Set();
-let _pendingNativeDragPaths: string[] | null = null;
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function clearPendingNativeDrag() {
-  _pendingNativeDragPaths = null;
-}
-
 const FileListComponent: React.FC<FileListProps> = ({
   files,
   selectedFiles,
@@ -64,7 +48,6 @@ const FileListComponent: React.FC<FileListProps> = ({
   onContextMenu,
   onBackgroundContextMenu,
   onDeselectAll,
-  onDropOnFolder,
   onSetSelected,
   onSelectionModeChange,
   onHoverFile,
@@ -80,7 +63,6 @@ const FileListComponent: React.FC<FileListProps> = ({
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
 
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
   const lastDragRef = useRef<{ path: string; time: number } | null>(null);
@@ -88,7 +70,6 @@ const FileListComponent: React.FC<FileListProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const listImperativeRef = useListRef(null);
-  const lastDragOverFolderRef = useRef<IFile | null>(null);
   const itemBoxesRef = useRef<ItemBox[]>([]);
 
   const {
@@ -104,8 +85,6 @@ const FileListComponent: React.FC<FileListProps> = ({
     onSetSelected,
     onSelectionModeChange,
   );
-
-  const { startDrag, endDrag, getDragState } = useDrag();
 
   useEffect(() => {
     return () => {
@@ -182,7 +161,7 @@ const FileListComponent: React.FC<FileListProps> = ({
     onSelect,
     currentPath,
     onScrollToComplete,
-  ]);  
+  ]);
 
   const handleImageError = useCallback((path: string) => {
     setFailedImages((prev) => {
@@ -196,7 +175,7 @@ const FileListComponent: React.FC<FileListProps> = ({
   // --- Item click ---
   const handleItemClick = useCallback(
     (e: React.MouseEvent, file: IFile) => {
-      document.activeElement?.blur();
+      (document.activeElement as HTMLElement)?.blur?.();
       if (renamingPath) return;
       if (isSelectingRef.current) return;
       if (didSelectRef.current) {
@@ -246,76 +225,6 @@ const FileListComponent: React.FC<FileListProps> = ({
     [onSelect, onNavigate, renamingPath],
   );
 
-  // --- Drag start (HTML5 DnD for internal, native file drag for external) ---
-  const handleFileDragStart = useCallback(
-    (e: React.DragEvent, file: IFile) => {
-      console.warn("[drag] dragstart entered:", file.name);
-
-      lastDragRef.current = { path: file.path, time: Date.now() };
-      lastClickRef.current = null;
-
-      const filesToDrag = selectedFiles.has(file.path)
-        ? files.filter((f) => selectedFiles.has(f.path))
-        : [file];
-
-      _draggedPaths = new Set(filesToDrag.map((f) => f.path));
-      startDrag(filesToDrag, currentPath || "");
-      lastDragOverFolderRef.current = null;
-
-      // Native file drag — deferred to dragend so internal HTML5 drops still work.
-      // On dragend, if _pendingNativeDragPaths is still set (no internal drop consumed it),
-      // we call startDrag to hand over to the OS compositor for external drop targets.
-      if (window.electron) {
-        _pendingNativeDragPaths = filesToDrag.map((f) => f.path);
-      }
-
-      // HTML5 DnD for internal drops
-      e.dataTransfer.effectAllowed = "copyMove";
-      const uris = filesToDrag
-        .map((f) => "file://" + encodeURI(f.path))
-        .join("\r\n");
-      e.dataTransfer.setData("text/uri-list", uris);
-      e.dataTransfer.setData("text/plain", uris);
-    },
-    [selectedFiles, files, currentPath, startDrag],
-  );
-
-  // Cleanup drag state on dragend.
-  // If _pendingNativeDragPaths is still set (no internal drop consumed it),
-  // fire the native drag for external apps before cleaning up.
-  useEffect(() => {
-    const onDragEnd = () => {
-      console.warn("[drag] dragend fired, cleaning up");
-      if (_pendingNativeDragPaths && window.electron) {
-        window.electron.startDrag(_pendingNativeDragPaths);
-      }
-      setDragOverPath(null);
-      lastDragOverFolderRef.current = null;
-      _draggedPaths = new Set();
-      _pendingNativeDragPaths = null;
-      endDrag();
-    };
-    document.addEventListener("dragend", onDragEnd, true);
-    return () => document.removeEventListener("dragend", onDragEnd, true);
-  }, [endDrag]);
-
-  // Debug: catch ALL drop events (capture phase, document level)
-  useEffect(() => {
-    const onDocDrop = (e: Event) => {
-      const de = e as DragEvent;
-      console.warn(
-        "[drag] DOCUMENT capture drop:",
-        (e.target as HTMLElement)?.tagName,
-        "class:",
-        (e.target as HTMLElement)?.className?.slice(0, 40),
-        "types:",
-        de.dataTransfer?.types,
-      );
-    };
-    document.addEventListener("drop", onDocDrop, true);
-    return () => document.removeEventListener("drop", onDocDrop, true);
-  }, []);
-
   const handleItemDoubleClick = useCallback(
     (file: IFile) => {
       if (renameTimeoutRef.current !== null) {
@@ -345,65 +254,6 @@ const FileListComponent: React.FC<FileListProps> = ({
     setRenamingPath(null);
     setRenameValue("");
   }, []);
-
-  // --- Folder drop handlers ---
-
-  const handleFolderDragOver = useCallback(
-    (e: React.DragEvent, file: IFile) => {
-      console.warn(
-        "[drag] dragover on folder:",
-        file.name,
-        "types:",
-        e.dataTransfer.types,
-      );
-      if (_draggedPaths.has(file.path)) {
-        e.dataTransfer.dropEffect = "none";
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = e.shiftKey ? "copy" : "move";
-      setDragOverPath(file.path);
-      // Track for internal drop (native drag kills HTML5 drop events)
-      lastDragOverFolderRef.current = file;
-    },
-    [],
-  );
-
-  const handleFolderDragLeave = useCallback(() => {
-    setDragOverPath(null);
-  }, []);
-
-  const handleFolderDrop = useCallback(
-    (e: React.DragEvent, targetFile: IFile) => {
-      console.warn("[drag] drop on folder:", targetFile.name);
-      _pendingNativeDragPaths = null;
-      const dragState = getDragState();
-      console.warn("[drag] drop getDragState:", dragState);
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOverPath(null);
-
-      if (!dragState || !onDropOnFolder) {
-        console.warn("[drag] drop NO dragState or NO onDropOnFolder");
-        _draggedPaths = new Set();
-        endDrag();
-        return;
-      }
-
-      if (_draggedPaths.has(targetFile.path)) {
-        _draggedPaths = new Set();
-        endDrag();
-        return;
-      }
-
-      const operation: "move" | "copy" = e.shiftKey ? "copy" : "move";
-      onDropOnFolder(dragState.files, targetFile.path, operation);
-      _draggedPaths = new Set();
-      endDrag();
-    },
-    [getDragState, onDropOnFolder, endDrag],
-  );
 
   // --- Rubber-band selection ---
 
@@ -450,7 +300,7 @@ const FileListComponent: React.FC<FileListProps> = ({
           }
           if (renamingPath) setRenamingPath(null);
           onDeselectAll?.();
-          document.activeElement?.blur();
+          (document.activeElement as HTMLElement)?.blur?.();
         }
       }}
     >
@@ -484,20 +334,16 @@ const FileListComponent: React.FC<FileListProps> = ({
             onImageError: handleImageError,
             onItemClick: handleItemClick,
             onItemDoubleClick: handleItemDoubleClick,
-            onFileDragStart: handleFileDragStart,
             onRenameInputChange: handleRenameInputChange,
             onRenameSubmit: handleRenameSubmit,
             onRenameCancel: handleRenameCancel,
-            onFolderDragOver: handleFolderDragOver,
-            onFolderDragLeave: handleFolderDragLeave,
-            onFolderDrop: handleFolderDrop,
             onHoverFile,
-            dragOverPath,
             iconSize,
             filledIcons,
             viewMode,
             columns,
             marqueeEnabled,
+            allFiles: files,
           };
 
           return (

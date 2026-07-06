@@ -4,7 +4,6 @@ import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
-import type { IFile } from "../types/files";
 import { t } from "../i18n";
 import "./Omnibar.css";
 
@@ -12,8 +11,6 @@ interface OmnibarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
   onSearch: (query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => void;
-  onDropFiles: (targetPath: string, files: IFile[], operation: "move" | "copy") => void;
-  onDropExternalFiles: (targetPath: string, filePaths: string[]) => void;
 }
 
 interface OmnibarCtxMenuState {
@@ -25,8 +22,6 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   currentPath,
   onNavigate,
   onSearch,
-  onDropFiles,
-  onDropExternalFiles,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(currentPath);
@@ -156,8 +151,6 @@ export const Omnibar: React.FC<OmnibarProps> = ({
           <Breadcrumbs
             currentPath={currentPath}
             onNavigate={onNavigate}
-            onDropFiles={onDropFiles}
-            onDropExternalFiles={onDropExternalFiles}
           />
           <IconButton
             variant="standard"

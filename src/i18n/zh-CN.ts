@@ -146,6 +146,8 @@ const zhCN = {
   'error.file_open_failed': (name: string, err: string) => `打开 ${name} 失败: ${err}`,
   'error.create_parent_failed': (parent: string) => `创建目标目录失败: ${parent}`,
   'error.path_fallback': (path: string, reason: string, fallback: string) => `无法访问 "${path}"（${reason}），已切换到 "${fallback}"`,
+  'error.import_failed': '导入文件失败',
+  'error.drag_failed': '启动拖拽失败',
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: 存在重名文件`,

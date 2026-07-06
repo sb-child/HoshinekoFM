@@ -156,6 +156,8 @@ const enUS = {
   'error.file_open_failed': (name: string, err: string) => `Failed to open ${name}: ${err}`,
   'error.create_parent_failed': (parent: string) => `Failed to create destination directory: ${parent}`,
   'error.path_fallback': (path: string, reason: string, fallback: string) => `Cannot access "${path}" (${reason}), switched to "${fallback}"`,
+  'error.import_failed': 'Failed to import files',
+  'error.drag_failed': 'Failed to start drag',
 
   // ── fileOperations 错误格式化 ──
   'file_op.exists': (op: string, ref: string) => `${op} ${ref}: A file with the same name already exists`,
