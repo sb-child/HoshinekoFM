@@ -1,12 +1,13 @@
 [简体中文](README-zh.md)
 
 <p align="center">
-  <img src="HoshinekoAkihara.png" alt="Hoshineko" width="28%">
+  <img src="screenshots/HoshinekoAkihara.png" alt="Hoshineko" width="28%">
 </p>
 
 # Hoshineko File Manager
+
 <p align="center">
-  <img src="Screenshot_for_HoshinekoFM.png" alt="Hoshineko">
+  <img src="screenshots/Screenshot_for_HoshinekoFM.png" alt="Hoshineko">
 </p>
 
 Hoshineko File Manager is a modern, "Performance-First" file manager built using Material 3 Design, Electron, and React.
@@ -22,6 +23,7 @@ The Hoshineko file explorer is a modification and reconstruction of [bhimio1](ht
 - **Preview Support**: Quick look for common file types.
 
 ## Refactoring and modification of core functionalities from material-3-file-explorer project
+
 - **Free for Multi Selection**: Features multi-selection capabilities, with optimized drag-and-drop transmission for applications such as LocalSend.
 - **Better File Categorization**:Refactored file categorization mechanism to support a wider range of file types; includes icon display for specific device types within the /dev directory (this feature is currently under active development).
 - **Convenient and Smart Right-Click Menu**:Refactored the context menu architecture to dynamically display specific menu items based on the selected item type, while extending menu features; the menu design is optimized for long-press gestures on touchscreen devices.
@@ -31,25 +33,24 @@ The Hoshineko file explorer is a modification and reconstruction of [bhimio1](ht
 
 ###/ Currently Supported
 
-| Code | Native Name | Chinese Description | English Description) |
-| :--- | :--- | :--- | :--- |
-| **zh-CN** | 简体中文 | 简体中文 | Simplified Chinese |
-| **zh-HK** | 繁體中文（香港） | 繁体中文（香港） | Traditional Chinese (Hong Kong) |
-| **zh-CT** | 粵語 | 粤语 | Cantonese |
-| **zh-TW** | 正體中文（台灣） | 正体中文（台湾） | Traditional Chinese (Taiwan) |
-| **en-US** | English | 英语 | English |
-| **ja-JP** | 日本語 | 日语 | Japanese |
-| **ko-KR** | 한국어（대한민국） | 韩语（大韩民国） | Korean (Republic of Korea) |
+| Code      | Native Name                      | Chinese Description            | English Description)                           |
+| :-------- | :------------------------------- | :----------------------------- | :--------------------------------------------- |
+| **zh-CN** | 简体中文                         | 简体中文                       | Simplified Chinese                             |
+| **zh-HK** | 繁體中文（香港）                 | 繁体中文（香港）               | Traditional Chinese (Hong Kong)                |
+| **zh-CT** | 粵語                             | 粤语                           | Cantonese                                      |
+| **zh-TW** | 正體中文（台灣）                 | 正体中文（台湾）               | Traditional Chinese (Taiwan)                   |
+| **en-US** | English                          | 英语                           | English                                        |
+| **ja-JP** | 日本語                           | 日语                           | Japanese                                       |
+| **ko-KR** | 한국어（대한민국）               | 韩语（大韩民国）               | Korean (Republic of Korea)                     |
 | **ko-KP** | 한국어（조선민주주의인민공화국） | 韩语（朝鲜民主主义人民共和国） | Korean (Democratic People's Republic of Korea) |
-| **ko-CN** | 조선어（중국） | 朝鲜语（中国） | Korean (China) |
+| **ko-CN** | 조선어（중국）                   | 朝鲜语（中国）                 | Korean (China)                                 |
 
 ### 计划支持 / Planned Support
 
-
-| Code | Native Name | Chinese Description | English Description) |
-| :--- | :--- | :--- | :--- |
-| **ru-UA** | Русский（Украина） | 俄语（乌克兰） | Russian (Ukraine) |
-| **uk-UA** | Українська（Україна） | 乌克兰语（乌克兰） | Ukrainian (Ukraine) |
+| Code      | Native Name           | Chinese Description | English Description) |
+| :-------- | :-------------------- | :------------------ | :------------------- |
+| **ru-UA** | Русский（Украина）    | 俄语（乌克兰）      | Russian (Ukraine)    |
+| **uk-UA** | Українська（Україна） | 乌克兰语（乌克兰）  | Ukrainian (Ukraine)  |
 
 ## Custom Theme Colors (Matugen)
 
@@ -62,6 +63,7 @@ The software supports custom theme colors via [Matugen](https://github.com/InioX
 3. The software will automatically detect and apply this theme upon startup.
 
 An example of generating a theme from a wallpaper:
+
 ```bash
 mkdir -p ~/.config/matugen/theme.css
 
@@ -85,17 +87,20 @@ Please switch to "Releases" page
 ### Manual Build
 
 1. Clone the repository:
+
    ```bash
    git clone new git
    cd Hoshineko
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    ```
 
 3. Run in development mode:
+
    ```bash
    npm run dev
    npm run electron:dev

@@ -1,12 +1,13 @@
 [English](README.md)
+
 <p align="center">
-  <img src="HoshinekoAkihara.png" alt="Hoshineko" width="28%">
+  <img src="screenshots/HoshinekoAkihara.png" alt="Hoshineko" width="28%">
 </p>
 
 # Hoshineko 文件管理器
 
 <p align="center">
-  <img src="Screenshot_for_HoshinekoFM.png" alt="Hoshineko">
+  <img src="screenshots/Screenshot_for_HoshinekoFM.png" alt="Hoshineko">
 </p>
 
 Hoshineko 文件管理器是一款基于 Material 3 设计语言、Electron 和 React 框架构建的现代“性能至上”文件管理器。
@@ -32,24 +33,24 @@ Hoshineko 文件管理器是一款基于 Material 3 设计语言、Electron 和 
 
 ### 现在支持 / Currently Supported
 
-| 代码 (Code) | 本地语言名称 (Native Name) | 中文描述 (Chinese Description) | 英语描述 (English Description) |
-| :--- | :--- | :--- | :--- |
-| **zh-CN** | 简体中文 | 简体中文 | Simplified Chinese |
-| **zh-HK** | 繁體中文（香港） | 繁体中文（香港） | Traditional Chinese (Hong Kong) |
-| **zh-CT** | 粵語 | 粤语 | Cantonese |
-| **zh-TW** | 正體中文（台灣） | 正体中文（台湾） | Traditional Chinese (Taiwan) |
-| **en-US** | English | 英语 | English |
-| **ja-JP** | 日本語 | 日语 | Japanese |
-| **ko-KR** | 한국어（대한민국） | 韩语（大韩民国） | Korean (Republic of Korea) |
-| **ko-KP** | 한국어（조선민주주의인민공화국） | 韩语（朝鲜民主主义人民共和国） | Korean (Democratic People's Republic of Korea) |
-| **ko-CN** | 조선어（중국） | 朝鲜语（中国） | Korean (China) |
+| 代码 (Code) | 本地语言名称 (Native Name)       | 中文描述 (Chinese Description) | 英语描述 (English Description)                 |
+| :---------- | :------------------------------- | :----------------------------- | :--------------------------------------------- |
+| **zh-CN**   | 简体中文                         | 简体中文                       | Simplified Chinese                             |
+| **zh-HK**   | 繁體中文（香港）                 | 繁体中文（香港）               | Traditional Chinese (Hong Kong)                |
+| **zh-CT**   | 粵語                             | 粤语                           | Cantonese                                      |
+| **zh-TW**   | 正體中文（台灣）                 | 正体中文（台湾）               | Traditional Chinese (Taiwan)                   |
+| **en-US**   | English                          | 英语                           | English                                        |
+| **ja-JP**   | 日本語                           | 日语                           | Japanese                                       |
+| **ko-KR**   | 한국어（대한민국）               | 韩语（大韩民国）               | Korean (Republic of Korea)                     |
+| **ko-KP**   | 한국어（조선민주주의인민공화국） | 韩语（朝鲜民主主义人民共和国） | Korean (Democratic People's Republic of Korea) |
+| **ko-CN**   | 조선어（중국）                   | 朝鲜语（中国）                 | Korean (China)                                 |
 
 ### 计划支持 / Planned Support
 
 | 代码 (Code) | 本地语言名称 (Native Name) | 中文描述 (Chinese Description) | 英语描述 (English Description) |
-| :--- | :--- | :--- | :--- |
-| **ru-UA** | Русский（Украина） | 俄语（乌克兰） | Russian (Ukraine) |
-| **uk-UA** | Українська（Україна） | 乌克兰语（乌克兰） | Ukrainian (Ukraine) |
+| :---------- | :------------------------- | :----------------------------- | :----------------------------- |
+| **ru-UA**   | Русский（Украина）         | 俄语（乌克兰）                 | Russian (Ukraine)              |
+| **uk-UA**   | Українська（Україна）      | 乌克兰语（乌克兰）             | Ukrainian (Ukraine)            |
 
 ## 自订主题颜色 (Matugen)
 
@@ -62,6 +63,7 @@ Hoshineko 文件管理器是一款基于 Material 3 设计语言、Electron 和 
 3. 在你启动的时候，这个软件会自动的探测和应用这个主题。
 
 一个从墙纸中生成主题的样例方式:
+
 ```bash
 mkdir -p ~/.config/matugen/theme.css
 
@@ -85,17 +87,20 @@ scheme-monochrome：单色/黑白灰调。
 ### 手动构建
 
 1. 克隆存储库:
+
    ```bash
    git clone new git
    cd Hoshineko
    ```
 
 2. 安装依赖:
+
    ```bash
    npm install
    ```
 
 3. 在开发模式运行:
+
    ```bash
    npm run dev
    npm run electron:dev

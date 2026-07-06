@@ -1,16 +1,13 @@
 {
-  "name": "material-3-file-manager",
+  "name": "hoshinekofm",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
-    "lint": "eslint .",
+    "build": "tsc && vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on tcp:5173 && tsc -p electron/tsconfig.json && node scripts/set-cjs.cjs && cross-env NODE_ENV=development electron .\"",
-    "electron:build": "npm run build && node scripts/set-cjs.cjs && electron-builder"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fontsource-variable/material-symbols-rounded": "^5.2.45",
@@ -27,7 +24,9 @@
     "react-dom": "^19.2.7",
     "react-toastify": "^11.1.0",
     "react-virtualized-auto-sizer": "^2.0.3",
-    "react-window": "^2.2.7"
+    "react-window": "^2.2.7",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.6",
@@ -47,7 +46,8 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vite": "^7.3.6",
-    "wait-on": "^9.0.10"
+    "wait-on": "^9.0.10",
+    "@tauri-apps/cli": "^2"
   },
   "build": {
     "appId": "com.material3.filemanager",
