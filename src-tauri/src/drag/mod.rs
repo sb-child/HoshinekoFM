@@ -4,9 +4,9 @@
 //   https://crates.io/crates/drag               — cross-platform native drag
 //   https://crates.io/crates/tauri-plugin-drag   — Tauri integration layer
 
+pub mod commands;
 #[cfg(target_os = "linux")]
 mod linux;
-pub mod commands;
 
 #[cfg(target_os = "linux")]
 #[allow(unused_imports)]

@@ -7,10 +7,7 @@
 //! | 实例→实例   | named UDS + tarpc       | client 连接 → 调用 server    |
 //! | 实例→Worker | 匿名 socketpair + tarpc | 主进程=client, Worker=server |
 
-use std::{
-    path::PathBuf,
-    time::SystemTime,
-};
+use std::{path::PathBuf, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 

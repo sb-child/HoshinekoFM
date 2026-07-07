@@ -51,6 +51,8 @@ fn dirs_home() -> PathBuf {
 /// 尝试抢占 primary。
 ///
 /// 使用原子 `symlink("instance_<pid>.sock", "primary")` 实现互斥。
+/// 先直接尝试 symlink，失败后再检查 dead primary 并重试一次，
+/// 避免 pre-check → cleanup 之间的 TOCTOU 竞态。
 ///
 /// 返回 `(be_primary, instance_id)`，`instance_id` 是当前进程 PID。
 pub fn try_acquire_primary() -> (bool, u64) {
@@ -60,43 +62,57 @@ pub fn try_acquire_primary() -> (bool, u64) {
     let primary_link = instances_dir.join("primary");
     let socket_path = instances_dir.join(&socket_name);
 
-    // 检查 primary symlink 是否存在（用 symlink_metadata 而非 exists，后者会 follow symlink）
-    if let Ok(meta) = fs::symlink_metadata(&primary_link) {
-        if meta.file_type().is_symlink() {
-            if let Ok(target) = fs::read_link(&primary_link) {
-                // target 不存在 → 悬空死链
-                if !target.exists() {
-                    let _ = fs::remove_file(&primary_link);
-                    info!("removed dangling primary symlink at {primary_link:?}");
-                } else if let Err(e) = std::os::unix::net::UnixStream::connect(&target) {
-                    // target 存在但无法连接 → 目标进程已死
-                    let _ = fs::remove_file(&primary_link);
-                    let _ = fs::remove_file(&target);
-                    info!(
-                        "removed stale primary (socket unreachable: {e}), cleaned up {target:?}"
-                    );
-                } else {
-                    // 连接成功 → primary 仍然存活
-                    info!("primary instance is alive at {target:?}");
-                    return (false, instance_id);
-                }
-            }
-        }
-    }
-
-    // 原子 symlink 抢 primary
-    debug!("attempting to acquire primary (symlink {socket_name:?} -> primary)");
+    // 1. 直接尝试原子 symlink
     match std::os::unix::fs::symlink(&socket_path, &primary_link) {
         Ok(()) => {
             info!("acquired primary (instance {instance_id})");
-            (true, instance_id)
+            return (true, instance_id);
         }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            info!("primary already taken, running as secondary instance {instance_id}");
-            (false, instance_id)
+        Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            // 2. Primary 已存在（可能是 symlink 或损坏的普通文件），检查是否存活
+            match fs::read_link(&primary_link) {
+                Ok(target) => {
+                    let dead = target != socket_path
+                        && (!target.exists()
+                            || std::os::unix::net::UnixStream::connect(&target).is_err());
+                    if dead {
+                        info!("existing primary appears dead, cleaning and retrying");
+                        let _ = fs::remove_file(&primary_link);
+                        let _ = fs::remove_file(&target);
+                        return retry_symlink(&socket_path, &primary_link, instance_id);
+                    } else {
+                        info!("primary instance is alive at {target:?}");
+                    }
+                }
+                Err(_) => {
+                    // primary_link 存在但不是 symlink（普通文件/目录 → 损坏）
+                    warn!("primary link exists but is not a symlink, removing corrupt file");
+                    let _ = fs::remove_file(&primary_link);
+                    return retry_symlink(&socket_path, &primary_link, instance_id);
+                }
+            }
         }
         Err(e) => {
-            warn!("failed to acquire primary: {e}, running as secondary");
+            warn!("failed to acquire primary: {e}");
+        }
+    }
+
+    (false, instance_id)
+}
+
+/// symlink 重试辅助函数（供 `try_acquire_primary` 内部使用）。
+fn retry_symlink(
+    socket_path: &std::path::Path,
+    primary_link: &std::path::Path,
+    instance_id: u64,
+) -> (bool, u64) {
+    match std::os::unix::fs::symlink(socket_path, primary_link) {
+        Ok(()) => {
+            info!("acquired primary on retry (instance {instance_id})");
+            (true, instance_id)
+        }
+        Err(e) => {
+            warn!("failed to acquire primary on retry: {e}");
             (false, instance_id)
         }
     }
@@ -205,10 +221,7 @@ fn make_instance_client(stream: UnixStream) -> InstanceServiceClient {
 pub async fn request_open_window(stream: UnixStream, paths: &[String]) -> io::Result<()> {
     let client = make_instance_client(stream);
 
-    if let Err(e) = client
-        .open_tabs(context::current(), paths.to_vec())
-        .await
-    {
+    if let Err(e) = client.open_tabs(context::current(), paths.to_vec()).await {
         error!("failed to request open_window: {e}");
     } else {
         info!("sent open_window request: {paths:?}");
@@ -228,10 +241,7 @@ pub async fn request_transfer_tab(stream: UnixStream, tab: TabState) -> io::Resu
     let client = make_instance_client(stream);
     let tab_id = tab.id;
 
-    if let Err(e) = client
-        .transfer_tab(context::current(), tab)
-        .await
-    {
+    if let Err(e) = client.transfer_tab(context::current(), tab).await {
         error!("failed to request transfer_tab: {e}");
     } else {
         info!("sent transfer_tab request: id={tab_id}");

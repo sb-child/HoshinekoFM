@@ -10,11 +10,7 @@
 //!
 //! 只传输路径 + 视图状态，目标实例自行 `list_dir` 获取目录内容。
 
-use std::{
-    fs,
-    io,
-    path::PathBuf,
-};
+use std::{fs, io, path::PathBuf};
 
 use tracing::{debug, error, info, warn};
 

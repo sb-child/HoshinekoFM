@@ -18,8 +18,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    appreuse,
-    drag,
+    appreuse, drag,
     ipc::protocol::{InstanceService, TabState},
 };
 
@@ -55,119 +54,114 @@ pub struct RunOpts {
 /// 此函数不会返回（Tauri 接管主循环）。
 pub fn run_app(opts: RunOpts) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    rt.block_on(run_app_async(opts));
+}
 
-    rt.block_on(async move {
-        // 1. 初始化 tab 管理器（从磁盘恢复）
-        let mut tab_manager = TabManager::load_from_disk();
+/// 异步启动 Tauri 应用的核心逻辑。
+async fn run_app_async(opts: RunOpts) {
+    // 1. 初始化 tab 管理器（从磁盘恢复）
+    let mut tab_manager = TabManager::load_from_disk();
 
-        // 如果命令行传了初始路径，添加初始 tab
-        if !opts.paths.is_empty() {
-            for path in &opts.paths {
-                tab_manager.add_tab(path.clone());
+    if !opts.paths.is_empty() {
+        for path in &opts.paths {
+            tab_manager.add_tab(path.clone());
+        }
+    }
+
+    let is_primary = opts.is_primary;
+    let instance_id = opts.instance_id;
+
+    // 2. 创建 AppState
+    let app_state = AppState::new(is_primary, instance_id, tab_manager);
+
+    // 3. 创建通道：用于后台任务与 Tauri commands 之间的消息传递
+    let (tab_event_tx, mut tab_event_rx) = mpsc::unbounded_channel::<TabEvent>();
+
+    // 后台任务：处理 TabEvent
+    tokio::spawn(async move {
+        while let Some(event) = tab_event_rx.recv().await {
+            debug!("tab event: {:?}", event);
+        }
+    });
+
+    let state_for_setup = Arc::new(Mutex::new(app_state));
+
+    // 4. 如果是 primary 实例，启动实例间连接监听
+    let instance_listener = if is_primary {
+        info!("starting primary listener for instance {instance_id}");
+        match appreuse::start_primary_listener(instance_id).await {
+            Ok(listener) => Some(listener),
+            Err(e) => {
+                error!("failed to start primary listener: {e}");
+                None
             }
         }
+    } else {
+        warn!("running as secondary instance (not primary)");
+        None
+    };
 
-        let is_primary = opts.is_primary;
-        let instance_id = opts.instance_id;
+    // 5. 构建 Tauri
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .manage(state_for_setup.clone())
+        .manage(tab_event_tx.clone())
+        .invoke_handler(tauri::generate_handler![
+            drag::commands::start_drag,
+            commands::list_tabs,
+            commands::add_tab,
+            commands::close_tab,
+            commands::tab_event_sink,
+            commands::new_window,
+            commands::get_window_label,
+        ])
+        .setup(move |_app| {
+            let handle = _app.handle().clone();
 
-        // 2. 创建 AppState
-        let app_state = AppState::new(is_primary, instance_id, tab_manager);
+            WINDOW_COUNT.store(1, Ordering::SeqCst);
 
-        // 3. 创建通道：用于后台任务与 Tauri commands 之间的消息传递
-        let (tab_event_tx, mut tab_event_rx) = mpsc::unbounded_channel::<TabEvent>();
+            // 后台任务 1：实例间连接监听（仅 primary）
+            if let Some(listener) = instance_listener {
+                tokio::spawn(accept_instance_connections(listener, handle.clone()));
+            }
 
-        // 后台任务：处理 TabEvent（forward 到前端 or 日志）
-        tokio::spawn(async move {
-            while let Some(event) = tab_event_rx.recv().await {
-                debug!("tab event: {:?}", event);
+            // 后台任务 2：保存 tabs 到磁盘（退出时）
+            let state = state_for_setup.clone();
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                info!("saving tabs before exit");
+                let app_state = state.lock().await;
+                app_state.tabs.lock().await.save_to_disk();
+                if is_primary {
+                    appreuse::release_primary(instance_id);
+                }
+                std::process::exit(0);
+            });
+
+            Ok(())
+        })
+        .on_window_event(move |window, event| {
+            use tauri::WindowEvent;
+            let label = window.label().to_string();
+            match event {
+                WindowEvent::Destroyed => {
+                    debug!("window destroyed: {label}");
+                    if WINDOW_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
+                        info!("last window destroyed, exiting");
+                        if is_primary {
+                            appreuse::release_primary(instance_id);
+                        }
+                        std::process::exit(0);
+                    }
+                }
+                _ => {}
             }
         });
 
-        let state_for_setup = Arc::new(Mutex::new(app_state));
-
-        // 4. 如果是 primary 实例，启动实例间连接监听
-        let instance_listener = if is_primary {
-            info!("starting primary listener for instance {instance_id}");
-            match appreuse::start_primary_listener(instance_id).await {
-                Ok(listener) => Some(listener),
-                Err(e) => {
-                    error!("failed to start primary listener: {e}");
-                    None
-                }
-            }
-        } else {
-            warn!("running as secondary instance (not primary)");
-            None
-        };
-
-        // 5. 构建 Tauri
-        let builder = tauri::Builder::default()
-            .plugin(tauri_plugin_opener::init())
-            .manage(state_for_setup.clone())
-            .manage(tab_event_tx.clone())
-            .invoke_handler(tauri::generate_handler![
-                drag::commands::start_drag,
-                commands::list_tabs,
-                commands::add_tab,
-                commands::close_tab,
-                commands::tab_event_sink,
-                commands::new_window,
-                commands::get_window_label,
-            ])
-            .setup(move |_app| {
-                let handle = _app.handle().clone();
-
-                // 初始窗口计数：默认由 tauri.conf.json 创建的主窗口
-                WINDOW_COUNT.store(1, Ordering::SeqCst);
-
-                // 后台任务 1：实例间连接监听（仅 primary）
-                if let Some(listener) = instance_listener {
-                    tokio::spawn(accept_instance_connections(listener, handle.clone()));
-                }
-
-                // 后台任务 2：保存 tabs 到磁盘（退出时）
-                let state = state_for_setup.clone();
-                let is_primary_for_exit = is_primary;
-                let instance_id_for_exit = instance_id;
-                tokio::spawn(async move {
-                    tokio::signal::ctrl_c().await.ok();
-                    info!("saving tabs before exit");
-                    let app_state = state.lock().await;
-                    app_state.tabs.lock().await.save_to_disk();
-                    if is_primary_for_exit {
-                        appreuse::release_primary(instance_id_for_exit);
-                    }
-                    std::process::exit(0);
-                });
-
-                Ok(())
-            })
-            .on_window_event({
-                let is_primary = is_primary;
-                let instance_id = instance_id;
-                move |window, event| {
-                use tauri::WindowEvent;
-                let label = window.label().to_string();
-                match event {
-                    WindowEvent::Destroyed => {
-                        debug!("window destroyed: {label}");
-                        if WINDOW_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
-                            info!("last window destroyed, exiting");
-                            if is_primary {
-                                appreuse::release_primary(instance_id);
-                            }
-                            std::process::exit(0);
-                        }
-                    }
-                    _ => {}
-                }
-            }});
-
-        // 6. 运行
-        builder
-            .run(tauri::generate_context!())
-            .expect("error while running tauri application");
-    });
+    // 6. 运行
+    builder
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }
 
 // ---------------------------------------------------------------------------
@@ -200,8 +194,8 @@ async fn accept_instance_connections(listener: UnixListener, app_handle: tauri::
 /// 使用 `LengthDelimitedCodec` + `Bincode` 传输层接收 tarpc RPC 请求，
 /// 由 `InstanceServer` 处理。
 async fn handle_instance_connection(stream: tokio::net::UnixStream, server: InstanceServer) {
-    use tarpc::server::{BaseChannel, Channel};
     use futures::prelude::*;
+    use tarpc::server::{BaseChannel, Channel};
 
     let transport = tarpc::serde_transport::new(
         crate::ipc::frame_stream(stream),
@@ -228,11 +222,7 @@ struct InstanceServer {
 }
 
 impl InstanceService for InstanceServer {
-    async fn open_tabs(
-        self,
-        _ctx: tarpc::context::Context,
-        paths: Vec<String>,
-    ) {
+    async fn open_tabs(self, _ctx: tarpc::context::Context, paths: Vec<String>) {
         info!("received open_tabs request (new window): {paths:?}");
         match commands::create_window(&self.app_handle, paths) {
             Ok(label) => info!("opened new window: {label}"),
@@ -240,11 +230,7 @@ impl InstanceService for InstanceServer {
         }
     }
 
-    async fn transfer_tab(
-        self,
-        _ctx: tarpc::context::Context,
-        tab: TabState,
-    ) {
+    async fn transfer_tab(self, _ctx: tarpc::context::Context, tab: TabState) {
         info!("received transfer_tab request: id={}", tab.id);
         // TODO: 将 tab 加入当前实例的 TabManager，然后创建新窗口加载此 tab
         // 实现步骤：

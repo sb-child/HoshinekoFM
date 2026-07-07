@@ -69,6 +69,8 @@ pub struct FsWorkerHandle {
     pub target_uid: u32,
     /// 子进程 PID（用于终止超时 Worker）
     pub pid: u32,
+    /// 闲置超时 kill 任务的取消句柄
+    pub kill_handle: Option<tokio::task::AbortHandle>,
 }
 
 impl FsWorkerHandle {
@@ -123,6 +125,10 @@ impl FsWorkerPool {
                 let handle = entry.get_mut();
                 if !handle.is_zombie() {
                     handle.inc_ref();
+                    // 取消闲置超时 kill 任务
+                    if let Some(kill_handle) = handle.kill_handle.take() {
+                        kill_handle.abort();
+                    }
                 } else {
                     // 僵尸 Worker，需要重建
                     let (pid, client) = Self::spawn_worker_inner(target_uid).await?;
@@ -132,6 +138,7 @@ impl FsWorkerPool {
                         target_uid,
                         pid,
                         client,
+                        kill_handle: None,
                     };
                 }
             }
@@ -144,6 +151,7 @@ impl FsWorkerPool {
                     target_uid,
                     pid,
                     client,
+                    kill_handle: None,
                 });
             }
         }
@@ -167,18 +175,24 @@ impl FsWorkerPool {
         };
 
         if should_schedule_drop {
-            info!(
-                "worker for uid {target_uid} ref_count=0, scheduling drop in {:?}",
-                self.idle_timeout
-            );
-            // 复制 uid 用于 async drop
+            let pid = self.workers.get(&target_uid).map(|h| h.pid);
             let uid = target_uid;
             let timeout = self.idle_timeout;
-            // 启动闲置超时任务
-            tokio::spawn(async move {
+            let kill_task = tokio::spawn(async move {
                 tokio::time::sleep(timeout).await;
-                info!("worker for uid {uid} idle timeout, would drop now");
+                if let Some(pid) = pid {
+                    use nix::sys::signal;
+                    use nix::unistd::Pid;
+                    let pid = Pid::from_raw(pid as i32);
+                    info!("worker for uid {uid} idle timeout, killing pid={pid}");
+                    let _ = signal::kill(pid, signal::Signal::SIGTERM);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let _ = signal::kill(pid, signal::Signal::SIGKILL);
+                }
             });
+            if let Some(handle) = self.workers.get_mut(&target_uid) {
+                handle.kill_handle = Some(kill_task.abort_handle());
+            }
         }
     }
 
@@ -194,9 +208,7 @@ impl FsWorkerPool {
 
     /// 检查指定 Worker 是否繁忙。
     pub fn is_busy(&self, target_uid: u32) -> bool {
-        self.workers
-            .get(&target_uid)
-            .map_or(false, |h| h.busy)
+        self.workers.get(&target_uid).map_or(false, |h| h.busy)
     }
 
     /// 启动一个新的 FS Worker 子进程（静态方法，不借 &mut self）。
@@ -224,9 +236,7 @@ impl FsWorkerPool {
         } else {
             // 提权到目标 UID
             let mut c = Command::new("pkexec");
-            c.arg("--user")
-                .arg(target_uid.to_string())
-                .arg(&exe_path);
+            c.arg("--user").arg(target_uid.to_string()).arg(&exe_path);
             if is_appimage() {
                 c.current_dir("/tmp");
             }
@@ -264,8 +274,7 @@ impl FsWorkerPool {
         let stream = UnixStream::from_std(parent_sock)?;
 
         // 9. 构建 tarpc transport 和 client
-        let codec_builder =
-            tarpc::tokio_util::codec::length_delimited::Builder::new();
+        let codec_builder = tarpc::tokio_util::codec::length_delimited::Builder::new();
         let transport = tarpc::serde_transport::new(
             codec_builder.new_framed(stream),
             tarpc::tokio_serde::formats::Bincode::default(),
@@ -291,8 +300,9 @@ impl Default for FsWorkerPool {
 impl FsWorkerHandle {
     /// 是否应该被回收（子进程已退出或连接断开）。
     pub fn is_zombie(&self) -> bool {
-        // TODO: 通过 ping 或检查 client 状态检测连接是否存活
-        false
+        use nix::sys::signal;
+        use nix::unistd::Pid;
+        signal::kill(Pid::from_raw(self.pid as i32), None).is_err()
     }
 }
 

@@ -10,8 +10,7 @@ use std::{
 };
 
 use gtk::{
-    gdk,
-    gdk_pixbuf,
+    gdk, gdk_pixbuf,
     glib::{ObjectExt, Propagation, SignalHandlerId},
     prelude::{
         DeviceExt, DragContextExtManual, PixbufLoaderExt, SeatExt, WidgetExt, WidgetExtManual,
@@ -150,17 +149,11 @@ pub fn start_drag_native<F: Fn(DragResult, CursorPosition) + Send + 'static>(
 
 fn image_binary_to_pixbuf(data: &[u8]) -> Option<gdk_pixbuf::Pixbuf> {
     let loader = gdk_pixbuf::PixbufLoader::new();
-    loader
-        .write(data)
-        .and_then(|_| loader.close())
-        .ok()?;
+    loader.write(data).and_then(|_| loader.close()).ok()?;
     loader.pixbuf()
 }
 
-fn clear_signal_handlers(
-    window: &gtk::ApplicationWindow,
-    handler_ids: &mut Vec<SignalHandlerId>,
-) {
+fn clear_signal_handlers(window: &gtk::ApplicationWindow, handler_ids: &mut Vec<SignalHandlerId>) {
     for handler_id in handler_ids.drain(..) {
         window.disconnect(handler_id);
     }
@@ -227,10 +220,6 @@ fn on_drop_performed<F: Fn(DragResult, CursorPosition) + Send + 'static>(
 }
 
 fn get_cursor_position(window: &gtk::ApplicationWindow) -> Option<CursorPosition> {
-    let (_, x, y) = window
-        .display()
-        .default_seat()?
-        .pointer()?
-        .position();
+    let (_, x, y) = window.display().default_seat()?.pointer()?.position();
     Some(CursorPosition { x, y })
 }

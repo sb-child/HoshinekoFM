@@ -21,9 +21,7 @@ pub enum TabEvent {
 
 /// 获取所有 tab 列表。
 #[command]
-pub async fn list_tabs(
-    state: State<'_, Arc<Mutex<AppState>>>,
-) -> Result<Vec<TabState>, String> {
+pub async fn list_tabs(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<TabState>, String> {
     let app_state = state.lock().await;
     let tabs = app_state.tabs.lock().await;
     Ok(tabs.get_all().to_vec())
@@ -93,13 +91,10 @@ pub fn create_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Strin
         format!("window-{ts:x}")
     };
 
-    let builder = WebviewWindowBuilder::new(
-        app,
-        &label,
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("HoshinekoFM")
-    .inner_size(800.0, 600.0);
+    let builder =
+        WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title("HoshinekoFM")
+            .inner_size(800.0, 600.0);
 
     let window = builder
         .build()

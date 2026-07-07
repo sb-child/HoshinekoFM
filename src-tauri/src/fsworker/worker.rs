@@ -9,13 +9,7 @@
 //! - 验证当前 UID / EUID
 //! - 仅通过继承 FD 通信，无对外暴露端口
 
-use std::{
-    collections::HashMap,
-    io,
-    os::unix::io::FromRawFd,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, io, os::unix::io::FromRawFd, path::PathBuf, sync::Arc};
 
 use nix::unistd;
 use tarpc::context;
@@ -56,22 +50,16 @@ impl FsWorkerServer {
 }
 
 impl FsWorkerService for FsWorkerServer {
-    async fn list_dir(
-        self,
-        _ctx: context::Context,
-        path: String,
-    ) -> (Vec<FileEntry>, String) {
+    async fn list_dir(self, _ctx: context::Context, path: String) -> (Vec<FileEntry>, String) {
         let path_buf = PathBuf::from(&path);
         let resolved = resolve_path(&path_buf);
         let resolved_str = resolved.to_string_lossy().to_string();
 
-        let entries = tokio::task::spawn_blocking(move || {
-            match list_directory(&resolved) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    warn!("list_dir({path}) failed: {e}");
-                    vec![]
-                }
+        let entries = tokio::task::spawn_blocking(move || match list_directory(&resolved) {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!("list_dir({path}) failed: {e}");
+                vec![]
             }
         })
         .await
@@ -191,16 +179,18 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     let fd = opts.fd.expect("--fd is required for fs-worker mode");
     info!("fs worker {} restoring fd={}", opts.worker_id, fd);
     let stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
-    stream.set_nonblocking(true).expect("failed to set nonblocking");
+    stream
+        .set_nonblocking(true)
+        .expect("failed to set nonblocking");
     let stream = UnixStream::from_std(stream).expect("failed to convert to tokio stream");
 
     // 构建 tarpc server
+    use futures::prelude::*;
     use tarpc::{
         serde_transport,
         server::{BaseChannel, Channel},
         tokio_util::codec::length_delimited::LengthDelimitedCodec,
     };
-    use futures::prelude::*;
 
     let codec_builder = LengthDelimitedCodec::builder();
     let framed = codec_builder.new_framed(stream);
@@ -249,7 +239,9 @@ fn list_directory(path: &PathBuf) -> io::Result<Vec<FileEntry>> {
             name: entry.file_name().to_string_lossy().to_string(),
             path: entry.path(),
             size: metadata.len(),
-            modified: metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            modified: metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
             is_directory: file_type.is_dir(),
             is_symlink: file_type.is_symlink(),
             mime_type,
@@ -274,7 +266,9 @@ fn file_stat(path: &PathBuf) -> io::Result<FileStat> {
 
     Ok(FileStat {
         size: metadata.len(),
-        modified: metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        modified: metadata
+            .modified()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
         is_directory: metadata.is_dir(),
         is_symlink: metadata.file_type().is_symlink(),
         permissions: 0, // TODO
@@ -293,9 +287,9 @@ fn guess_mime(path: &PathBuf) -> String {
 
     // 常见映射表 (后续扩展)
     match ext.as_str() {
-        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "xml" | "html" | "css"
-        | "js" | "ts" | "jsx" | "tsx" | "py" | "sh" | "bash" | "env" | "cfg" | "ini"
-        | "log" | "csv" | "lock" => "text/plain".to_string(),
+        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "xml" | "html" | "css" | "js"
+        | "ts" | "jsx" | "tsx" | "py" | "sh" | "bash" | "env" | "cfg" | "ini" | "log" | "csv"
+        | "lock" => "text/plain".to_string(),
         "png" => "image/png".to_string(),
         "jpg" | "jpeg" => "image/jpeg".to_string(),
         "gif" => "image/gif".to_string(),
