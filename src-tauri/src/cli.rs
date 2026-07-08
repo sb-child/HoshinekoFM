@@ -66,9 +66,13 @@ pub struct FsWorkerCmd {
     #[arg(long)]
     pub worker_id: u64,
 
-    /// 继承自父进程的匿名 socket 文件描述符
+    /// 请求通道 fd（app→worker，继承自父进程）
     #[arg(long)]
     pub fd: Option<i32>,
+
+    /// 回调通道 fd（worker→app，继承自父进程）
+    #[arg(long)]
+    pub cb_fd: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------

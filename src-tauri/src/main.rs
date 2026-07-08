@@ -13,35 +13,25 @@ fn main() {
 
     match dispatch {
         hnfm_lib::cli::Dispatch::Launch(cmd) => {
-            if cmd.instance_id.is_some() {
+            let instance_id = cmd.instance_id.unwrap_or(std::process::id() as u64);
+
+            // 尝试复用已有实例（--new-instance 跳过）
+            if !cmd.new_instance {
                 let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-                rt.block_on(hnfm_lib::appreuse::run_app_reuse(
+                if rt.block_on(hnfm_lib::appreuse::run_app_reuse(
                     cmd.instance_id,
                     &cmd.paths,
-                ));
+                )) {
+                    std::process::exit(0);
+                }
             }
 
-            let (be_primary, instance_id) = hnfm_lib::appreuse::try_acquire_primary();
-
-            if be_primary {
-                tracing::info!("launching as primary instance {instance_id}");
-                hnfm_lib::app::run_app(hnfm_lib::app::RunOpts {
-                    is_primary: true,
-                    instance_id,
-                    paths: cmd.paths,
-                });
-            } else if !cmd.new_instance {
-                tracing::info!("primary already exists, connecting to send open window request");
-                let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-                rt.block_on(hnfm_lib::appreuse::run_app_reuse(None, &cmd.paths));
-            } else {
-                tracing::info!("launching as secondary instance {instance_id}");
-                hnfm_lib::app::run_app(hnfm_lib::app::RunOpts {
-                    is_primary: false,
-                    instance_id,
-                    paths: cmd.paths,
-                });
-            }
+            // 启动新实例
+            tracing::info!("launching new instance {instance_id}");
+            hnfm_lib::app::run_app(hnfm_lib::app::RunOpts {
+                instance_id,
+                paths: cmd.paths,
+            });
         }
 
         hnfm_lib::cli::Dispatch::FsWorker(cmd) => {
@@ -50,6 +40,7 @@ fn main() {
             let opts = hnfm_lib::fsworker::FsWorkerOpts {
                 worker_id: cmd.worker_id,
                 fd: cmd.fd,
+                cb_fd: cmd.cb_fd,
             };
             rt.block_on(hnfm_lib::fsworker::run_fs_worker(opts));
         }

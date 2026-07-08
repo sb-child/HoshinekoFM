@@ -10,14 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "HoshinekoFM",
-        "width": 800,
-        "height": 600,
-        "dragDropEnabled": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

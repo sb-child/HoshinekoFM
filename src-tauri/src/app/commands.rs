@@ -4,38 +4,39 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
 use tauri::{command, Emitter, State};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::app::tabs::TabState;
-
-use super::state::AppState;
+use crate::app::state::AppStateManager;
+use crate::app::ui_service::{self, UIService};
+use crate::window_bus::WindowBus;
 
 /// Tab 变更事件（后端 → 前端推送）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum TabEvent {
-    Added(TabState),
-    Removed(TabState),
+    Added(crate::ipc::protocol::TabState),
+    Removed(crate::ipc::protocol::TabState),
 }
 
 /// 获取所有 tab 列表。
 #[command]
-pub async fn list_tabs(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<TabState>, String> {
-    let app_state = state.lock().await;
-    let tabs = app_state.tabs.lock().await;
+pub fn list_tabs(
+    mgr: State<'_, Arc<AppStateManager>>,
+) -> Result<Vec<crate::ipc::protocol::TabState>, String> {
+    let tabs = mgr.tabs.lock().unwrap();
     Ok(tabs.get_all().to_vec())
 }
 
 /// 添加一个 tab。
 #[command]
-pub async fn add_tab(
-    state: State<'_, Arc<Mutex<AppState>>>,
+pub fn add_tab(
+    mgr: State<'_, Arc<AppStateManager>>,
     tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
     path: String,
-) -> Result<TabState, String> {
-    let app_state = state.lock().await;
-    let mut tabs = app_state.tabs.lock().await;
+) -> Result<crate::ipc::protocol::TabState, String> {
+    let mut tabs = mgr.tabs.lock().unwrap();
     let tab = tabs.add_tab(path);
     tabs.save_to_disk();
 
@@ -45,13 +46,12 @@ pub async fn add_tab(
 
 /// 关闭一个 tab。
 #[command]
-pub async fn close_tab(
-    state: State<'_, Arc<Mutex<AppState>>>,
+pub fn close_tab(
+    mgr: State<'_, Arc<AppStateManager>>,
     tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
     id: u64,
 ) -> Result<(), String> {
-    let app_state = state.lock().await;
-    let mut tabs = app_state.tabs.lock().await;
+    let mut tabs = mgr.tabs.lock().unwrap();
     if let Some(removed) = tabs.remove_tab(id) {
         tabs.save_to_disk();
         let _ = tx.send(TabEvent::Removed(removed));
@@ -64,8 +64,8 @@ pub async fn close_tab(
 
 /// 前端注册事件监听（预留）。
 #[command]
-pub async fn tab_event_sink(
-    _state: State<'_, Arc<Mutex<AppState>>>,
+pub fn tab_event_sink(
+    _mgr: State<'_, Arc<AppStateManager>>,
     _tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
 ) -> Result<(), String> {
     Ok(())
@@ -75,24 +75,16 @@ pub async fn tab_event_sink(
 // 多窗口命令
 // ---------------------------------------------------------------------------
 
-/// 创建新窗口（公共函数，供 command 和 InstanceServer 共用）。
-///
-/// 创建新窗口并 emit `navigate-to` 事件给每个 path。
-/// 返回新窗口的 label。
-pub fn create_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<String, String> {
+/// 创建新窗口（使用给定 label）。
+pub fn create_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    paths: &[String],
+) -> Result<tauri::WebviewWindow, String> {
     use tauri::WebviewWindowBuilder;
 
-    let label = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        format!("window-{ts:x}")
-    };
-
     let builder =
-        WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
+        WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
             .title("HoshinekoFM")
             .inner_size(800.0, 600.0);
 
@@ -102,38 +94,95 @@ pub fn create_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Strin
 
     tracing::info!("created new window: {label}");
 
-    // 递增全局窗口计数
-    super::WINDOW_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    // 向新窗口发送导航路径，前端需要监听 "navigate-to" 创建 tab
-    for p in &paths {
+    for p in paths {
         let _ = window.emit("navigate-to", p);
     }
     if paths.is_empty() {
-        // 默认打开 home
         let _ = window.emit("navigate-to", "/");
     }
 
-    Ok(label)
+    Ok(window)
 }
 
 /// 创建新窗口（Tauri 命令）。
 ///
-/// 新窗口加载相同的前端（默认 URL），共享 AppState。
+/// 1. AppStateManager 生成 label（"w0", "w1" ...）
+/// 2. 创建 Tauri 窗口
+/// 3. WindowBus::init 抢占 window_id + 注册路由
+/// 4. 注册到 AppStateManager
 #[command]
 pub async fn new_window(
     app: tauri::AppHandle,
-    label: Option<String>,
+    mgr: State<'_, Arc<AppStateManager>>,
     paths: Option<Vec<String>>,
-) -> Result<String, String> {
-    // label 参数暂未使用（未来可支持指定 label 创建具名窗口）
-    let _ = label;
+) -> Result<u64, String> {
     let paths = paths.unwrap_or_default();
-    create_window(&app, paths)
+
+    let label = mgr.next_label();
+    let window = create_window(&app, &label, &paths)?;
+
+    let bus = WindowBus::init(mgr.instance_bus.clone(), window, mgr.inner().clone()).await;
+    let window_id = bus.window_id();
+
+    mgr.register(label, bus);
+
+    Ok(window_id)
 }
 
-/// 获取当前窗口的 label。
+// ---------------------------------------------------------------------------
+// UIService 命令
+// ---------------------------------------------------------------------------
+
+/// 返回初始状态（tab 列表 + 激活 tab + 剪贴板状态）。
 #[command]
-pub async fn get_window_label(window: tauri::Window) -> Result<String, String> {
-    Ok(window.label().to_string())
+pub fn init_state(
+    ui: State<'_, Arc<UIService>>,
+) -> Result<ui_service::InitState, String> {
+    Ok(ui.init())
+}
+
+/// 尝试移动 tab。如果阻塞，返回 Blocked 让前端弹窗。
+#[command]
+pub fn move_tab(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    target: u64,
+) -> Result<MoveTabCmdResult, String> {
+    match ui.move_tab(tab_id, target) {
+        ui_service::MoveTabResult::Ok => Ok(MoveTabCmdResult::Ok),
+        ui_service::MoveTabResult::Blocked { tasks } => {
+            Ok(MoveTabCmdResult::Blocked {
+                tasks: tasks
+                    .into_iter()
+                    .map(|t| MoveTabTaskInfo {
+                        task_id: t.task_id,
+                        description: t.description,
+                    })
+                    .collect(),
+            })
+        }
+    }
+}
+
+/// 强制移动 tab（取消关联任务）。
+#[command]
+pub async fn move_tab_force(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    target: u64,
+) -> Result<(), String> {
+    ui.move_tab_force(tab_id, target).await;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum MoveTabCmdResult {
+    Ok,
+    Blocked { tasks: Vec<MoveTabTaskInfo> },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MoveTabTaskInfo {
+    pub task_id: u64,
+    pub description: String,
 }

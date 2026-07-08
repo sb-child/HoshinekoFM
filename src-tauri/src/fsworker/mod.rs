@@ -1,21 +1,25 @@
-//! 文件系统 Worker 管理。
+//! 文件系统 Worker 进程池与生命周期管理。
 //!
 //! ## 架构
 //!
-//! - `FsWorkerPool`: 管理所有 Worker 实例 (按 UID 分)
-//! - `FsWorkerHandle`: 单个 Worker 连接 + 引用计数 + 忙碌状态
-//! - `run_fs_worker`: Worker 子进程入口 (见 `worker.rs`)
+//! - [`FsWorkerPool`]：按 UID 管理 Worker 进程；分发 [`UidToken`]。
+//! - [`UidToken`]：RAII 凭证。持有 [`WorkerConn`] 的 `Arc`，保证操作期间 Worker 存活。
+//! - [`LeaseSentinel`]：token 的引用计数哨兵；最后一个 token drop 时通知 reaper。
+//! - [`WorkerConn`]：一个 Worker 的双向连接（app→worker client + worker→app 回调路由）。
+//! - [`CallbackRegistry`]：把 Worker 反向回调（watcher 增量 / 进度 / 冲突）路由回对应句柄。
 //!
 //! ## 生命周期
 //!
-//! ```
-//! FsWorkerPool::acquire(uid)
-//!   ├─ 已有 Worker → ref_count += 1
-//!   └─ 无 Worker   → spawn → ref_count = 1
+//! ```text
+//! request_token(uid)
+//!   ├─ 已有存活 token → clone Arc，复用
+//!   ├─ 冷却中(conn 还在) → 新建 sentinel 复活，复用 conn（避免 root worker 重新 pkexec）
+//!   └─ 无 → spawn Worker（双 socketpair）→ 建 conn
 //!
-//! FsWorkerPool::release(uid)
-//!   ├─ ref_count -= 1
-//!   └─ ref_count == 0 → 30s 闲置超时后关闭
+//! 某 uid 所有 token drop
+//!   → LeaseSentinel::drop → reaper.send(uid)
+//!   → reaper 标记 cooling_deadline = now + grace
+//!   → grace 后仍无新 token → SIGTERM/SIGKILL + 移除 slot
 //! ```
 
 use std::{
@@ -26,19 +30,31 @@ use std::{
         net::UnixStream as StdUnixStream,
     },
     process::{Command, Stdio},
-    time::Duration,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, Weak,
+    },
+    time::{Duration, Instant},
 };
 
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag},
     unistd,
 };
-use tokio::net::UnixStream;
-use tracing::info;
+use tokio::{net::UnixStream, sync::mpsc, sync::oneshot};
+use tracing::{debug, info, warn};
 
-use crate::ipc::protocol::FsWorkerServiceClient;
+use crate::ipc::protocol::{
+    AppCallbackService, ConflictItem, ConflictResolution, FsWorkerServiceClient, ProgressEvent,
+    WatchDelta,
+};
 
 pub mod worker;
+
+pub use worker::run_fs_worker;
+
+/// 全局 worker_id 计数器（仅用于日志区分）。
+static WORKER_ID: AtomicU64 = AtomicU64::new(1);
 
 // ---------------------------------------------------------------------------
 // WorkerOpts
@@ -49,192 +65,299 @@ pub mod worker;
 pub struct FsWorkerOpts {
     /// Worker ID
     pub worker_id: u64,
-    /// 继承的文件描述符（匿名 socketpair 的子端）
+    /// 请求通道 fd（app→worker，Worker 作 server）
     pub fd: Option<i32>,
+    /// 回调通道 fd（worker→app，Worker 作 client）
+    pub cb_fd: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
-// FsWorkerHandle
+// CallbackRegistry — 反向回调路由
 // ---------------------------------------------------------------------------
 
-/// 一个活跃的 Worker 连接。
-pub struct FsWorkerHandle {
-    /// tarpc 客户端
-    pub client: FsWorkerServiceClient,
-    /// 引用计数
-    pub ref_count: u64,
-    /// 是否正在执行批量操作 (copy/move/delete)
-    pub busy: bool,
-    /// 目标 UID (0 = root)
-    pub target_uid: u32,
-    /// 子进程 PID（用于终止超时 Worker）
-    pub pid: u32,
-    /// 闲置超时 kill 任务的取消句柄
-    pub kill_handle: Option<tokio::task::AbortHandle>,
+/// 把 Worker 反向回调路由到对应 `Watcher` / `Progress` 的通道。
+///
+/// 每个 [`WorkerConn`] 一份。`watch_id` / `op_id` 全局分配（由 FsService）。
+pub struct CallbackRegistry {
+    /// watch_id → watcher 增量 sender
+    watches: Mutex<HashMap<u64, mpsc::UnboundedSender<WatchDelta>>>,
+    /// op_id → 进度 sender
+    ops: Mutex<HashMap<u64, mpsc::UnboundedSender<ProgressEvent>>>,
+    /// (op_id, conflict_id) → 冲突决策应答
+    conflicts: Mutex<HashMap<(u64, u64), oneshot::Sender<ConflictResolution>>>,
 }
 
-impl FsWorkerHandle {
-    /// 标记为忙碌。
-    pub fn set_busy(&mut self, busy: bool) {
-        self.busy = busy;
-    }
-
-    /// 增加引用计数。
-    pub fn inc_ref(&mut self) {
-        self.ref_count += 1;
-    }
-
-    /// 减少引用计数。
-    /// 返回是否降为 0。
-    pub fn dec_ref(&mut self) -> bool {
-        self.ref_count = self.ref_count.saturating_sub(1);
-        self.ref_count == 0
-    }
-}
-
-// ---------------------------------------------------------------------------
-// FsWorkerPool
-// ---------------------------------------------------------------------------
-
-/// Worker 实例池，按目标 UID 索引。
-pub struct FsWorkerPool {
-    /// uid → FsWorkerHandle
-    workers: HashMap<u32, FsWorkerHandle>,
-    /// 闲置超时时间
-    idle_timeout: Duration,
-}
-
-impl FsWorkerPool {
-    /// 创建新的 FsWorkerPool。
-    pub fn new() -> Self {
+impl CallbackRegistry {
+    fn new() -> Self {
         Self {
-            workers: HashMap::new(),
-            idle_timeout: Duration::from_secs(30),
+            watches: Mutex::new(HashMap::new()),
+            ops: Mutex::new(HashMap::new()),
+            conflicts: Mutex::new(HashMap::new()),
         }
     }
 
-    /// 获取或创建一个指定 UID 的 Worker。
+    /// 注册一个 watcher，返回增量接收端。
+    pub fn register_watch(&self, watch_id: u64) -> mpsc::UnboundedReceiver<WatchDelta> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.watches.lock().unwrap().insert(watch_id, tx);
+        rx
+    }
+
+    /// 注销 watcher。
+    pub fn unregister_watch(&self, watch_id: u64) {
+        self.watches.lock().unwrap().remove(&watch_id);
+    }
+
+    /// 注册一个批处理操作，返回进度接收端。
+    pub fn register_op(&self, op_id: u64) -> mpsc::UnboundedReceiver<ProgressEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.ops.lock().unwrap().insert(op_id, tx);
+        rx
+    }
+
+    /// 注销操作及其残留冲突。
+    pub fn unregister_op(&self, op_id: u64) {
+        self.ops.lock().unwrap().remove(&op_id);
+        self.conflicts
+            .lock()
+            .unwrap()
+            .retain(|(oid, _), _| *oid != op_id);
+    }
+
+    /// 上层给出冲突决策，唤醒等待中的 `ask_conflict`。
+    pub fn resolve_conflict(&self, op_id: u64, conflict_id: u64, res: ConflictResolution) {
+        if let Some(tx) = self.conflicts.lock().unwrap().remove(&(op_id, conflict_id)) {
+            let _ = tx.send(res);
+        }
+    }
+
+    // --- 由回调 server 调用 ---
+
+    fn push_watch_delta(&self, watch_id: u64, delta: WatchDelta) {
+        if let Some(tx) = self.watches.lock().unwrap().get(&watch_id) {
+            let _ = tx.send(delta);
+        }
+    }
+
+    fn push_progress(&self, op_id: u64, ev: ProgressEvent) {
+        if let Some(tx) = self.ops.lock().unwrap().get(&op_id) {
+            let _ = tx.send(ev);
+        }
+    }
+
+    async fn ask_conflict(
+        &self,
+        op_id: u64,
+        conflict_id: u64,
+        item: ConflictItem,
+    ) -> ConflictResolution {
+        // 先把冲突作为进度事件抛给上层
+        self.push_progress(
+            op_id,
+            ProgressEvent::Conflict {
+                conflict_id,
+                item,
+            },
+        );
+        let (tx, rx) = oneshot::channel();
+        self.conflicts
+            .lock()
+            .unwrap()
+            .insert((op_id, conflict_id), tx);
+        // 等上层调用 resolve_conflict；若通道被丢弃（Progress 已析构）→ 取消整个操作
+        rx.await.unwrap_or(ConflictResolution::CancelAll)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WorkerConn
+// ---------------------------------------------------------------------------
+
+/// 一个 Worker 的双向连接。归池所有，通过 `Arc` 借给 token。
+pub struct WorkerConn {
+    /// 目标 UID
+    pub uid: u32,
+    /// app→worker tarpc 客户端
+    pub client: FsWorkerServiceClient,
+    /// worker→app 回调路由
+    pub registry: Arc<CallbackRegistry>,
+    /// 子进程 PID
+    pub pid: u32,
+}
+
+// ---------------------------------------------------------------------------
+// LeaseSentinel / UidToken
+// ---------------------------------------------------------------------------
+
+/// token 的引用计数哨兵。最后一个 token drop 时通知 reaper。
+pub struct LeaseSentinel {
+    uid: u32,
+    reaper_tx: mpsc::UnboundedSender<u32>,
+}
+
+impl Drop for LeaseSentinel {
+    fn drop(&mut self) {
+        // Drop 不能 async → 仅发信号，由 reaper 处理释放
+        let _ = self.reaper_tx.send(self.uid);
+    }
+}
+
+/// UID 访问凭证（RAII）。
+///
+/// 持有 [`WorkerConn`] 的 `Arc`，保证操作期间 Worker 存活并可直接取到 client。
+/// 字段私有 → 上层无法借它篡改内部数据。所有该 uid 的 token drop 后，
+/// 对应 Worker 进入冷却期，宽限期后被回收。
+#[derive(Clone)]
+pub struct UidToken {
+    uid: u32,
+    conn: Arc<WorkerConn>,
+    _sentinel: Arc<LeaseSentinel>,
+}
+
+impl UidToken {
+    /// 目标 UID。
+    pub fn uid(&self) -> u32 {
+        self.uid
+    }
+
+    /// 内部连接（仅 crate 内使用）。
+    pub(crate) fn conn(&self) -> &Arc<WorkerConn> {
+        &self.conn
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PoolSlot / FsWorkerPool
+// ---------------------------------------------------------------------------
+
+struct PoolSlot {
+    conn: Arc<WorkerConn>,
+    /// 存活 token 的弱引用；`strong_count() == 0` 表示无 token
+    sentinel: Weak<LeaseSentinel>,
+    /// 冷却截止时间；`Some` 表示无 token、等待宽限期回收
+    cooling_deadline: Option<Instant>,
+    pid: u32,
+}
+
+/// Worker 进程池，按目标 UID 索引。
+pub struct FsWorkerPool {
+    slots: Arc<Mutex<HashMap<u32, PoolSlot>>>,
+    reaper_tx: mpsc::UnboundedSender<u32>,
+}
+
+impl FsWorkerPool {
+    /// 创建进程池并启动 reaper（必须在 tokio 运行时内调用）。
+    pub fn new() -> Self {
+        Self::with_grace(Duration::from_secs(20))
+    }
+
+    /// 指定宽限期创建。
+    pub fn with_grace(grace: Duration) -> Self {
+        let slots: Arc<Mutex<HashMap<u32, PoolSlot>>> = Arc::new(Mutex::new(HashMap::new()));
+        let reaper_tx = start_reaper(slots.clone(), grace);
+        Self { slots, reaper_tx }
+    }
+
+    /// 请求某 uid 的访问凭证。
     ///
-    /// 返回 Worker 的 `(uid, &mut FsWorkerHandle)`。
-    pub async fn acquire(&mut self, target_uid: u32) -> io::Result<(u32, &mut FsWorkerHandle)> {
-        // 使用 entry API 避免 borrow checker 问题
-        use std::collections::hash_map::Entry;
-
-        match self.workers.entry(target_uid) {
-            Entry::Occupied(mut entry) => {
-                let handle = entry.get_mut();
-                if !handle.is_zombie() {
-                    handle.inc_ref();
-                    // 取消闲置超时 kill 任务
-                    if let Some(kill_handle) = handle.kill_handle.take() {
-                        kill_handle.abort();
-                    }
-                } else {
-                    // 僵尸 Worker，需要重建
-                    let (pid, client) = Self::spawn_worker_inner(target_uid).await?;
-                    *handle = FsWorkerHandle {
-                        ref_count: 1,
-                        busy: false,
-                        target_uid,
-                        pid,
-                        client,
-                        kill_handle: None,
-                    };
+    /// 找到/复活/创建对应 Worker，返回 [`UidToken`]。创建失败（如 pkexec 未通过）
+    /// 时返回错误。
+    pub async fn request_token(&self, uid: u32) -> io::Result<UidToken> {
+        // 快路径：已有 slot（存活或冷却中）
+        {
+            let mut g = self.slots.lock().unwrap();
+            if let Some(slot) = g.get_mut(&uid) {
+                if let Some(sentinel) = slot.sentinel.upgrade() {
+                    slot.cooling_deadline = None;
+                    return Ok(UidToken {
+                        uid,
+                        conn: slot.conn.clone(),
+                        _sentinel: sentinel,
+                    });
                 }
-            }
-            Entry::Vacant(entry) => {
-                let (pid, client) = Self::spawn_worker_inner(target_uid).await?;
-
-                entry.insert(FsWorkerHandle {
-                    ref_count: 1,
-                    busy: false,
-                    target_uid,
-                    pid,
-                    client,
-                    kill_handle: None,
+                // 冷却中但 conn 仍在 → 新建 sentinel 复活
+                let sentinel = Arc::new(LeaseSentinel {
+                    uid,
+                    reaper_tx: self.reaper_tx.clone(),
+                });
+                slot.sentinel = Arc::downgrade(&sentinel);
+                slot.cooling_deadline = None;
+                debug!("revived cooling worker for uid {uid}");
+                return Ok(UidToken {
+                    uid,
+                    conn: slot.conn.clone(),
+                    _sentinel: sentinel,
                 });
             }
         }
 
-        // 此时 self.workers 已解锁，可以安全获取引用
-        Ok((
-            target_uid,
-            self.workers
-                .get_mut(&target_uid)
-                .expect("worker just inserted"),
-        ))
-    }
+        // 慢路径：spawn 新 Worker（不持锁 await）
+        let registry = Arc::new(CallbackRegistry::new());
+        let (pid, client) = Self::spawn_worker(uid, registry.clone()).await?;
+        let conn = Arc::new(WorkerConn {
+            uid,
+            client,
+            registry,
+            pid,
+        });
+        let sentinel = Arc::new(LeaseSentinel {
+            uid,
+            reaper_tx: self.reaper_tx.clone(),
+        });
 
-    /// 释放指定 UID 的 Worker 引用。
-    ///
-    /// ref_count 降为 0 时启动 30s 闲置计时器。
-    pub async fn release(&mut self, target_uid: u32) {
-        let should_schedule_drop = {
-            let handle = self.workers.get_mut(&target_uid);
-            handle.map_or(false, |h| h.dec_ref())
-        };
-
-        if should_schedule_drop {
-            let pid = self.workers.get(&target_uid).map(|h| h.pid);
-            let uid = target_uid;
-            let timeout = self.idle_timeout;
-            let kill_task = tokio::spawn(async move {
-                tokio::time::sleep(timeout).await;
-                if let Some(pid) = pid {
-                    use nix::sys::signal;
-                    use nix::unistd::Pid;
-                    let pid = Pid::from_raw(pid as i32);
-                    info!("worker for uid {uid} idle timeout, killing pid={pid}");
-                    let _ = signal::kill(pid, signal::Signal::SIGTERM);
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    let _ = signal::kill(pid, signal::Signal::SIGKILL);
-                }
-            });
-            if let Some(handle) = self.workers.get_mut(&target_uid) {
-                handle.kill_handle = Some(kill_task.abort_handle());
+        let mut g = self.slots.lock().unwrap();
+        // 并发双 spawn 检查：若他人已插入存活 slot，弃用本次 spawn
+        if let Some(slot) = g.get_mut(&uid) {
+            if let Some(existing) = slot.sentinel.upgrade() {
+                warn!("concurrent spawn for uid {uid}, killing loser pid={pid}");
+                kill_worker(uid, pid);
+                slot.cooling_deadline = None;
+                return Ok(UidToken {
+                    uid,
+                    conn: slot.conn.clone(),
+                    _sentinel: existing,
+                });
             }
         }
+        g.insert(
+            uid,
+            PoolSlot {
+                conn: conn.clone(),
+                sentinel: Arc::downgrade(&sentinel),
+                cooling_deadline: None,
+                pid,
+            },
+        );
+        Ok(UidToken {
+            uid,
+            conn,
+            _sentinel: sentinel,
+        })
     }
 
-    /// 获取指定 UID 的 Worker（不改变引用计数）。
-    pub fn get(&self, target_uid: u32) -> Option<&FsWorkerHandle> {
-        self.workers.get(&target_uid)
-    }
+    /// 启动一个新的 FS Worker 子进程（双 socketpair）。
+    async fn spawn_worker(
+        target_uid: u32,
+        registry: Arc<CallbackRegistry>,
+    ) -> io::Result<(u32, FsWorkerServiceClient)> {
+        let worker_id = WORKER_ID.fetch_add(1, Ordering::Relaxed);
 
-    /// 获取指定 UID 的 Worker（可变引用，不改变引用计数）。
-    pub fn get_mut(&mut self, target_uid: u32) -> Option<&mut FsWorkerHandle> {
-        self.workers.get_mut(&target_uid)
-    }
+        // 1. 两条匿名 socketpair：请求通道 + 回调通道
+        let (parent_req, child_req) = StdUnixStream::pair()?;
+        let (parent_cb, child_cb) = StdUnixStream::pair()?;
+        clear_cloexec(child_req.as_raw_fd())?;
+        clear_cloexec(child_cb.as_raw_fd())?;
 
-    /// 检查指定 Worker 是否繁忙。
-    pub fn is_busy(&self, target_uid: u32) -> bool {
-        self.workers.get(&target_uid).map_or(false, |h| h.busy)
-    }
-
-    /// 启动一个新的 FS Worker 子进程（静态方法，不借 &mut self）。
-    async fn spawn_worker_inner(target_uid: u32) -> io::Result<(u32, FsWorkerServiceClient)> {
-        let worker_id = unistd::getpid().as_raw() as u64; // 用 PID 派生 worker_id
-
-        // 1. 创建匿名 socketpair
-        let (parent_sock, child_sock) = StdUnixStream::pair()?;
-
-        // 2. 清除 child_sock 的 CLOEXEC 标志，使子进程能继承它
-        let child_raw_fd = child_sock.as_raw_fd();
-        clear_cloexec(child_raw_fd)?;
-
-        // 3. 获取可执行文件路径
         let exe_path = get_exe_path();
 
-        // 4. 构建子进程命令
+        // 2. 构建子进程命令（同 UID 直启，否则 pkexec 提权）
         let mut cmd = if target_uid == unistd::getuid().as_raw() {
-            // 同 UID，直接启动
             let mut c = Command::new(&exe_path);
             if is_appimage() {
                 c.current_dir("/tmp");
             }
             c
         } else {
-            // 提权到目标 UID
             let mut c = Command::new("pkexec");
             c.arg("--user").arg(target_uid.to_string()).arg(&exe_path);
             if is_appimage() {
@@ -246,42 +369,42 @@ impl FsWorkerPool {
         cmd.args([
             "fs-worker",
             &format!("--worker-id={worker_id}"),
-            &format!("--fd={child_raw_fd}"),
+            &format!("--fd={}", child_req.as_raw_fd()),
+            &format!("--cb-fd={}", child_cb.as_raw_fd()),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-        // 5. 启动子进程
+        // 3. 启动
         let mut child = cmd.spawn()?;
         let pid = child.id();
         info!("spawned fs-worker pid={pid} worker_id={worker_id} target_uid={target_uid}");
 
-        // 6. 关闭 child_sock（子进程已有 fd 副本）
-        drop(child_sock);
+        // 4. 关闭子端副本
+        drop(child_req);
+        drop(child_cb);
 
-        // 7. 后台回收子进程（避免僵尸进程）
-        tokio::task::spawn_blocking(move || {
-            let exit = child.wait();
-            match exit {
-                Ok(status) => info!("fs-worker pid={pid} exited with {status}"),
-                Err(e) => info!("fs-worker pid={pid} wait error: {e}"),
-            }
+        // 5. 回收子进程
+        tokio::task::spawn_blocking(move || match child.wait() {
+            Ok(status) => info!("fs-worker pid={pid} exited with {status}"),
+            Err(e) => warn!("fs-worker pid={pid} wait error: {e}"),
         });
 
-        // 8. 设置 parent_sock 为非阻塞并转为 tokio stream
-        parent_sock.set_nonblocking(true)?;
-        let stream = UnixStream::from_std(parent_sock)?;
-
-        // 9. 构建 tarpc transport 和 client
-        let codec_builder = tarpc::tokio_util::codec::length_delimited::Builder::new();
-        let transport = tarpc::serde_transport::new(
-            codec_builder.new_framed(stream),
+        // 6. parent_req → app→worker client
+        parent_req.set_nonblocking(true)?;
+        let req_stream = UnixStream::from_std(parent_req)?;
+        let req_transport = tarpc::serde_transport::new(
+            crate::ipc::frame_stream(req_stream),
             tarpc::tokio_serde::formats::Bincode::default(),
         );
-
         let client =
-            FsWorkerServiceClient::new(tarpc::client::Config::default(), transport).spawn();
+            FsWorkerServiceClient::new(tarpc::client::Config::default(), req_transport).spawn();
+
+        // 7. parent_cb → 服务 AppCallbackService（worker→app）
+        parent_cb.set_nonblocking(true)?;
+        let cb_stream = UnixStream::from_std(parent_cb)?;
+        serve_callback(cb_stream, registry);
 
         Ok((pid, client))
     }
@@ -294,46 +417,147 @@ impl Default for FsWorkerPool {
 }
 
 // ---------------------------------------------------------------------------
-// FsWorkerHandle 辅助
+// 反向回调 server（app 侧实现 AppCallbackService）
 // ---------------------------------------------------------------------------
 
-impl FsWorkerHandle {
-    /// 是否应该被回收（子进程已退出或连接断开）。
-    pub fn is_zombie(&self) -> bool {
-        use nix::sys::signal;
-        use nix::unistd::Pid;
-        signal::kill(Pid::from_raw(self.pid as i32), None).is_err()
+/// app 侧的 [`AppCallbackService`] 实现，把回调路由进 [`CallbackRegistry`]。
+#[derive(Clone)]
+struct CallbackServer {
+    registry: Arc<CallbackRegistry>,
+}
+
+impl AppCallbackService for CallbackServer {
+    async fn watch_delta(self, _ctx: tarpc::context::Context, watch_id: u64, delta: WatchDelta) {
+        self.registry.push_watch_delta(watch_id, delta);
+    }
+
+    async fn progress(self, _ctx: tarpc::context::Context, op_id: u64, ev: ProgressEvent) {
+        self.registry.push_progress(op_id, ev);
+    }
+
+    async fn ask_conflict(
+        self,
+        _ctx: tarpc::context::Context,
+        op_id: u64,
+        conflict_id: u64,
+        item: ConflictItem,
+    ) -> ConflictResolution {
+        self.registry.ask_conflict(op_id, conflict_id, item).await
     }
 }
 
-// ---------------------------------------------------------------------------
-// FD 工具
-// ---------------------------------------------------------------------------
+/// 在给定流上启动 AppCallbackService server。
+fn serve_callback(stream: UnixStream, registry: Arc<CallbackRegistry>) {
+    use futures::prelude::*;
+    use tarpc::server::Channel;
 
-/// 清除文件描述符的 CLOEXEC 标志。
-fn clear_cloexec(fd: RawFd) -> io::Result<()> {
-    use std::os::fd::BorrowedFd;
-
-    // SAFETY: fd is a valid file descriptor at this point
-    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
-
-    let mut flags = FdFlag::from_bits_retain(
-        fcntl(borrowed, FcntlArg::F_GETFD)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?,
+    let transport = tarpc::serde_transport::new(
+        crate::ipc::frame_stream(stream),
+        tarpc::tokio_serde::formats::Bincode::default(),
     );
-    flags.remove(FdFlag::FD_CLOEXEC);
-    fcntl(borrowed, FcntlArg::F_SETFD(flags))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    Ok(())
+    let server = CallbackServer { registry };
+
+    async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
+        tokio::spawn(fut);
+    }
+
+    tokio::spawn(
+        tarpc::server::BaseChannel::with_defaults(transport)
+            .execute(server.serve())
+            .for_each(spawn),
+    );
 }
 
 // ---------------------------------------------------------------------------
-// 路径工具
+// Reaper — 宽限期回收
 // ---------------------------------------------------------------------------
 
-/// 获取当前可执行文件路径。
+/// 启动 reaper 后台任务，返回其输入端。
 ///
-/// 处理 AppImage 场景：如果在 AppImage 中运行，返回 `.AppImage` 文件本身。
+/// 收到 uid（某 token drop）→ 若该 uid 已无存活 token，标记冷却并在宽限期后回收。
+fn start_reaper(
+    slots: Arc<Mutex<HashMap<u32, PoolSlot>>>,
+    grace: Duration,
+) -> mpsc::UnboundedSender<u32> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<u32>();
+    tokio::spawn(async move {
+        while let Some(uid) = rx.recv().await {
+            let should_cool = {
+                let mut g = slots.lock().unwrap();
+                match g.get_mut(&uid) {
+                    Some(slot) if slot.sentinel.strong_count() == 0 => {
+                        slot.cooling_deadline = Some(Instant::now() + grace);
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if !should_cool {
+                continue;
+            }
+
+            let slots2 = slots.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(grace).await;
+                let to_kill = {
+                    let mut g = slots2.lock().unwrap();
+                    match g.get(&uid) {
+                        Some(slot)
+                            if slot.sentinel.strong_count() == 0
+                                && slot
+                                    .cooling_deadline
+                                    .is_some_and(|d| Instant::now() >= d) =>
+                        {
+                            let pid = slot.pid;
+                            g.remove(&uid);
+                            Some(pid)
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(pid) = to_kill {
+                    info!("worker for uid {uid} idle past grace, reaping pid={pid}");
+                    kill_worker(uid, pid);
+                }
+            });
+        }
+    });
+    tx
+}
+
+/// SIGTERM 然后（2s 后）SIGKILL 终止 Worker 进程。
+fn kill_worker(uid: u32, pid: u32) {
+    use nix::sys::signal;
+    use nix::unistd::Pid;
+    let p = Pid::from_raw(pid as i32);
+    debug!("killing worker uid={uid} pid={pid}");
+    let _ = signal::kill(p, signal::Signal::SIGTERM);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let _ = signal::kill(p, signal::Signal::SIGKILL);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// FD / 路径工具
+// ---------------------------------------------------------------------------
+
+/// 清除文件描述符的 CLOEXEC 标志，使子进程能继承。
+fn clear_cloexec(fd: RawFd) -> io::Result<()> {
+    use std::os::fd::BorrowedFd;
+    // SAFETY: fd 此刻有效
+    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+    let mut flags = FdFlag::from_bits_retain(
+        fcntl(borrowed, FcntlArg::F_GETFD)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+    );
+    flags.remove(FdFlag::FD_CLOEXEC);
+    fcntl(borrowed, FcntlArg::F_SETFD(flags))
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    Ok(())
+}
+
+/// 获取当前可执行文件路径（处理 AppImage）。
 fn get_exe_path() -> std::path::PathBuf {
     if let Ok(appimage) = std::env::var("APPIMAGE") {
         std::path::PathBuf::from(appimage)
@@ -346,9 +570,3 @@ fn get_exe_path() -> std::path::PathBuf {
 fn is_appimage() -> bool {
     std::env::var("APPIMAGE").is_ok()
 }
-
-// ---------------------------------------------------------------------------
-// Worker 入口 (re-export)
-// ---------------------------------------------------------------------------
-
-pub use worker::run_fs_worker;
