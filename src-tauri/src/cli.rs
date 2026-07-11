@@ -6,7 +6,7 @@
 //! hnfm                              → 默认 Launch，复用或变 primary
 //! hnfm /path1 /path2                → 带初始路径的 Launch
 //! hnfm launch [options] [paths..]   → 显式 Launch
-//! hnfm fs-worker --worker-id <n> --fd <n>  → Worker 子进程（内部）
+//! hnfm __fs-worker --fs-worker-id <n> --fd <n> --cb-fd <n>  → FS Worker 子进程（内部）
 //! ```
 
 use clap::{Parser, Subcommand};
@@ -30,6 +30,7 @@ pub enum Commands {
     Launch(LaunchCmd),
 
     /// 启动文件系统 Worker 子进程 (内部使用)
+    #[command(name = "__fs-worker", hide = true)]
     FsWorker(FsWorkerCmd),
 }
 
@@ -62,17 +63,21 @@ pub struct LaunchCmd {
 /// 由主进程通过 `pkexec ...` 启动。
 #[derive(Parser)]
 pub struct FsWorkerCmd {
-    /// Worker ID
-    #[arg(long)]
-    pub worker_id: u64,
+    /// FS Worker ID
+    #[arg(long = "fs-worker-id")]
+    pub fs_worker_id: u64,
 
     /// 请求通道 fd（app→worker，继承自父进程）
     #[arg(long)]
-    pub fd: Option<i32>,
+    pub fd: i32,
 
     /// 回调通道 fd（worker→app，继承自父进程）
     #[arg(long)]
-    pub cb_fd: Option<i32>,
+    pub cb_fd: i32,
+
+    /// 主进程 PID（用于 Worker 侧孤儿检测）
+    #[arg(long)]
+    pub parent_pid: u32,
 }
 
 // ---------------------------------------------------------------------------

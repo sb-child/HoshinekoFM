@@ -15,12 +15,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tarpc::context;
 use tokio::sync::mpsc;
 
-use crate::fsworker::{FsWorkerPool, UidToken, WorkerConn};
+use crate::fsworker::{FsWorkerPool, UidToken, WorkerRequestContent};
 use crate::ipc::protocol::{ConflictResolution, EntryKind, ProgressEvent, WatchDelta};
-use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Op — copy/move 的单项（逐项携带 src/dst token，可表达跨 UID）
@@ -47,8 +45,7 @@ pub struct Watcher {
     /// 增量事件流
     pub events: mpsc::UnboundedReceiver<WatchDelta>,
     watch_id: u64,
-    conn: Arc<WorkerConn>,
-    /// 保活对应 Worker
+    /// 保活对应 Worker + 发送请求
     _token: UidToken,
 }
 
@@ -56,20 +53,23 @@ impl Watcher {
     /// 立刻触发全量刷新（对应前端刷新键）。
     pub async fn refresh(&self) {
         let _ = self
-            .conn
-            .client
-            .refresh(context::current(), self.watch_id)
+            ._token
+            .send_request(WorkerRequestContent::Refresh {
+                watch_id: self.watch_id,
+            })
             .await;
     }
 }
 
 impl Drop for Watcher {
     fn drop(&mut self) {
-        self.conn.registry.unregister_watch(self.watch_id);
-        let client = self.conn.client.clone();
+        self._token.registry.unregister_watch(self.watch_id);
+        let token = self._token.clone();
         let id = self.watch_id;
         tokio::spawn(async move {
-            let _ = client.unwatch(context::current(), id).await;
+            let _ = token
+                .send_request(WorkerRequestContent::Unwatch { watch_id: id })
+                .await;
         });
     }
 }
@@ -80,23 +80,22 @@ impl Drop for Watcher {
 
 /// 一个变更操作的进度句柄。
 ///
-/// - `events` 收到 `Started` / `Item` / `Tick` / `Conflict` / `Done`。
+/// - `events` 收到 `Started` / `Item` / `Tick` / `Conflict` / `Done` / `ConnectionLost`。
 /// - 遇到 `Conflict { conflict_id, .. }` → 调用 `resolve(conflict_id, ...)` 决策。
 /// - `cancel()` 取消整个操作。
-/// - 持有相关 [`UidToken`]，操作期间保活 Worker（"Progress 在 uid token 锁覆盖范围内"）。
+/// - 持有相关 [`UidToken`]，操作期间保活 Worker。
 pub struct Progress {
     /// 进度事件流
     pub events: mpsc::UnboundedReceiver<ProgressEvent>,
     op_id: u64,
-    conn: Arc<WorkerConn>,
-    /// 保活相关 Worker
-    _tokens: Vec<UidToken>,
+    /// 保活相关 Worker + 发送请求
+    _token: UidToken,
 }
 
 impl Progress {
     /// 解决一个冲突。
     pub fn resolve(&self, conflict_id: u64, res: ConflictResolution) {
-        self.conn
+        self._token
             .registry
             .resolve_conflict(self.op_id, conflict_id, res);
     }
@@ -104,9 +103,8 @@ impl Progress {
     /// 取消整个操作。
     pub async fn cancel(&self) {
         let _ = self
-            .conn
-            .client
-            .cancel_op(context::current(), self.op_id)
+            ._token
+            .send_request(WorkerRequestContent::CancelOp { op_id: self.op_id })
             .await;
     }
 
@@ -118,7 +116,7 @@ impl Progress {
     /// 取出一个可跨任务持有的取消句柄。
     pub fn canceller(&self) -> Canceller {
         Canceller {
-            conn: self.conn.clone(),
+            token: self._token.clone(),
             op_id: self.op_id,
         }
     }
@@ -126,14 +124,14 @@ impl Progress {
 
 impl Drop for Progress {
     fn drop(&mut self) {
-        self.conn.registry.unregister_op(self.op_id);
+        self._token.registry.unregister_op(self.op_id);
     }
 }
 
-/// 与 `Progress` 解耦的取消句柄，可克隆、可跨任务持有（例如放进 UIService 的注册表）。
+/// 与 `Progress` 解耦的取消句柄，可克隆、可跨任务持有。
 #[derive(Clone)]
 pub struct Canceller {
-    conn: Arc<WorkerConn>,
+    token: UidToken,
     op_id: u64,
 }
 
@@ -146,9 +144,8 @@ impl Canceller {
     /// 取消该操作。
     pub async fn cancel(&self) {
         let _ = self
-            .conn
-            .client
-            .cancel_op(context::current(), self.op_id)
+            .token
+            .send_request(WorkerRequestContent::CancelOp { op_id: self.op_id })
             .await;
     }
 }
@@ -185,7 +182,7 @@ impl FsService {
         self.pool
             .request_token(uid)
             .await
-            .map_err(|e| format!("request worker for uid {uid}: {e}"))
+            .map_err(|e| format!("request fs-worker for uid {uid}: {e}"))
     }
 
     // -----------------------------------------------------------------------
@@ -195,26 +192,27 @@ impl FsService {
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
     pub async fn watch_dir(&self, token: &UidToken, dir: &str) -> Result<Watcher, String> {
         let watch_id = self.next_id();
-        let conn = token.conn().clone();
-        let rx = conn.registry.register_watch(watch_id);
-        match conn
-            .client
-            .watch_dir(context::current(), watch_id, dir.to_string())
+        let rx = token.registry.register_watch(watch_id);
+        match token
+            .send_request(WorkerRequestContent::WatchDir {
+                watch_id,
+                dir: dir.to_string(),
+            })
             .await
         {
-            Ok(Ok(())) => Ok(Watcher {
+            Ok(crate::fsworker::WorkerResponse::Ok) => Ok(Watcher {
                 events: rx,
                 watch_id,
-                conn,
                 _token: token.clone(),
             }),
-            Ok(Err(e)) => {
-                conn.registry.unregister_watch(watch_id);
+            Ok(crate::fsworker::WorkerResponse::Err(e)) => {
+                token.registry.unregister_watch(watch_id);
                 Err(e)
             }
+            Ok(_) => unreachable!("Connecting handled internally by send_request"),
             Err(e) => {
-                conn.registry.unregister_watch(watch_id);
-                Err(format!("watch_dir RPC: {e}"))
+                token.registry.unregister_watch(watch_id);
+                Err(e)
             }
         }
     }
@@ -222,26 +220,27 @@ impl FsService {
     /// 监视单个文件/目录的属性（面包屑用）。
     pub async fn watch_stat(&self, token: &UidToken, file: &str) -> Result<Watcher, String> {
         let watch_id = self.next_id();
-        let conn = token.conn().clone();
-        let rx = conn.registry.register_watch(watch_id);
-        match conn
-            .client
-            .watch_stat(context::current(), watch_id, file.to_string())
+        let rx = token.registry.register_watch(watch_id);
+        match token
+            .send_request(WorkerRequestContent::WatchStat {
+                watch_id,
+                file: file.to_string(),
+            })
             .await
         {
-            Ok(Ok(())) => Ok(Watcher {
+            Ok(crate::fsworker::WorkerResponse::Ok) => Ok(Watcher {
                 events: rx,
                 watch_id,
-                conn,
                 _token: token.clone(),
             }),
-            Ok(Err(e)) => {
-                conn.registry.unregister_watch(watch_id);
+            Ok(crate::fsworker::WorkerResponse::Err(e)) => {
+                token.registry.unregister_watch(watch_id);
                 Err(e)
             }
+            Ok(_) => unreachable!("Connecting handled internally by send_request"),
             Err(e) => {
-                conn.registry.unregister_watch(watch_id);
-                Err(format!("watch_stat RPC: {e}"))
+                token.registry.unregister_watch(watch_id);
+                Err(e)
             }
         }
     }
@@ -258,13 +257,15 @@ impl FsService {
         kind: EntryKind,
     ) -> Result<Progress, String> {
         let op_id = self.next_id();
-        let conn = token.conn().clone();
-        let rx = conn.registry.register_op(op_id);
-        let rpc = conn
-            .client
-            .run_create(context::current(), op_id, path.to_string(), kind)
+        let rx = token.registry.register_op(op_id);
+        let rpc = token
+            .send_request(WorkerRequestContent::RunCreate {
+                op_id,
+                path: path.to_string(),
+                kind,
+            })
             .await;
-        Self::finish_dispatch(rpc, conn, rx, op_id, vec![token.clone()])
+        Self::finish_dispatch(rpc, token, rx, op_id)
     }
 
     /// 重命名。
@@ -275,13 +276,15 @@ impl FsService {
         new_name: &str,
     ) -> Result<Progress, String> {
         let op_id = self.next_id();
-        let conn = token.conn().clone();
-        let rx = conn.registry.register_op(op_id);
-        let rpc = conn
-            .client
-            .run_rename(context::current(), op_id, path.to_string(), new_name.to_string())
+        let rx = token.registry.register_op(op_id);
+        let rpc = token
+            .send_request(WorkerRequestContent::RunRename {
+                op_id,
+                path: path.to_string(),
+                new_name: new_name.to_string(),
+            })
             .await;
-        Self::finish_dispatch(rpc, conn, rx, op_id, vec![token.clone()])
+        Self::finish_dispatch(rpc, token, rx, op_id)
     }
 
     /// 批量移动。
@@ -307,7 +310,7 @@ impl FsService {
             todo!("跨 UID copy/move 尚未实现");
         }
 
-        let conn = ops[0].src.0.conn().clone();
+        let token = ops[0].src.0.clone();
         let items: Vec<(String, String)> = ops
             .iter()
             .map(|o| {
@@ -317,44 +320,38 @@ impl FsService {
                 )
             })
             .collect();
-        let mut tokens = Vec::with_capacity(ops.len() * 2);
-        for o in ops {
-            tokens.push(o.src.0);
-            tokens.push(o.dst.0);
-        }
-
         let op_id = self.next_id();
-        let rx = conn.registry.register_op(op_id);
-        let rpc = if is_move {
-            conn.client.run_move(context::current(), op_id, items).await
+        let rx = token.registry.register_op(op_id);
+        let content = if is_move {
+            WorkerRequestContent::RunMove { op_id, items }
         } else {
-            conn.client.run_copy(context::current(), op_id, items).await
+            WorkerRequestContent::RunCopy { op_id, items }
         };
-        Self::finish_dispatch(rpc, conn, rx, op_id, tokens)
+        let rpc = token.send_request(content).await;
+        Self::finish_dispatch(rpc, &token, rx, op_id)
     }
 
     /// 统一处理派发结果：成功建 Progress，失败注销 op。
     fn finish_dispatch(
-        rpc: Result<Result<(), String>, tarpc::client::RpcError>,
-        conn: Arc<WorkerConn>,
+        rpc: Result<crate::fsworker::WorkerResponse, String>,
+        token: &UidToken,
         rx: mpsc::UnboundedReceiver<ProgressEvent>,
         op_id: u64,
-        tokens: Vec<UidToken>,
     ) -> Result<Progress, String> {
         match rpc {
-            Ok(Ok(())) => Ok(Progress {
+            Ok(crate::fsworker::WorkerResponse::Ok) => Ok(Progress {
                 events: rx,
                 op_id,
-                conn,
-                _tokens: tokens,
+                _token: token.clone(),
             }),
-            Ok(Err(e)) => {
-                conn.registry.unregister_op(op_id);
+            Ok(crate::fsworker::WorkerResponse::Err(e)) => {
+                token.registry.unregister_op(op_id);
                 Err(e)
             }
+            Ok(_) => unreachable!("Connecting handled internally by send_request"),
             Err(e) => {
-                conn.registry.unregister_op(op_id);
-                Err(format!("dispatch RPC: {e}"))
+                token.registry.unregister_op(op_id);
+                Err(e)
             }
         }
     }

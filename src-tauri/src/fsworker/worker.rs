@@ -1,6 +1,6 @@
 //! FS Worker 子进程入口与服务实现。
 //!
-//! 由主进程通过 `hnfm fs-worker --worker-id <n> --fd <n> --cb-fd <n>` 启动，
+//! 由主进程通过 `hnfm __fs-worker --fs-worker-id <n> --fd <n> --cb-fd <n>` 启动，
 //! 两条匿名 socketpair：
 //!
 //! - `--fd`：请求通道，Worker 作 tarpc server，实现 [`FsWorkerService`]。
@@ -72,7 +72,7 @@ impl Drop for WatchHandle {
 #[derive(Clone)]
 pub struct FsWorkerServer {
     /// Worker ID（日志用）
-    worker_id: u64,
+    fs_worker_id: u64,
     /// 回调通道客户端（worker → app）
     cb: AppCallbackServiceClient,
     /// watch_id → 监视句柄
@@ -86,9 +86,9 @@ pub struct FsWorkerServer {
 impl FsWorkerServer {
     pub fn new(opts: &FsWorkerOpts, cb: AppCallbackServiceClient) -> Self {
         let uid = nix::unistd::getuid().as_raw();
-        info!("fs worker {} starting, uid={}", opts.worker_id, uid);
+        info!("fs worker {} starting, uid={}", opts.fs_worker_id, uid);
         Self {
-            worker_id: opts.worker_id,
+            fs_worker_id: opts.fs_worker_id,
             cb,
             watches: Arc::new(Mutex::new(HashMap::new())),
             ops: Arc::new(Mutex::new(HashMap::new())),
@@ -99,6 +99,14 @@ impl FsWorkerServer {
 
 impl FsWorkerService for FsWorkerServer {
     // -----------------------------------------------------------------------
+    // Ping
+    // -----------------------------------------------------------------------
+
+    async fn ping(self, _ctx: context::Context) -> bool {
+        true
+    }
+
+    // -----------------------------------------------------------------------
     // Watch
     // -----------------------------------------------------------------------
 
@@ -108,7 +116,7 @@ impl FsWorkerService for FsWorkerServer {
         watch_id: u64,
         path: String,
     ) -> Result<(), String> {
-        debug!("[w{}] watch_dir {watch_id} {path}", self.worker_id);
+        debug!("[w{}] watch_dir {watch_id} {path}", self.fs_worker_id);
         let dir = resolve_path(&PathBuf::from(&path));
 
         // 初次全量扫描（后台）
@@ -122,7 +130,7 @@ impl FsWorkerService for FsWorkerServer {
         let (watcher, pump) = match spawn_dir_watch(self.cb.clone(), watch_id, dir.clone()) {
             Ok(pair) => pair,
             Err(e) => {
-                warn!("[w{}] notify watch failed for {dir:?}: {e}", self.worker_id);
+                warn!("[w{}] notify watch failed for {dir:?}: {e}", self.fs_worker_id);
                 (None, None)
             }
         };
@@ -149,7 +157,7 @@ impl FsWorkerService for FsWorkerServer {
         watch_id: u64,
         path: String,
     ) -> Result<(), String> {
-        debug!("[w{}] watch_stat {watch_id} {path}", self.worker_id);
+        debug!("[w{}] watch_stat {watch_id} {path}", self.fs_worker_id);
         let target = PathBuf::from(&path);
 
         let cb = self.cb.clone();
@@ -162,7 +170,7 @@ impl FsWorkerService for FsWorkerServer {
         let (watcher, pump) = match spawn_stat_watch(self.cb.clone(), watch_id, target.clone()) {
             Ok(pair) => pair,
             Err(e) => {
-                warn!("[w{}] notify stat watch failed for {target:?}: {e}", self.worker_id);
+                warn!("[w{}] notify stat watch failed for {target:?}: {e}", self.fs_worker_id);
                 (None, None)
             }
         };
@@ -202,7 +210,7 @@ impl FsWorkerService for FsWorkerServer {
     }
 
     async fn unwatch(self, _ctx: context::Context, watch_id: u64) {
-        debug!("[w{}] unwatch {watch_id}", self.worker_id);
+        debug!("[w{}] unwatch {watch_id}", self.fs_worker_id);
         // drop WatchHandle → 停止 notify + abort 任务
         self.watches.lock().await.remove(&watch_id);
     }
@@ -360,7 +368,7 @@ impl FsWorkerService for FsWorkerServer {
     async fn cancel_op(self, _ctx: context::Context, op_id: u64) {
         if let Some(flag) = self.ops.lock().await.get(&op_id) {
             flag.store(true, Ordering::Relaxed);
-            debug!("[w{}] cancel op {op_id}", self.worker_id);
+            debug!("[w{}] cancel op {op_id}", self.fs_worker_id);
         }
     }
 }
@@ -710,9 +718,63 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
         server::{BaseChannel, Channel},
     };
 
+    // 0. 启动孤儿检测：每 0.5s 用 kill(parent_pid, 0) 检测主进程存活。
+    //    绕过 pkexec 中介（fs-worker 的直接 ppid 是 pkexec，不是主进程）。
+    let fs_worker_id = opts.fs_worker_id;
+    let parent_pid = opts
+        .parent_pid
+        .expect("--parent-pid is required for fs-worker mode")
+        as i32;
+    tokio::spawn(async move {
+        let mut failures: u32 = 0;
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            if unsafe { libc::kill(parent_pid, 0) } == 0 {
+                // 主进程存活
+                failures = 0;
+                continue;
+            }
+            // kill 失败，查 errno
+            let err = std::io::Error::last_os_error();
+            match err.raw_os_error() {
+                Some(libc::ESRCH) => {
+                    // 进程不存在 → 孤儿
+                    failures += 1;
+                    if failures >= 2 {
+                        warn!(
+                            "fs-worker {fs_worker_id} detected orphan (parent_pid={parent_pid} gone), exiting with code {}",
+                            super::ORPHAN_EXIT_CODE
+                        );
+                        std::process::exit(super::ORPHAN_EXIT_CODE);
+                    }
+                }
+                Some(libc::EPERM) => {
+                    // 跨 UID 无法 kill(pid,0)，回退到 ppid 检测
+                    let ppid = unsafe { libc::getppid() };
+                    if ppid <= 1 {
+                        failures += 1;
+                        if failures >= 2 {
+                            warn!(
+                                "fs-worker {fs_worker_id} orphan via ppid (cross-UID), exiting"
+                            );
+                            std::process::exit(super::ORPHAN_EXIT_CODE);
+                        }
+                    } else {
+                        failures = 0;
+                    }
+                }
+                _ => {
+                    // 其他错误（EINVAL 等），跳过本轮
+                    failures = 0;
+                }
+            }
+        }
+    });
+
     // 1. 回调通道（worker → app）：恢复 fd → tarpc client
     let cb_fd = opts.cb_fd.expect("--cb-fd is required for fs-worker mode");
-    info!("fs worker {} restoring cb-fd={}", opts.worker_id, cb_fd);
+    info!("fs worker {} restoring cb-fd={}", opts.fs_worker_id, cb_fd);
     let cb_std = unsafe { StdUnixStream::from_raw_fd(cb_fd) };
     cb_std.set_nonblocking(true).expect("cb set_nonblocking");
     let cb_stream = UnixStream::from_std(cb_std).expect("cb to tokio stream");
@@ -725,7 +787,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     // 2. 请求通道（app → worker）：恢复 fd → tarpc server
     let server = FsWorkerServer::new(&opts, cb);
     let fd = opts.fd.expect("--fd is required for fs-worker mode");
-    info!("fs worker {} restoring fd={}", opts.worker_id, fd);
+    info!("fs worker {} restoring fd={}", opts.fs_worker_id, fd);
     let std_stream = unsafe { StdUnixStream::from_raw_fd(fd) };
     std_stream.set_nonblocking(true).expect("set_nonblocking");
     let stream = UnixStream::from_std(std_stream).expect("to tokio stream");
@@ -738,13 +800,13 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
         tokio::spawn(fut);
     }
 
-    info!("fs worker {} entering serve loop", opts.worker_id);
+    info!("fs worker {} entering serve loop", opts.fs_worker_id);
     BaseChannel::with_defaults(transport)
         .execute(server.serve())
         .for_each(spawn)
         .await;
 
-    info!("fs worker {} exiting", opts.worker_id);
+    info!("fs worker {} exiting", opts.fs_worker_id);
     std::process::exit(0);
 }
 

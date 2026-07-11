@@ -77,6 +77,7 @@ pub struct TabState {
 ///
 /// - 首帧（或 `refresh()` 后）为 `Reset`，给出全量文件。
 /// - 之后为增量：新增/修改/元数据补全均为 `Upsert`，删除为 `Remove`，重命名为 `Rename`。
+/// - `ConnectionLost` 表示 Worker 连接断开，上层应暂停依赖此 watcher 的 UI。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WatchDelta {
     /// 全量快照（首帧 / refresh 后）
@@ -87,6 +88,8 @@ pub enum WatchDelta {
     Remove(PathBuf),
     /// 重命名
     Rename { from: PathBuf, to: PathBuf },
+    /// Worker 连接断开
+    ConnectionLost { watch_id: u64, reason: String, reconnecting: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +154,8 @@ pub enum ProgressEvent {
         failed: u64,
         cancelled: bool,
     },
+    /// Worker 连接断开
+    ConnectionLost { op_id: u64, reason: String, reconnecting: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +267,8 @@ pub trait InstanceService {
 /// 用于把反向回调路由回对应的 `Watcher` / `Progress`。
 #[tarpc::service]
 pub trait FsWorkerService {
+    /// 存活检查。
+    async fn ping() -> bool;
     /// 开始监视目录。首帧全量 + 后续增量通过 `watch_delta` 推送。
     async fn watch_dir(watch_id: u64, path: String) -> Result<(), String>;
     /// 开始监视单个文件/目录的属性（面包屑用）。

@@ -117,6 +117,13 @@ impl UIService {
                         // TODO: emit job:complete
                         break;
                     }
+                    ProgressEvent::ConnectionLost { reconnecting, .. } => {
+                        // TODO: emit job:connection_lost
+                        debug!("op {op_id}: connection lost (reconnecting={reconnecting})");
+                        if !reconnecting {
+                            break;
+                        }
+                    }
                     _ => {
                         // TODO: emit job:progress
                     }
