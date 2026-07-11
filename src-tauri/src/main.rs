@@ -3,7 +3,8 @@
 
 use tracing_subscriber::EnvFilter;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -17,11 +18,7 @@ fn main() {
 
             // 尝试复用已有实例（--new-instance 跳过）
             if !cmd.new_instance {
-                let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-                if rt.block_on(hnfm_lib::appreuse::run_app_reuse(
-                    cmd.instance_id,
-                    &cmd.paths,
-                )) {
+                if hnfm_lib::appreuse::run_app_reuse(cmd.instance_id, &cmd.paths).await {
                     std::process::exit(0);
                 }
             }
@@ -31,18 +28,18 @@ fn main() {
             hnfm_lib::app::run_app(hnfm_lib::app::RunOpts {
                 instance_id,
                 paths: cmd.paths,
-            });
+            })
+            .await;
         }
 
         hnfm_lib::cli::Dispatch::FsWorker(cmd) => {
             tracing::info!("launching fs-worker mode");
-            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
             let opts = hnfm_lib::fsworker::FsWorkerOpts {
                 worker_id: cmd.worker_id,
                 fd: cmd.fd,
                 cb_fd: cmd.cb_fd,
             };
-            rt.block_on(hnfm_lib::fsworker::run_fs_worker(opts));
+            hnfm_lib::fsworker::run_fs_worker(opts).await;
         }
     }
 }

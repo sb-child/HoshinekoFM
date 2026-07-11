@@ -22,8 +22,9 @@
 
 use std::{
     collections::HashMap,
+    ffi::CString,
     io,
-    os::unix::{fs::MetadataExt, io::FromRawFd, net::UnixStream as StdUnixStream},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt, io::FromRawFd, net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -235,7 +236,7 @@ impl FsWorkerService for FsWorkerServer {
                         src: target.clone(), dst: target.clone(), status: ItemStatus::Skipped,
                     }).await;
                 }
-                Decision::Proceed(dst) => {
+                Decision::Proceed { dst, .. } => {
                     let res = tokio::task::spawn_blocking(move || create_entry(&dst, kind))
                         .await
                         .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
@@ -281,17 +282,36 @@ impl FsWorkerService for FsWorkerServer {
                         src: src.clone(), dst: dst.clone(), status: ItemStatus::Skipped,
                     }).await;
                 }
-                Decision::Proceed(final_dst) => {
+                Decision::Proceed { dst: final_dst, strategy } => {
                     let renamed = final_dst != dst;
                     let s = src.clone();
                     let d = final_dst.clone();
-                    let res = tokio::task::spawn_blocking(move || std::fs::rename(&s, &d))
-                        .await
-                        .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
+                    let res = rename_with_strategy(&s, &d, strategy);
                     let status = match res {
                         Ok(()) => {
                             succeeded += 1;
                             if renamed { ItemStatus::Renamed(final_dst.clone()) } else { ItemStatus::Ok }
+                        }
+                        Err(e) if strategy != ProceedStrategy::Overwrite
+                            && e.raw_os_error() == Some(nix::errno::Errno::EEXIST as i32) =>
+                        {
+                            // TOCTOU: dst created between check and rename, re-ask
+                            let s2 = s.clone();
+                            let d2 = final_dst.clone();
+                            let status2 = match decide_dst(&cb, op_id, &conflict_seq, &s2, &d2).await {
+                                Decision::Proceed { dst: fd, strategy: st2 } => {
+                                    match rename_with_strategy(&s2, &fd, st2) {
+                                        Ok(()) => {
+                                            succeeded += 1;
+                                            if fd != d2 { ItemStatus::Renamed(fd) } else { ItemStatus::Ok }
+                                        }
+                                        Err(e2) => { failed += 1; ItemStatus::Failed(e2.to_string()) }
+                                    }
+                                }
+                                Decision::Skip => ItemStatus::Skipped,
+                                Decision::Cancel => { cancelled = true; ItemStatus::Skipped }
+                            };
+                            status2
                         }
                         Err(e) => { failed += 1; ItemStatus::Failed(e.to_string()) }
                     };
@@ -358,6 +378,7 @@ impl FsWorkerServer {
 // 批处理执行
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy)]
 enum BatchKind {
     Move,
     Copy,
@@ -397,18 +418,25 @@ async fn run_batch(
                 break;
             }
             Decision::Skip => ItemStatus::Skipped,
-            Decision::Proceed(final_dst) => {
+            Decision::Proceed { dst: final_dst, strategy } => {
                 let renamed = final_dst != dst;
                 let s = src.clone();
                 let d = final_dst.clone();
-                let res = match kind {
-                    BatchKind::Move => {
-                        tokio::task::spawn_blocking(move || move_path(&s, &d)).await
+                let res = tokio::task::spawn_blocking(move || {
+                    match kind {
+                        BatchKind::Move => {
+                            if strategy == ProceedStrategy::Overwrite {
+                                move_path(&s, &d)
+                            } else {
+                                move_path_noreplace(&s, &d)
+                            }
+                        }
+                        BatchKind::Copy => {
+                            copy_path(&s, &d, strategy != ProceedStrategy::Overwrite)
+                        }
                     }
-                    BatchKind::Copy => {
-                        tokio::task::spawn_blocking(move || copy_path(&s, &d)).await
-                    }
-                }
+                })
+                .await
                 .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
                 match res {
                     Ok(()) => {
@@ -417,6 +445,40 @@ async fn run_batch(
                             ItemStatus::Renamed(final_dst.clone())
                         } else {
                             ItemStatus::Ok
+                        }
+                    }
+                    Err(e) if strategy != ProceedStrategy::Overwrite
+                        && matches!(kind, BatchKind::Move)
+                        && e.raw_os_error() == Some(nix::errno::Errno::EEXIST as i32) =>
+                    {
+                        // TOCTOU: dst created between check and rename/move, re-ask
+                        let d2 = final_dst.clone();
+                        match decide_dst(cb, op_id, conflict_seq, &src, &d2).await {
+                            Decision::Proceed { dst: fd, strategy: st2 } => {
+                                let s2 = src.clone();
+                                let fd_move = fd.clone();
+                                let res2 = tokio::task::spawn_blocking(move || {
+                                    if st2 == ProceedStrategy::Overwrite {
+                                        move_path(&s2, &fd_move)
+                                    } else {
+                                        move_path_noreplace(&s2, &fd_move)
+                                    }
+                                })
+                                .await
+                                .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
+                                match res2 {
+                                    Ok(()) => {
+                                        succeeded += 1;
+                                        if fd != d2 { ItemStatus::Renamed(fd) } else { ItemStatus::Ok }
+                                    }
+                                    Err(e2) => {
+                                        failed += 1;
+                                        ItemStatus::Failed(e2.to_string())
+                                    }
+                                }
+                            }
+                            Decision::Skip => ItemStatus::Skipped,
+                            Decision::Cancel => { cancelled = true; break; }
                         }
                     }
                     Err(e) => {
@@ -456,12 +518,23 @@ async fn run_batch(
 
 /// 冲突决策结果。
 enum Decision {
-    /// 继续，使用给定目标路径
-    Proceed(PathBuf),
+    /// 继续，使用给定目标路径和策略
+    Proceed { dst: PathBuf, strategy: ProceedStrategy },
     /// 跳过该项
     Skip,
     /// 取消整个操作
     Cancel,
+}
+
+/// rename/move 的执行策略，用于关闭 TOCTOU 窗口。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProceedStrategy {
+    /// 目标在检查时不存在 → renameat2(RENAME_NOREPLACE)，EEXIST 则回退到冲突询问
+    NoConflict,
+    /// 用户选择覆盖 → 用原子 rename/copy，允许覆盖
+    Overwrite,
+    /// 自动或手动重命名 → renameat2(RENAME_NOREPLACE)，EEXIST 回退到冲突询问
+    Rename,
 }
 
 /// 若 `dst` 已存在则询问上层，返回最终决策。
@@ -473,7 +546,10 @@ async fn decide_dst(
     dst: &Path,
 ) -> Decision {
     if !dst.exists() {
-        return Decision::Proceed(dst.to_path_buf());
+        return Decision::Proceed {
+            dst: dst.to_path_buf(),
+            strategy: ProceedStrategy::NoConflict,
+        };
     }
     let conflict_id = conflict_seq.fetch_add(1, Ordering::Relaxed);
     let item = ConflictItem {
@@ -486,11 +562,20 @@ async fn decide_dst(
         .unwrap_or(ConflictResolution::CancelAll);
     match res {
         ConflictResolution::Skip => Decision::Skip,
-        ConflictResolution::Overwrite => Decision::Proceed(dst.to_path_buf()),
-        ConflictResolution::AutoRename => Decision::Proceed(unique_path(dst)),
+        ConflictResolution::Overwrite => Decision::Proceed {
+            dst: dst.to_path_buf(),
+            strategy: ProceedStrategy::Overwrite,
+        },
+        ConflictResolution::AutoRename => Decision::Proceed {
+            dst: unique_path(dst),
+            strategy: ProceedStrategy::Rename,
+        },
         ConflictResolution::Rename(name) => {
             let parent = dst.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
-            Decision::Proceed(parent.join(name))
+            Decision::Proceed {
+                dst: parent.join(name),
+                strategy: ProceedStrategy::Rename,
+            }
         }
         ConflictResolution::CancelAll => Decision::Cancel,
     }
@@ -755,12 +840,57 @@ fn create_entry(path: &Path, kind: EntryKind) -> io::Result<()> {
     }
 }
 
+/// 根据策略执行 rename：NOREPLACE 用于关闭 TOCTOU 窗口，Overwrite 用原子 rename。
+fn rename_with_strategy(src: &Path, dst: &Path, strategy: ProceedStrategy) -> io::Result<()> {
+    rename_with_strategy_inner(src, dst, strategy)
+}
+
+fn rename_with_strategy_inner(src: &Path, dst: &Path, strategy: ProceedStrategy) -> io::Result<()> {
+    match strategy {
+        ProceedStrategy::NoConflict | ProceedStrategy::Rename => {
+            let src_c = CString::new(src.as_os_str().as_bytes())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let dst_c = CString::new(dst.as_os_str().as_bytes())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let ret = unsafe {
+                libc::renameat2(
+                    libc::AT_FDCWD,
+                    src_c.as_ptr(),
+                    libc::AT_FDCWD,
+                    dst_c.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if ret != 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+        ProceedStrategy::Overwrite => std::fs::rename(src, dst),
+    }
+}
+
 /// 移动路径：先 rename，跨设备（EXDEV）时退化为 copy + 删除。
 fn move_path(src: &Path, dst: &Path) -> io::Result<()> {
-    match std::fs::rename(src, dst) {
+    move_path_inner(src, dst, false)
+}
+
+/// 带 NOREPLACE 策略的移动：dst 不应存在时使用，关闭 TOCTOU 窗口。
+fn move_path_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
+    move_path_inner(src, dst, true)
+}
+
+fn move_path_inner(src: &Path, dst: &Path, noreplace: bool) -> io::Result<()> {
+    let rename_result = rename_with_strategy_inner(src, dst, if noreplace {
+        ProceedStrategy::NoConflict
+    } else {
+        ProceedStrategy::Overwrite
+    });
+    match rename_result {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(nix::errno::Errno::EXDEV as i32) => {
-            copy_path(src, dst)?;
+            copy_path(src, dst, noreplace)?;
             if src.is_dir() {
                 std::fs::remove_dir_all(src)
             } else {
@@ -771,20 +901,31 @@ fn move_path(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// 递归复制文件/目录。
-fn copy_path(src: &Path, dst: &Path) -> io::Result<()> {
+/// 递归复制文件/目录。`noreplace=true` 时目标文件使用 create_new 避免截断覆盖。
+fn copy_path(src: &Path, dst: &Path, noreplace: bool) -> io::Result<()> {
     if src.is_dir() {
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
-            copy_path(&entry.path(), &dst.join(entry.file_name()))?;
+            copy_path(&entry.path(), &dst.join(entry.file_name()), noreplace)?;
         }
         Ok(())
     } else {
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(src, dst).map(|_| ())
+        if noreplace {
+            let src_f = std::fs::File::open(src)?;
+            let dst_f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dst)?;
+            let mut src_f = src_f;
+            let mut dst_f = dst_f;
+            std::io::copy(&mut src_f, &mut dst_f).map(|_| ())
+        } else {
+            std::fs::copy(src, dst).map(|_| ())
+        }
     }
 }
 

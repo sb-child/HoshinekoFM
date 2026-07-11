@@ -1735,6 +1735,7 @@ dependencies = [
  "futures",
  "gdk-pixbuf 0.22.0",
  "gtk",
+ "libc",
  "nix",
  "notify",
  "serde",

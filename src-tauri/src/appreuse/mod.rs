@@ -8,16 +8,17 @@ use tarpc::context;
 use tokio::net::UnixStream;
 use tracing::{error, info};
 
+use crate::instance_bus;
 use crate::ipc::protocol::InstanceServiceClient;
 
-/// 尝试将 `open_tabs` 发送到已有实例。
+/// 尝试请求已有实例打开新窗口。
 ///
-/// 返回 `true` 表示 tabs 已发送（调用方应 `exit(0)`），
+/// 返回 `true` 表示请求已发送（调用方应 `exit(0)`），
 /// 返回 `false` 表示无可复用实例（调用方应启动新实例）。
 ///
 /// 如果 `instance_id` 指定，则优先连该实例。
 pub async fn run_app_reuse(instance_id: Option<u64>, paths: &[String]) -> bool {
-    let sockets = discover_sockets();
+    let sockets = instance_bus::discover_sockets();
 
     if sockets.is_empty() {
         info!("no running instances found, will start new one");
@@ -40,10 +41,10 @@ pub async fn run_app_reuse(instance_id: Option<u64>, paths: &[String]) -> bool {
     }
 
     for (instance_id, path) in &candidates {
-        if let Err(e) = send_open_tabs(*instance_id, path, paths).await {
-            error!("open_tabs to instance {instance_id} failed: {e}");
+        if let Err(e) = send_open_window(*instance_id, path, paths).await {
+            error!("open_window to instance {instance_id} failed: {e}");
         } else {
-            info!("sent open_tabs to instance {instance_id}, exiting");
+            info!("sent open_window to instance {instance_id}, exiting");
             return true;
         }
     }
@@ -52,7 +53,7 @@ pub async fn run_app_reuse(instance_id: Option<u64>, paths: &[String]) -> bool {
     false
 }
 
-async fn send_open_tabs(
+async fn send_open_window(
     _instance_id: u64,
     path: &PathBuf,
     tabs_paths: &[String],
@@ -66,44 +67,9 @@ async fn send_open_tabs(
     let client = InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn();
 
     client
-        .open_tabs(context::current(), tabs_paths.to_vec())
+        .open_window(context::current(), tabs_paths.to_vec())
         .await
         .map_err(|e| io::Error::other(e.to_string()))?;
 
     Ok(())
-}
-
-fn discover_sockets() -> Vec<(u64, PathBuf)> {
-    let dir = match instances_dir() {
-        Ok(d) => d,
-        Err(_) => return vec![],
-    };
-
-    let mut result = Vec::new();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return result,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if let Some(pid_str) = name
-            .strip_prefix("instance_")
-            .and_then(|s| s.strip_suffix(".sock"))
-        {
-            if let Ok(pid) = pid_str.parse::<u64>() {
-                result.push((pid, path));
-            }
-        }
-    }
-
-    result
-}
-
-fn instances_dir() -> io::Result<PathBuf> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    let dir = PathBuf::from(format!("{home}/.cache/hnfm/instances"));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
 }

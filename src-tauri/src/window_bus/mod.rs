@@ -42,7 +42,7 @@ impl WindowBus {
         let window_id = mgr.claim_window_id(&bus).await;
 
         // 加入全局路由表
-        bus.upsert_route(window_id, bus.self_id()).await;
+        bus.upsert_route(window_id, bus.self_id());
 
         // 注册到本地 registry（供本地 emit 和 MeshServer::forward 查询）
         mgr.window_registry
@@ -87,7 +87,7 @@ impl WindowBus {
         }
 
         // 远程
-        match self.bus.window_instance(target_id).await {
+        match self.bus.window_instance(target_id) {
             Some(instance_id) => {
                 self.bus
                     .send_to(
@@ -125,7 +125,7 @@ impl WindowBus {
 
     /// 注销：移除路由 + broadcast WindowUnregistered + 清理本地 registry。
     pub async fn unregister(&self) {
-        self.bus.remove_route(self.window_id).await;
+        self.bus.remove_route(self.window_id);
         self.bus
             .broadcast(&InstanceMessage::WindowUnregistered {
                 window_id: self.window_id,

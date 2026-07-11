@@ -20,11 +20,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 use crate::app::fs_service::{Canceller, Progress};
 use crate::app::state::AppStateManager;
-use crate::ipc::protocol::{ClipOp, ClipboardState, ContextId, ProgressEvent};
+use crate::ipc::protocol::{ClipOp, ClipboardState, ContextId, InstanceMessage, ProgressEvent};
+use crate::window_bus::WindowBus;
 
 // ---------------------------------------------------------------------------
 // MoveTabResult
@@ -202,8 +203,8 @@ impl UIService {
     }
 
     fn execute_move_tab(&self, tab_id: u64, target: u64) {
-        let is_local = self.mgr.window_id_by_label(&format!("w{target}")).is_some()
-            || self.mgr.window_id_by_label("main").is_some();
+        let target_instance = target >> 32;
+        let is_local = target_instance == self.mgr.instance_bus.self_id();
 
         if is_local {
             let mut tabs = self.mgr.tabs.lock().unwrap();
@@ -212,6 +213,29 @@ impl UIService {
                 info!("tab {tab_id} moved to local window {target}");
             }
         } else {
+            let tab_state = {
+                let mut tabs = self.mgr.tabs.lock().unwrap();
+                match tabs.transfer_out(tab_id) {
+                    Some(state) => {
+                        tabs.save_to_disk();
+                        state
+                    }
+                    None => {
+                        warn!("tab {tab_id} not found for transfer");
+                        return;
+                    }
+                }
+            };
+
+            let instance_bus = self.mgr.instance_bus.clone();
+            let msg = InstanceMessage::TransferTab {
+                tab: tab_state,
+                to_instance: target_instance,
+            };
+            tokio::spawn(async move {
+                instance_bus.send_to(target_instance, &msg).await;
+            });
+
             info!("tab {tab_id} moved to remote instance {target}");
         }
     }
@@ -286,14 +310,25 @@ impl UIService {
     // Instance Bus 接口（供 MeshServer 调用）
     // -----------------------------------------------------------------------
 
-    /// 打开 tabs（从 CLI `hnfm /path` 复用已有实例）。
-    pub fn open_tabs(&self, paths: Vec<String>) {
-        let mut tabs = self.mgr.tabs.lock().unwrap();
-        for path in &paths {
-            tabs.add_tab(path.clone());
+    /// 在当前实例创建新窗口（从 CLI `hnfm /path` 复用已有实例）。
+    ///
+    /// `paths` 为空时创建空窗口（导航至根目录）。
+    ///
+    /// 等待 `WindowBus::init` 完成后才返回，确保窗口在可见时已注册到
+    /// `AppStateManager`，避免竞态（实例总线消息在窗口注册前丢失）。
+    pub async fn open_window(&self, paths: Vec<String>) {
+        let label = self.mgr.next_label();
+        match super::commands::create_window(self.mgr.app_handle(), &label, &paths) {
+            Ok(window) => {
+                let bus =
+                    WindowBus::init(self.mgr.instance_bus.clone(), window, self.mgr.clone())
+                        .await;
+                self.mgr.register(label, bus);
+            }
+            Err(e) => {
+                error!("open_window: failed to create window: {e}");
+            }
         }
-        tabs.save_to_disk();
-        info!("open_tabs: added {} tabs", paths.len());
     }
 }
 

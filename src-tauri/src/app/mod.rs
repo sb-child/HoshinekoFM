@@ -1,11 +1,9 @@
 //! Tauri 应用主入口。
 //!
 //! `run_app()`:
-//! 1. 绑定实例 socket
-//! 2. 启动 InstanceBus (Mesh 发现 + 连接)
-//! 3. 创建 AppStateManager（含 TabManager）
-//! 4. 后台监听实例间连接
-//! 5. 构建 Tauri，程序化创建首窗口，注册命令和状态
+//! 1. 在当前 tokio runtime 中做 async 初始化（bind socket + InstanceBus::start）
+//! 2. 通过 `tauri::async_runtime::set()` 告知 Tauri 共用同一 runtime
+//! 3. 构建 Tauri，程序化创建首窗口，注册命令和状态
 
 pub mod commands;
 pub mod fs_service;
@@ -44,12 +42,8 @@ pub struct RunOpts {
 // run_app
 // ---------------------------------------------------------------------------
 
-pub fn run_app(opts: RunOpts) {
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(run_app_async(opts));
-}
-
-async fn run_app_async(opts: RunOpts) {
+/// 启动 Tauri 应用（必须在 tokio runtime 内调用）。
+pub async fn run_app(opts: RunOpts) {
     let instance_id = opts.instance_id;
 
     // 1. 绑定本地 socket
@@ -80,10 +74,8 @@ async fn run_app_async(opts: RunOpts) {
         }
     }
 
-    // 4. 创建 AppStateManager
+    // 4. 创建 AppStateManager / UIService
     let mgr = Arc::new(AppStateManager::new(tab_manager, instance_bus.clone()));
-
-    // 4b. 创建 UIService（per-instance 协调器）
     let ui = Arc::new(ui_service::UIService::new(mgr.clone()));
 
     // 5. 创建 tab 事件通道
@@ -96,9 +88,16 @@ async fn run_app_async(opts: RunOpts) {
 
     // 6. 后台监听实例间连接
     let ui_for_server = ui.clone();
-    tokio::spawn(accept_instance_connections(listener, instance_bus.clone(), ui_for_server));
+    tokio::spawn(accept_instance_connections(
+        listener,
+        instance_bus.clone(),
+        ui_for_server,
+    ));
 
-    // 7. 构建 Tauri
+    // 7. 告知 Tauri 共用当前 tokio runtime
+    tauri::async_runtime::set(tokio::runtime::Handle::current());
+
+    // 8. 构建 Tauri
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_win = shutdown.clone();
     let builder = tauri::Builder::default()
@@ -122,26 +121,36 @@ async fn run_app_async(opts: RunOpts) {
         .setup(move |_app| {
             let handle = _app.handle().clone();
 
+            // 注入 AppHandle 供 UIService::open_window 使用
+            {
+                let mgr_arc: Arc<AppStateManager> =
+                    handle.state::<Arc<AppStateManager>>().inner().clone();
+                mgr_arc.set_app_handle(handle.clone());
+            }
+
             // 程序化创建首窗口
             {
-                let mgr = {
+                let mgr_create = {
                     let state = handle.state::<Arc<AppStateManager>>();
                     state.inner().clone()
                 };
-                let instance_bus = {
+                let ib = {
                     let state = handle.state::<Arc<InstanceBus>>();
                     state.inner().clone()
                 };
 
-                let label = mgr.next_label();
+                let label = mgr_create.next_label();
                 match commands::create_window(&handle, &label, &opts.paths) {
                     Ok(window) => {
-                        let mgr_clone = mgr.clone();
-                        let label_clone = label.clone();
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let mgr_c = mgr_create.clone();
                         tokio::spawn(async move {
-                            let bus = WindowBus::init(instance_bus, window, mgr_clone.clone()).await;
-                            mgr_clone.register(label_clone, bus);
+                            let bus =
+                                WindowBus::init(ib, window, mgr_c).await;
+                            let _ = tx.send(bus);
                         });
+                        let bus = rx.recv().expect("WindowBus::init dropped sender");
+                        mgr_create.register(label, bus);
                     }
                     Err(e) => {
                         error!("failed to create initial window: {e}");
@@ -155,7 +164,7 @@ async fn run_app_async(opts: RunOpts) {
             tokio::spawn(async move {
                 tokio::signal::ctrl_c().await.ok();
                 if shutdown_ctrlc.swap(true, Ordering::Relaxed) {
-                    return; // 已经由另一路径触发退出
+                    return;
                 }
                 info!("saving tabs before exit (ctrl+c)");
                 mgr_save.tabs.lock().unwrap().save_to_disk();
@@ -169,29 +178,31 @@ async fn run_app_async(opts: RunOpts) {
             use tauri::WindowEvent;
             if let WindowEvent::Destroyed = event {
                 let label = window.label().to_string();
-                if let Some(mgr) = window
+                if let Some(mgr_win) = window
                     .app_handle()
                     .try_state::<Arc<AppStateManager>>()
                     .map(|s| s.inner().clone())
                 {
                     let window_bus = {
-                        let windows = mgr.windows.lock().unwrap();
+                        let windows = mgr_win.windows.lock().unwrap();
                         windows.get(&label).map(|s| &s.window_bus).cloned()
                     };
 
                     if let Some(bus) = window_bus {
-                        mgr.unregister(&label);
+                        mgr_win.unregister(&label);
 
                         let shutdown_destroyed = shutdown_win.clone();
                         tokio::spawn(async move {
                             bus.unregister().await;
-                            let remaining = mgr.registry_count();
+                            let remaining = mgr_win.registry_count();
                             if remaining == 0 {
                                 if shutdown_destroyed.swap(true, Ordering::Relaxed) {
-                                    return; // 已由 ctrl+c 触发退出
+                                    return;
                                 }
                                 info!("last window destroyed, exiting");
-                                instance_bus::cleanup_socket(mgr.instance_bus.self_id());
+                                instance_bus::cleanup_socket(
+                                    mgr_win.instance_bus.self_id(),
+                                );
                                 std::process::exit(0);
                             }
                         });
@@ -200,7 +211,7 @@ async fn run_app_async(opts: RunOpts) {
             }
         });
 
-    // 8. 运行
+    // 9. 运行（同步阻塞，共用我们的 tokio runtime）
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -274,17 +285,17 @@ impl InstanceService for MeshServer {
         instance_id: u64,
     ) {
         debug!("window_register: {window_id} → instance {instance_id}");
-        self.bus.upsert_route(window_id, instance_id).await;
+        self.bus.upsert_route(window_id, instance_id);
     }
 
     async fn window_unregister(self, _ctx: tarpc::context::Context, window_id: u64) {
         debug!("window_unregister: {window_id}");
-        self.bus.remove_route(window_id).await;
+        self.bus.remove_route(window_id);
     }
 
-    async fn open_tabs(self, _ctx: tarpc::context::Context, paths: Vec<String>) {
-        info!("received open_tabs: {paths:?}");
-        self.ui.open_tabs(paths);
+    async fn open_window(self, _ctx: tarpc::context::Context, paths: Vec<String>) {
+        info!("received open_window: {paths:?}");
+        self.ui.open_window(paths).await;
     }
 
     async fn transfer_tab(self, _ctx: tarpc::context::Context, tab: TabState) {
@@ -301,7 +312,12 @@ impl InstanceService for MeshServer {
         self.ui.clipboard_sync(state);
     }
 
-    async fn forward(self, _ctx: tarpc::context::Context, window_id: u64, msg: WindowMessage) {
+    async fn forward(
+        self,
+        _ctx: tarpc::context::Context,
+        window_id: u64,
+        msg: WindowMessage,
+    ) {
         debug!("forward: window {window_id}, msg {msg:?}");
         let event = crate::window_bus::msg_to_event(&msg);
         let reg = self.ui.mgr.window_registry.lock().unwrap();

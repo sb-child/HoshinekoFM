@@ -226,7 +226,9 @@ pub enum InstanceMessage {
 #[tarpc::service]
 pub trait InstanceService {
     /// 请求在当前实例打开新窗口（CLI `hnfm /path` 复用已有实例时使用）。
-    async fn open_tabs(paths: Vec<String>);
+    ///
+    /// `paths` 为空时创建空窗口（导航至根目录）。
+    async fn open_window(paths: Vec<String>);
 
     /// 将一个 tab 从其他实例转移到当前实例。
     async fn transfer_tab(tab: TabState);

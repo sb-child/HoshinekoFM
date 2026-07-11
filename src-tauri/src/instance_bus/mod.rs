@@ -11,23 +11,15 @@
 //!
 //! 每个实例发现目录中所有 socket → 直连 → 持久 PeerConnection。
 //! 窗口路由表通过 fan-out 广播保持同步。
-//!
-//! ## 公开方法
-//!
-//! - `start()` — 发现 + 连接
-//! - `send_to()` — 发消息给指定实例
-//! - `broadcast()` — 发消息给所有实例
-//! - `window_instance()` — 查 window 所在实例
-//! - `upsert_route()` / `remove_route()` / `remove_instance_routes()` — 路由表维护
 
 pub mod connection;
+pub mod watcher;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::ipc::protocol::InstanceMessage;
@@ -57,7 +49,7 @@ impl InstanceBus {
             match PeerConnection::connect(instance_id, &path.to_string_lossy()).await {
                 Ok(conn) => {
                     info!("connected to instance {instance_id}");
-                    bus.peers.write().await.insert(instance_id, conn);
+                    bus.peers.write().unwrap().insert(instance_id, conn);
                 }
                 Err(e) => {
                     warn!("failed to connect to instance {instance_id}: {e}");
@@ -68,23 +60,23 @@ impl InstanceBus {
         Ok(bus)
     }
 
-    /// 添加 peer 连接（当 inotify 检测到新实例时使用）。
-    pub async fn add_peer(&self, conn: PeerConnection) {
+    /// 添加 peer 连接。
+    pub fn add_peer(&self, conn: PeerConnection) {
         let id = conn.instance_id();
         if id == self.self_id {
             return;
         }
-        let mut peers = self.peers.write().await;
+        let mut peers = self.peers.write().unwrap();
         peers.entry(id).or_insert_with(|| {
             info!("new peer connected: instance {id}");
             conn
         });
     }
 
-    /// 移除 peer 连接（当 inotify 检测到实例退出时使用）。
-    pub async fn remove_peer(&self, instance_id: u64) {
-        self.peers.write().await.remove(&instance_id);
-        self.remove_instance_routes(instance_id).await;
+    /// 移除 peer 连接。
+    pub fn remove_peer(&self, instance_id: u64) {
+        self.peers.write().unwrap().remove(&instance_id);
+        self.remove_instance_routes(instance_id);
         info!("peer disconnected: instance {instance_id}");
     }
 
@@ -92,9 +84,8 @@ impl InstanceBus {
     ///
     /// 锁内取出 PeerConnection，锁外执行 RPC（避免持锁 await）。
     pub async fn send_to(&self, instance_id: u64, msg: &InstanceMessage) {
-        // 1. 锁内取出连接
         let mut conn = {
-            let mut peers = self.peers.write().await;
+            let mut peers = self.peers.write().unwrap();
             peers.remove(&instance_id)
         };
 
@@ -105,17 +96,15 @@ impl InstanceBus {
             warn!("send_to: instance {instance_id} not connected");
         }
 
-        // 2. 锁内放回 / 清理
         if ok {
             if let Some(conn) = conn {
-                self.peers.write().await.insert(instance_id, conn);
+                self.peers.write().unwrap().insert(instance_id, conn);
             }
         } else {
-            // 连接失败或不存在的 peer：放回失败（重连），否则清理路由
             if conn.is_some() {
                 error!("send_to instance {instance_id} failed: removed dead connection");
             }
-            self.remove_instance_routes(instance_id).await;
+            self.remove_instance_routes(instance_id);
         }
     }
 
@@ -123,23 +112,20 @@ impl InstanceBus {
     ///
     /// 锁内收集所有连接，释放锁后并行 RPC，最后统一回收。
     pub async fn broadcast(&self, msg: &InstanceMessage) {
-        // 1. 锁内取出所有连接
         let peers: Vec<(u64, PeerConnection)> = {
-            let mut peers = self.peers.write().await;
+            let mut peers = self.peers.write().unwrap();
             peers.drain().collect()
         };
 
-        // 2. 无锁并行发送
         let mut results = Vec::with_capacity(peers.len());
         for (id, mut conn) in peers {
             let ok = conn.send(msg).await.is_ok();
             results.push((id, conn, ok));
         }
 
-        // 3. 锁内放回成功 / 清理失败
         let mut dead = Vec::new();
         {
-            let mut peers = self.peers.write().await;
+            let mut peers = self.peers.write().unwrap();
             for (id, conn, ok) in results {
                 if ok {
                     peers.insert(id, conn);
@@ -150,30 +136,29 @@ impl InstanceBus {
             }
         }
 
-        // 4. 锁外清理路由
         for id in dead {
-            self.remove_instance_routes(id).await;
+            self.remove_instance_routes(id);
         }
     }
 
     /// 查询窗口所在实例。
-    pub async fn window_instance(&self, window_id: u64) -> Option<u64> {
-        self.routes.read().await.get(&window_id).copied()
+    pub fn window_instance(&self, window_id: u64) -> Option<u64> {
+        self.routes.read().unwrap().get(&window_id).copied()
     }
 
     /// 更新路由表。
-    pub async fn upsert_route(&self, window_id: u64, instance_id: u64) {
-        self.routes.write().await.insert(window_id, instance_id);
+    pub fn upsert_route(&self, window_id: u64, instance_id: u64) {
+        self.routes.write().unwrap().insert(window_id, instance_id);
     }
 
     /// 删除路由。
-    pub async fn remove_route(&self, window_id: u64) {
-        self.routes.write().await.remove(&window_id);
+    pub fn remove_route(&self, window_id: u64) {
+        self.routes.write().unwrap().remove(&window_id);
     }
 
     /// 删除某实例的所有窗口路由（实例断连时调用）。
-    pub async fn remove_instance_routes(&self, instance_id: u64) {
-        self.routes.write().await.retain(|_, v| *v != instance_id);
+    pub fn remove_instance_routes(&self, instance_id: u64) {
+        self.routes.write().unwrap().retain(|_, v| *v != instance_id);
     }
 
     pub fn self_id(&self) -> u64 {
@@ -185,13 +170,13 @@ impl InstanceBus {
 // 目录发现
 // ---------------------------------------------------------------------------
 
-fn instances_dir() -> PathBuf {
+pub fn instances_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     PathBuf::from(format!("{home}/.cache/hnfm/instances"))
 }
 
-/// 扫描实例目录，返回 `(instance_id, socket_path_string)` 列表。
-fn discover_sockets() -> Vec<(u64, PathBuf)> {
+/// 扫描实例目录，返回 `(instance_id, socket_path)` 列表。
+pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
     let dir = instances_dir();
     let mut result = Vec::new();
 
@@ -203,7 +188,6 @@ fn discover_sockets() -> Vec<(u64, PathBuf)> {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // instance_<pid>.sock
         if let Some(pid_str) = name
             .strip_prefix("instance_")
             .and_then(|s| s.strip_suffix(".sock"))
@@ -231,7 +215,7 @@ pub fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
     let dir = instances_dir();
     std::fs::create_dir_all(&dir)?;
     let path = socket_path(instance_id);
-    let _ = std::fs::remove_file(&path); // 清理上次残留
+    let _ = std::fs::remove_file(&path);
     let listener = tokio::net::UnixListener::bind(&path)?;
     info!("instance {instance_id} listening on {path:?}");
     Ok(listener)
@@ -248,53 +232,46 @@ pub fn cleanup_socket(instance_id: u64) {
 }
 
 // ---------------------------------------------------------------------------
-// 实例目录轮询（双向拓扑）
+// 实例目录监听（notify，Linux: inotify / macOS: FSEvents）
 // ---------------------------------------------------------------------------
 
-/// 后台轮询 `~/.cache/hnfm/instances/`，自动连接新实例、清理断开实例。
+/// 后台监听 `~/.cache/hnfm/instances/`，自动连接新实例、清理断开实例。
+///
+/// 内部使用 notify（Linux inotify）即时感知，不再轮询。
+/// 阻塞 I/O（`std::fs::*`、notify 回调）在专用 std 线程，
+/// tokio 侧只做 RPC（连接 peer），不阻塞 worker 线程。
 pub async fn watch_instances(bus: Arc<InstanceBus>) {
     let dir = instances_dir();
     std::fs::create_dir_all(&dir).ok();
 
     let self_id = bus.self_id();
-    let mut known: HashSet<u64> = discover_sockets()
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    // 已知集中不包含自己 — 将来可以包含，但 connect 时已有 self 判断
+    let mut rx = watcher::watch_dir(dir);
 
-    info!("polling instances dir: {dir:?} (interval 3s)");
+    info!("watching instances dir via notify (inotify)");
 
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-        let sockets = discover_sockets();
-        let current: HashSet<u64> = sockets.iter().map(|(id, _)| *id).collect();
-
-        // 新实例
-        for id in current.difference(&known) {
-            if *id == self_id {
-                continue;
-            }
-            if let Some((_, path)) = sockets.iter().find(|(i, _)| *i == *id) {
-                match connection::PeerConnection::connect(*id, &path.to_string_lossy()).await {
-                    Ok(conn) => {
-                        bus.add_peer(conn).await;
+    while let Some(event) = rx.recv().await {
+        match event {
+            watcher::WatchEvent::Init(sockets) => {
+                for (id, path) in sockets {
+                    if id == self_id {
+                        continue;
                     }
-                    Err(e) => {
-                        warn!("poll: connect to instance {id} failed: {e}");
+                    match connection::PeerConnection::connect(id, &path.to_string_lossy()).await {
+                        Ok(conn) => bus.add_peer(conn),
+                        Err(e) => warn!("init: connect to instance {id} failed: {e}"),
                     }
                 }
             }
-        }
-
-        // 断开的实例
-        for id in known.difference(&current) {
-            if *id != self_id {
-                bus.remove_peer(*id).await;
+            watcher::WatchEvent::New(id, path) if id != self_id => {
+                match connection::PeerConnection::connect(id, &path.to_string_lossy()).await {
+                    Ok(conn) => bus.add_peer(conn),
+                    Err(e) => warn!("connect to instance {id} failed: {e}"),
+                }
             }
+            watcher::WatchEvent::Gone(id) if id != self_id => {
+                bus.remove_peer(id);
+            }
+            _ => {}
         }
-
-        known = current;
     }
 }

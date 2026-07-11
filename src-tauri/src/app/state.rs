@@ -14,9 +14,10 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::WebviewWindow;
+use tracing::warn;
 
 use crate::instance_bus::InstanceBus;
 use crate::window_bus::WindowBus;
@@ -36,6 +37,9 @@ pub struct AppStateManager {
     pub fs_service: FsService,
     /// 实例间通信总线
     pub instance_bus: Arc<InstanceBus>,
+
+    /// Tauri AppHandle（setup 阶段注入，用于跨服务创建窗口）
+    app_handle: OnceLock<tauri::AppHandle>,
 
     /// process-local label 计数器 → "w0", "w1" ...
     label_counter: AtomicU64,
@@ -58,6 +62,7 @@ impl AppStateManager {
             tabs: Arc::new(Mutex::new(tab_manager)),
             fs_service: FsService::new(),
             instance_bus,
+            app_handle: OnceLock::new(),
             label_counter: AtomicU64::new(0),
             window_id_counter: AtomicU64::new(0),
         }
@@ -66,6 +71,18 @@ impl AppStateManager {
     /// 生成下一个 window label（"w0", "w1", ...）。
     pub fn next_label(&self) -> String {
         format!("w{}", self.label_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// 注入 Tauri AppHandle（`setup` 闭包中调用一次）。
+    pub fn set_app_handle(&self, h: tauri::AppHandle) {
+        if self.app_handle.set(h).is_err() {
+            warn!("set_app_handle called more than once; ignoring");
+        }
+    }
+
+    /// 获取已注入的 Tauri AppHandle（在 `setup` 之后可用）。
+    pub fn app_handle(&self) -> &tauri::AppHandle {
+        self.app_handle.get().expect("AppHandle not yet set; call set_app_handle first")
     }
 
     /// 当前窗口数量（按 label 注册表计）。
@@ -98,7 +115,7 @@ impl AppStateManager {
             let candidate = (bus.self_id() << 32) | local;
 
             // 冲突检测：全局路由表
-            if bus.window_instance(candidate).await.is_some() {
+            if bus.window_instance(candidate).is_some() {
                 tracing::warn!(
                     "window_id {} conflict in global route table, retrying",
                     candidate
