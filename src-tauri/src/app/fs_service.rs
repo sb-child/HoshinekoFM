@@ -178,7 +178,7 @@ impl FsService {
     // -----------------------------------------------------------------------
 
     /// 请求某 uid 的访问凭证。找不到/创建失败（如 pkexec 未通过）时返回错误。
-    pub async fn try_request_uid_token(&self, uid: u32) -> Result<UidToken, String> {
+    pub(crate) async fn try_request_uid_token(&self, uid: u32) -> Result<UidToken, String> {
         self.pool
             .request_token(uid)
             .await
@@ -190,7 +190,7 @@ impl FsService {
     // -----------------------------------------------------------------------
 
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
-    pub async fn watch_dir(&self, token: &UidToken, dir: &str) -> Result<Watcher, String> {
+    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &str) -> Result<Watcher, String> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -218,7 +218,7 @@ impl FsService {
     }
 
     /// 监视单个文件/目录的属性（面包屑用）。
-    pub async fn watch_stat(&self, token: &UidToken, file: &str) -> Result<Watcher, String> {
+    pub(crate) async fn watch_stat(&self, token: &UidToken, file: &str) -> Result<Watcher, String> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -250,7 +250,7 @@ impl FsService {
     // -----------------------------------------------------------------------
 
     /// 创建文件或目录。
-    pub async fn create(
+    pub(crate) async fn create(
         &self,
         token: &UidToken,
         path: &str,
@@ -269,7 +269,7 @@ impl FsService {
     }
 
     /// 重命名。
-    pub async fn rename(
+    pub(crate) async fn rename(
         &self,
         token: &UidToken,
         path: &str,
@@ -288,12 +288,12 @@ impl FsService {
     }
 
     /// 批量移动。
-    pub async fn move_(&self, ops: Vec<Op>) -> Result<Progress, String> {
+    pub(crate) async fn move_(&self, ops: Vec<Op>) -> Result<Progress, String> {
         self.run_batch(ops, true).await
     }
 
     /// 批量复制。
-    pub async fn copy(&self, ops: Vec<Op>) -> Result<Progress, String> {
+    pub(crate) async fn copy(&self, ops: Vec<Op>) -> Result<Progress, String> {
         self.run_batch(ops, false).await
     }
 

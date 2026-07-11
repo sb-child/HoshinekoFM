@@ -22,10 +22,9 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, error, info, warn};
 
-use crate::app::fs_service::{Canceller, Progress};
+use crate::app::fs_service::{Canceller, Op, Progress};
 use crate::app::state::AppStateManager;
-use crate::ipc::protocol::{ClipOp, ClipboardState, ContextId, InstanceMessage, ProgressEvent};
-use crate::window_bus::WindowBus;
+use crate::ipc::protocol::{ClipOp, ClipboardState, ContextId, EntryKind, InstanceMessage, ProgressEvent};
 
 // ---------------------------------------------------------------------------
 // MoveTabResult
@@ -314,6 +313,60 @@ impl UIService {
     }
 
     // -----------------------------------------------------------------------
+    // 文件操作入口（所有变更操作必须经过 UIService → track_op）
+    // -----------------------------------------------------------------------
+
+    /// 创建文件或目录。Progress 自动注册到给定 context。
+    pub async fn create(
+        self: &Arc<Self>,
+        uid: u32,
+        path: &str,
+        kind: EntryKind,
+        ctx_id: ContextId,
+    ) -> Result<(), String> {
+        let token = self.mgr.fs_service.try_request_uid_token(uid).await?;
+        let progress = self.mgr.fs_service.create(&token, path, kind).await?;
+        self.track_op(&[ctx_id], progress);
+        Ok(())
+    }
+
+    /// 重命名文件或目录。Progress 自动注册到给定 context。
+    pub async fn rename(
+        self: &Arc<Self>,
+        uid: u32,
+        path: &str,
+        new_name: &str,
+        ctx_id: ContextId,
+    ) -> Result<(), String> {
+        let token = self.mgr.fs_service.try_request_uid_token(uid).await?;
+        let progress = self.mgr.fs_service.rename(&token, path, new_name).await?;
+        self.track_op(&[ctx_id], progress);
+        Ok(())
+    }
+
+    /// 移动文件。Progress 自动注册到给定 context。
+    pub async fn move_files(
+        self: &Arc<Self>,
+        ops: Vec<Op>,
+        ctx_id: ContextId,
+    ) -> Result<(), String> {
+        let progress = self.mgr.fs_service.move_(ops).await?;
+        self.track_op(&[ctx_id], progress);
+        Ok(())
+    }
+
+    /// 复制文件。Progress 自动注册到给定 context。
+    pub async fn copy_files(
+        self: &Arc<Self>,
+        ops: Vec<Op>,
+        ctx_id: ContextId,
+    ) -> Result<(), String> {
+        let progress = self.mgr.fs_service.copy(ops).await?;
+        self.track_op(&[ctx_id], progress);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Instance Bus 接口（供 MeshServer 调用）
     // -----------------------------------------------------------------------
 
@@ -321,16 +374,15 @@ impl UIService {
     ///
     /// `paths` 为空时创建空窗口（导航至根目录）。
     ///
-    /// 等待 `WindowBus::init` 完成后才返回，确保窗口在可见时已注册到
+    /// 等待注册完成后才返回，确保窗口在可见时已注册到
     /// `AppStateManager`，避免竞态（实例总线消息在窗口注册前丢失）。
     pub async fn open_window(&self, paths: Vec<String>) {
         let label = self.mgr.next_label();
         match super::commands::create_window(self.mgr.app_handle(), &label, &paths) {
             Ok(window) => {
-                let bus =
-                    WindowBus::init(self.mgr.instance_bus.clone(), window, self.mgr.clone())
-                        .await;
-                self.mgr.register(label, bus);
+                self.mgr
+                    .register_window(self.mgr.instance_bus.clone(), window, label)
+                    .await;
             }
             Err(e) => {
                 error!("open_window: failed to create window: {e}");

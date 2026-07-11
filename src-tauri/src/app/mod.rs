@@ -24,7 +24,6 @@ use tracing::{debug, error, info, warn};
 use crate::{
     instance_bus::{self, InstanceBus},
     ipc::protocol::{ClipboardState, InstanceService, TabState, WindowMessage},
-    window_bus::WindowBus,
 };
 
 use self::{commands::TabEvent, state::AppStateManager, tabs::TabManager};
@@ -55,7 +54,7 @@ pub async fn run_app(opts: RunOpts) {
         }
     };
 
-    // 2. 启动 InstanceBus（发现 + 连接所有 peer）
+    // 2. 启动 InstanceBus（不扫描 peer，由 watch_instances 统一发现）
     let instance_bus = InstanceBus::start(instance_id)
         .await
         .expect("failed to start InstanceBus");
@@ -118,94 +117,28 @@ pub async fn run_app(opts: RunOpts) {
             commands::init_state,
             crate::window_bus::commands::get_window_id,
         ])
-        .setup(move |_app| {
-            let handle = _app.handle().clone();
-
-            // 注入 AppHandle 供 UIService::open_window 使用
-            {
-                let mgr_arc: Arc<AppStateManager> =
-                    handle.state::<Arc<AppStateManager>>().inner().clone();
-                mgr_arc.set_app_handle(handle.clone());
+        .setup({
+            let mgr_s = mgr.clone();
+            let paths_s = opts.paths.clone();
+            let shutdown_s = shutdown.clone();
+            move |_app| {
+                let handle = _app.handle().clone();
+                mgr_s.set_app_handle(handle.clone());
+                setup_first_window(&handle, &mgr_s, &paths_s);
+                spawn_ctrlc_handler(&mgr_s, &shutdown_s);
+                Ok(())
             }
-
-            // 程序化创建首窗口
-            {
-                let mgr_create = {
-                    let state = handle.state::<Arc<AppStateManager>>();
-                    state.inner().clone()
-                };
-                let ib = {
-                    let state = handle.state::<Arc<InstanceBus>>();
-                    state.inner().clone()
-                };
-
-                let label = mgr_create.next_label();
-                match commands::create_window(&handle, &label, &opts.paths) {
-                    Ok(window) => {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let mgr_c = mgr_create.clone();
-                        tokio::spawn(async move {
-                            let bus =
-                                WindowBus::init(ib, window, mgr_c).await;
-                            let _ = tx.send(bus);
-                        });
-                        let bus = rx.recv().expect("WindowBus::init dropped sender");
-                        mgr_create.register(label, bus);
-                    }
-                    Err(e) => {
-                        error!("failed to create initial window: {e}");
-                    }
-                }
-            }
-
-            // Ctrl+C — 保存 tabs + 清理 socket（仅一次）
-            let mgr_save = mgr.clone();
-            let shutdown_ctrlc = shutdown.clone();
-            tokio::spawn(async move {
-                tokio::signal::ctrl_c().await.ok();
-                if shutdown_ctrlc.swap(true, Ordering::Relaxed) {
-                    return;
-                }
-                info!("saving tabs before exit (ctrl+c)");
-                mgr_save.tabs.lock().unwrap().save_to_disk();
-                instance_bus::cleanup_socket(mgr_save.instance_bus.self_id());
-                std::process::exit(0);
-            });
-
-            Ok(())
         })
-        .on_window_event(move |window, event| {
-            use tauri::WindowEvent;
-            if let WindowEvent::Destroyed = event {
-                let label = window.label().to_string();
-                if let Some(mgr_win) = window
-                    .app_handle()
-                    .try_state::<Arc<AppStateManager>>()
-                    .map(|s| s.inner().clone())
-                {
-                    let window_bus = {
-                        let windows = mgr_win.windows.lock().unwrap();
-                        windows.get(&label).map(|s| &s.window_bus).cloned()
-                    };
-
-                    if let Some(bus) = window_bus {
-                        mgr_win.unregister(&label);
-
-                        let shutdown_destroyed = shutdown_win.clone();
-                        tokio::spawn(async move {
-                            bus.unregister().await;
-                            let remaining = mgr_win.registry_count();
-                            if remaining == 0 {
-                                if shutdown_destroyed.swap(true, Ordering::Relaxed) {
-                                    return;
-                                }
-                                info!("last window destroyed, exiting");
-                                instance_bus::cleanup_socket(
-                                    mgr_win.instance_bus.self_id(),
-                                );
-                                std::process::exit(0);
-                            }
-                        });
+        .on_window_event({
+            let shutdown_e = shutdown_win.clone();
+            move |window, event| {
+                if let tauri::WindowEvent::Destroyed = event {
+                    if let Some(mgr_win) = window
+                        .app_handle()
+                        .try_state::<Arc<AppStateManager>>()
+                        .map(|s| s.inner().clone())
+                    {
+                        handle_window_destroyed(&mgr_win, window.label(), &shutdown_e);
                     }
                 }
             }
@@ -215,6 +148,77 @@ pub async fn run_app(opts: RunOpts) {
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ---------------------------------------------------------------------------
+// run_app 辅助函数
+// ---------------------------------------------------------------------------
+
+/// `.setup()` 闭包的实际逻辑：注入 AppHandle + 创建首窗口。
+fn setup_first_window(
+    handle: &tauri::AppHandle,
+    mgr: &Arc<AppStateManager>,
+    paths: &[String],
+) {
+    let ib = handle.state::<Arc<InstanceBus>>().inner().clone();
+    let label = mgr.next_label();
+    match commands::create_window(handle, &label, paths) {
+        Ok(window) => {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mgr_c = mgr.clone();
+            tokio::spawn(async move {
+                let bus = mgr_c.register_window(ib, window, label).await;
+                let _ = tx.send(bus);
+            });
+            rx.recv().expect("register_window dropped sender");
+        }
+        Err(e) => {
+            error!("failed to create initial window: {e}");
+        }
+    }
+}
+
+/// `.setup()` 闭包的另一部分：Ctrl+C 保存退出 handler。
+fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
+    let mgr = mgr.clone();
+    let shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        if shutdown.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        info!("saving tabs before exit (ctrl+c)");
+        mgr.tabs.lock().unwrap().save_to_disk();
+        instance_bus::cleanup_socket(mgr.instance_bus.self_id());
+        std::process::exit(0);
+    });
+}
+
+/// `.on_window_event()` 闭包中 Destroyed 事件的实际处理。
+fn handle_window_destroyed(
+    mgr: &Arc<AppStateManager>,
+    label: &str,
+    shutdown: &Arc<AtomicBool>,
+) {
+    let label = label.to_string();
+    let window_bus = {
+        let windows = mgr.windows.lock().unwrap();
+        windows.get(&label).map(|s| s.window_bus.clone())
+    };
+    if let Some(bus) = window_bus {
+        mgr.unregister(&label);
+        let mgr = mgr.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            bus.unregister().await;
+            let remaining = mgr.registry_count();
+            if remaining == 0 && !shutdown.swap(true, Ordering::Relaxed) {
+                info!("last window destroyed, exiting");
+                instance_bus::cleanup_socket(mgr.instance_bus.self_id());
+                std::process::exit(0);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------

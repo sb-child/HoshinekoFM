@@ -33,29 +33,13 @@ pub struct InstanceBus {
 }
 
 impl InstanceBus {
-    /// 启动：发现并连接所有 peer。
+    /// 启动：创建总线实例（不扫描 peer，由 watch_instances 统一发现）。
     pub async fn start(self_id: u64) -> Result<Arc<Self>, String> {
         let bus = Arc::new(Self {
             self_id,
             peers: RwLock::new(HashMap::new()),
             routes: RwLock::new(HashMap::new()),
         });
-
-        let sockets = discover_sockets();
-        for (instance_id, path) in sockets {
-            if instance_id == self_id {
-                continue;
-            }
-            match PeerConnection::connect(instance_id, &path.to_string_lossy()).await {
-                Ok(conn) => {
-                    info!("connected to instance {instance_id}");
-                    bus.peers.write().unwrap().insert(instance_id, conn);
-                }
-                Err(e) => {
-                    warn!("failed to connect to instance {instance_id}: {e}");
-                }
-            }
-        }
 
         Ok(bus)
     }

@@ -11,7 +11,6 @@ use tracing::warn;
 
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
-use crate::window_bus::WindowBus;
 
 /// Tab 变更事件（后端 → 前端推送）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -108,7 +107,7 @@ pub fn create_window(
 ///
 /// 1. AppStateManager 生成 label（"w0", "w1" ...）
 /// 2. 创建 Tauri 窗口
-/// 3. WindowBus::init 抢占 window_id + 注册路由
+/// 3. 统一注册（router + local map）
 /// 4. 注册到 AppStateManager
 #[command]
 pub async fn new_window(
@@ -121,10 +120,8 @@ pub async fn new_window(
     let label = mgr.next_label();
     let window = create_window(&app, &label, &paths)?;
 
-    let bus = WindowBus::init(mgr.instance_bus.clone(), window, mgr.inner().clone()).await;
+    let bus = mgr.inner().register_window(mgr.instance_bus.clone(), window, label).await;
     let window_id = bus.window_id();
-
-    mgr.register(label, bus);
 
     Ok(window_id)
 }

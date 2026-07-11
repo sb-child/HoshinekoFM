@@ -139,13 +139,25 @@ impl AppStateManager {
         }
     }
 
-    /// 注册窗口到 AppStateManager。
-    pub fn register(&self, label: String, window_bus: WindowBus) {
-        let window_id = window_bus.window_id();
+    /// 统一窗口注册入口：抢占 window_id + 注册路由表 + 注册本地 map。
+    ///
+    /// 合并了原先 `WindowBus::init` + `self.register` 的两步模式。
+    pub async fn register_window(
+        self: &Arc<Self>,
+        instance_bus: Arc<InstanceBus>,
+        window: tauri::WebviewWindow,
+        label: String,
+    ) -> WindowBus {
+        let bus = WindowBus::init(instance_bus, window, self.clone()).await;
+        let window_id = bus.window_id();
         self.windows
             .lock()
             .unwrap()
-            .insert(label, WindowState { window_id, window_bus });
+            .insert(label, WindowState {
+                window_id,
+                window_bus: bus.clone(),
+            });
+        bus
     }
 
     /// 注销窗口。
