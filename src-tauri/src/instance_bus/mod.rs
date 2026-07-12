@@ -20,7 +20,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::ipc::protocol::InstanceMessage;
 use connection::PeerConnection;
@@ -160,6 +160,8 @@ pub fn instances_dir() -> PathBuf {
 }
 
 /// 扫描实例目录，返回 `(instance_id, socket_path)` 列表。
+///
+/// 只返回 PID 存活的实例，同时清理残骸 socket。
 pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
     let dir = instances_dir();
     let mut result = Vec::new();
@@ -177,12 +179,22 @@ pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
             .and_then(|s| s.strip_suffix(".sock"))
         {
             if let Ok(pid) = pid_str.parse::<u64>() {
-                result.push((pid, path));
+                if pid_alive(pid) {
+                    result.push((pid, path));
+                } else {
+                    warn!("discover_sockets: stale socket for dead pid={pid}, removing {path:?}");
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
     }
 
     result
+}
+
+/// 检查 PID 是否存活。
+fn pid_alive(pid: u64) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +252,12 @@ pub async fn watch_instances(bus: Arc<InstanceBus>) {
                     if id == self_id {
                         continue;
                     }
+                    if !pid_alive(id) {
+                        warn!("watch_instances: stale socket for dead pid={id}, removing {path:?}");
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    debug!("watch_instances: connecting to instance {id}");
                     match connection::PeerConnection::connect(id, &path.to_string_lossy()).await {
                         Ok(conn) => bus.add_peer(conn),
                         Err(e) => warn!("init: connect to instance {id} failed: {e}"),

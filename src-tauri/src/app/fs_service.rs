@@ -12,7 +12,7 @@
 //!
 //! 按 tab/window 归组任务、忙检查、取消的语义由上层 UIService 负责。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
@@ -190,13 +190,13 @@ impl FsService {
     // -----------------------------------------------------------------------
 
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
-    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &str) -> Result<Watcher, String> {
+    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &Path) -> Result<Watcher, String> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
             .send_request(WorkerRequestContent::WatchDir {
                 watch_id,
-                dir: dir.to_string(),
+                dir: dir.to_path_buf(),
             })
             .await
         {
@@ -218,13 +218,13 @@ impl FsService {
     }
 
     /// 监视单个文件/目录的属性（面包屑用）。
-    pub(crate) async fn watch_stat(&self, token: &UidToken, file: &str) -> Result<Watcher, String> {
+    pub(crate) async fn watch_stat(&self, token: &UidToken, file: &Path) -> Result<Watcher, String> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
             .send_request(WorkerRequestContent::WatchStat {
                 watch_id,
-                file: file.to_string(),
+                file: file.to_path_buf(),
             })
             .await
         {
@@ -253,7 +253,7 @@ impl FsService {
     pub(crate) async fn create(
         &self,
         token: &UidToken,
-        path: &str,
+        path: &Path,
         kind: EntryKind,
     ) -> Result<Progress, String> {
         let op_id = self.next_id();
@@ -261,7 +261,7 @@ impl FsService {
         let rpc = token
             .send_request(WorkerRequestContent::RunCreate {
                 op_id,
-                path: path.to_string(),
+                path: path.to_path_buf(),
                 kind,
             })
             .await;
@@ -272,7 +272,7 @@ impl FsService {
     pub(crate) async fn rename(
         &self,
         token: &UidToken,
-        path: &str,
+        path: &Path,
         new_name: &str,
     ) -> Result<Progress, String> {
         let op_id = self.next_id();
@@ -280,7 +280,7 @@ impl FsService {
         let rpc = token
             .send_request(WorkerRequestContent::RunRename {
                 op_id,
-                path: path.to_string(),
+                path: path.to_path_buf(),
                 new_name: new_name.to_string(),
             })
             .await;
@@ -311,14 +311,9 @@ impl FsService {
         }
 
         let token = ops[0].src.0.clone();
-        let items: Vec<(String, String)> = ops
+        let items: Vec<(PathBuf, PathBuf)> = ops
             .iter()
-            .map(|o| {
-                (
-                    o.src.1.to_string_lossy().into_owned(),
-                    o.dst.1.to_string_lossy().into_owned(),
-                )
-            })
+            .map(|o| (o.src.1.clone(), o.dst.1.clone()))
             .collect();
         let op_id = self.next_id();
         let rx = token.registry.register_op(op_id);

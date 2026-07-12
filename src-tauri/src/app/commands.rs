@@ -2,6 +2,7 @@
 //!
 //! 通过 `invoke()` 调用。前端只发意图，结果通过 event 推送。
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -219,7 +220,7 @@ pub async fn create_entry(
     kind: EntryKind,
 ) -> Result<(), String> {
     let ctx = ContextId::Tab(tab_id);
-    ui.create(tab_id, &path, kind, ctx).await
+    ui.create(tab_id, Path::new(&path), kind, ctx).await
 }
 
 /// 重命名文件或目录。
@@ -231,7 +232,7 @@ pub async fn rename_entry(
     new_name: String,
 ) -> Result<(), String> {
     let ctx = ContextId::Tab(tab_id);
-    ui.rename(tab_id, &path, &new_name, ctx).await
+    ui.rename(tab_id, Path::new(&path), &new_name, ctx).await
 }
 
 // ---------------------------------------------------------------------------

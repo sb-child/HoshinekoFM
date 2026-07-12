@@ -80,7 +80,9 @@ pub struct TabState {
 ///
 /// - 首帧（或 `refresh()` 后）为 `Reset`，给出全量文件。
 /// - 之后为增量：新增/修改/元数据补全均为 `Upsert`，删除为 `Remove`，重命名为 `Rename`。
-/// - `Inaccessible` 表示目标目录暂不可访问，Worker 内部正在监听父目录等待恢复。
+/// - `Inaccessible` 表示目标目录暂不可访问，Worker 正在尝试上级目录恢复。
+/// - `Recovering` 表示级联恢复中，已回退到某层祖先等待 target 可用。
+/// - `FatalError` 表示连 `/` 都无法访问，watcher 彻底失效 (Dead)。
 /// - `ConnectionLost` 表示 Worker 连接断开，上层应暂停依赖此 watcher 的 UI。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WatchDelta {
@@ -92,8 +94,33 @@ pub enum WatchDelta {
     Remove(PathBuf),
     /// 重命名
     Rename { from: PathBuf, to: PathBuf },
-    /// 目录暂不可访问（Worker 内部监听父目录等待恢复）
-    Inaccessible { path: String, reason: String },
+    /// 目标暂不可访问，Worker 已回退到上级目录等待恢复
+    Inaccessible {
+        /// 目标 canonical path
+        path: PathBuf,
+        /// 当前回退到了哪层祖先
+        ancestor: PathBuf,
+        /// 回退层级 (0=target 本身, 1=parent, …)
+        level: u32,
+        /// 失败原因
+        reason: String,
+    },
+    /// 级联恢复中：等待 target 可用
+    Recovering {
+        /// 目标 canonical path
+        path: PathBuf,
+        /// 当前挂载 inotify 的祖先路径
+        ancestor: PathBuf,
+        /// 回退层级
+        level: u32,
+    },
+    /// 连 / 都无法访问 — watcher 已彻底失效
+    FatalError {
+        /// 目标路径
+        path: PathBuf,
+        /// 失败原因
+        reason: String,
+    },
     /// Worker 连接断开
     ConnectionLost { watch_id: u64, reason: String, reconnecting: bool },
 }
@@ -367,26 +394,26 @@ pub trait FsWorkerService {
     /// 存活检查。
     async fn ping() -> bool;
     /// 开始监视目录。首帧全量 + 后续增量通过 `watch_delta` 推送。
-    async fn watch_dir(watch_id: u64, path: String) -> Result<(), String>;
+    async fn watch_dir(watch_id: u64, path: PathBuf) -> Result<(), String>;
     /// 开始监视单个文件/目录的属性（面包屑用）。
-    async fn watch_stat(watch_id: u64, path: String) -> Result<(), String>;
+    async fn watch_stat(watch_id: u64, path: PathBuf) -> Result<(), String>;
     /// 立刻触发一次全量刷新（重新推 `Reset`）。
     async fn refresh(watch_id: u64);
     /// 停止监视并释放资源。
     async fn unwatch(watch_id: u64);
 
     /// 创建文件或目录。
-    async fn run_create(op_id: u64, path: String, kind: EntryKind) -> Result<(), String>;
+    async fn run_create(op_id: u64, path: PathBuf, kind: EntryKind) -> Result<(), String>;
     /// 重命名。
-    async fn run_rename(op_id: u64, path: String, new_name: String) -> Result<(), String>;
+    async fn run_rename(op_id: u64, path: PathBuf, new_name: String) -> Result<(), String>;
     /// 批量移动（同 UID）。`items` 为 `(src, dst)` 列表。
-    async fn run_move(op_id: u64, items: Vec<(String, String)>) -> Result<(), String>;
+    async fn run_move(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), String>;
     /// 批量复制（同 UID）。
-    async fn run_copy(op_id: u64, items: Vec<(String, String)>) -> Result<(), String>;
+    async fn run_copy(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), String>;
     /// 取消一个进行中的批处理操作。
     async fn cancel_op(op_id: u64);
     /// 文件系统空间查询。返回 `(total_bytes, free_bytes)`。
-    async fn stat_vfs(path: String) -> Result<(u64, u64), String>;
+    async fn stat_vfs(path: PathBuf) -> Result<(u64, u64), String>;
 }
 
 // ---------------------------------------------------------------------------

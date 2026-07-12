@@ -45,6 +45,7 @@ use std::{
         io::{AsRawFd, RawFd},
         net::UnixStream as StdUnixStream,
     },
+    path::PathBuf,
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
@@ -136,16 +137,16 @@ pub struct WorkerRequest {
 /// 请求内容。
 #[derive(Clone)]
 pub enum WorkerRequestContent {
-    WatchDir { watch_id: u64, dir: String },
-    WatchStat { watch_id: u64, file: String },
+    WatchDir { watch_id: u64, dir: PathBuf },
+    WatchStat { watch_id: u64, file: PathBuf },
     Refresh { watch_id: u64 },
     Unwatch { watch_id: u64 },
-    RunCreate { op_id: u64, path: String, kind: EntryKind },
-    RunRename { op_id: u64, path: String, new_name: String },
-    RunMove { op_id: u64, items: Vec<(String, String)> },
-    RunCopy { op_id: u64, items: Vec<(String, String)> },
+    RunCreate { op_id: u64, path: PathBuf, kind: EntryKind },
+    RunRename { op_id: u64, path: PathBuf, new_name: String },
+    RunMove { op_id: u64, items: Vec<(PathBuf, PathBuf)> },
+    RunCopy { op_id: u64, items: Vec<(PathBuf, PathBuf)> },
     CancelOp { op_id: u64 },
-    StatVfs { path: String },
+    StatVfs { path: PathBuf },
 }
 
 /// WorkerRelay → FsService 的响应。
@@ -221,8 +222,11 @@ impl CallbackRegistry {
     /// 推送 ConnectionLost 到所有注册的 watcher 和 op。
     pub fn notify_connection_lost(&self, reason: DisconnectReason, reconnecting: bool) {
         let reason_str = format!("{:?}", reason);
+        let watch_count: usize;
+        let op_count: usize;
         {
             let watches = self.watches.lock().unwrap();
+            watch_count = watches.len();
             for (watch_id, tx) in watches.iter() {
                 let _ = tx.send(WatchDelta::ConnectionLost {
                     watch_id: *watch_id,
@@ -233,6 +237,7 @@ impl CallbackRegistry {
         }
         {
             let ops = self.ops.lock().unwrap();
+            op_count = ops.len();
             for (op_id, tx) in ops.iter() {
                 let _ = tx.send(ProgressEvent::ConnectionLost {
                     op_id: *op_id,
@@ -241,6 +246,7 @@ impl CallbackRegistry {
                 });
             }
         }
+        info!("notify_connection_lost: reason={reason:?} reconnecting={reconnecting} watches={watch_count} ops={op_count}");
     }
 
     // --- 由回调 server 调用 ---
@@ -503,6 +509,7 @@ impl WorkerRelay {
         status_tx: mpsc::UnboundedSender<WorkerStatus>,
         sentinel: Arc<LeaseSentinel>,
     ) {
+        info!("WorkerRelay started for uid={uid}");
         let mut attempt: u32 = 0;
 
         loop {
@@ -513,10 +520,12 @@ impl WorkerRelay {
 
             attempt += 1;
             if attempt > 1 {
+                info!("WorkerRelay uid={uid}: reconnecting attempt={attempt}");
                 let _ = status_tx.send(WorkerStatus::Reconnecting { uid, attempt });
             }
 
             let fs_worker_id = FS_WORKER_ID.fetch_add(1, Ordering::Relaxed);
+            info!("WorkerRelay uid={uid}: spawning fs_worker_id={fs_worker_id} (attempt={attempt})");
 
             let (child_pid, client) = match Self::spawn_fs_worker(uid, fs_worker_id, registry.clone()).await {
                 Ok(v) => v,
@@ -555,6 +564,7 @@ impl WorkerRelay {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+        info!("WorkerRelay uid={uid}: loop exited, relay shutting down");
     }
 
     async fn run_relay(
@@ -564,6 +574,7 @@ impl WorkerRelay {
         request_rx: &mut mpsc::UnboundedReceiver<WorkerRequest>,
         status_tx: &mpsc::UnboundedSender<WorkerStatus>,
     ) -> DisconnectReason {
+        info!("WorkerRelay run_relay started for uid={uid} child_pid={child_pid}");
         let mut connected = false;
         let mut tick_interval = tokio::time::interval(Duration::from_millis(500));
         let mut last_heartbeat = Instant::now();
@@ -581,10 +592,12 @@ impl WorkerRelay {
                                     let _ = request.response_tx.send(response);
                                 });
                             } else {
+                                debug!("run_relay uid={uid}: request while connecting, replying Connecting");
                                 let _ = request.response_tx.send(WorkerResponse::Connecting);
                             }
                         }
                         None => {
+                            warn!("WorkerRelay uid={uid}: request channel closed");
                             return DisconnectReason::Other {
                                 message: "request channel closed".into(),
                             };
@@ -594,6 +607,7 @@ impl WorkerRelay {
 
                 _ = tick_interval.tick() => {
                     if !Self::is_process_alive(child_pid) {
+                        warn!("WorkerRelay uid={uid}: child_pid={child_pid} process not alive (kill 0 failed)");
                         return DisconnectReason::Other {
                             message: "process died, cause unknown".into(),
                         };
@@ -610,12 +624,14 @@ impl WorkerRelay {
                             }
                             Ok(Ok(false)) => {
                                 heartbeat_failures += 1;
+                                warn!("WorkerRelay uid={uid}: heartbeat returned false ({heartbeat_failures}/2)");
                                 if heartbeat_failures >= 2 {
                                     return DisconnectReason::HeartbeatTimeout { last_heartbeat };
                                 }
                             }
                             Ok(Err(e)) => {
                                 heartbeat_failures += 1;
+                                warn!("WorkerRelay uid={uid}: heartbeat RPC failed ({heartbeat_failures}/2): {e}");
                                 if heartbeat_failures >= 2 {
                                     return DisconnectReason::ConnectionLost {
                                         error: format!("heartbeat RPC failed: {e}"),
@@ -624,6 +640,7 @@ impl WorkerRelay {
                             }
                             Err(_) => {
                                 heartbeat_failures += 1;
+                                warn!("WorkerRelay uid={uid}: heartbeat timeout ({heartbeat_failures}/2)");
                                 if heartbeat_failures >= 2 {
                                     return DisconnectReason::HeartbeatTimeout { last_heartbeat };
                                 }
@@ -639,16 +656,18 @@ impl WorkerRelay {
                                 connected = true;
                                 last_heartbeat = Instant::now();
                                 heartbeat_failures = 0;
+                                info!("WorkerRelay uid={uid}: connected to child_pid={child_pid}");
                                 let _ = status_tx.send(WorkerStatus::Connected { uid, pid: child_pid });
                             }
                             _ => {
-                                // 连接尚未建立，继续等待
+                                debug!("WorkerRelay uid={uid}: waiting for first ping (connecting)...");
                             }
                         }
                     }
                 }
 
                 status = Self::wait_process(child_pid) => {
+                    info!("WorkerRelay uid={uid}: wait_process returned {status:?}");
                     return status;
                 }
             }
@@ -795,7 +814,7 @@ impl WorkerRelay {
             &format!("--parent-pid={}", std::process::id()),
         ])
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
 
         // 3. 启动
@@ -809,13 +828,39 @@ impl WorkerRelay {
         drop(child_req);
         drop(child_cb);
 
-        // 5. 回收子进程（WorkerRelay 通过 wait_process 也监听，这个仅做日志）
-        tokio::task::spawn_blocking(move || match child.wait() {
-            Ok(status) => info!("fs-worker pid={pid} exited with {status}"),
-            Err(e) => warn!("fs-worker pid={pid} wait error: {e}"),
+        // 5. 后台持续读 stderr（避免管道填满阻塞子进程），子进程退出时 pipe 关闭自然结束
+        let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let stderr_snapshot = stderr_buf.clone();
+        if let Some(mut stderr_reader) = child.stderr.take() {
+            tokio::task::spawn_blocking(move || {
+                use std::io::Read;
+                let mut buf = String::new();
+                let _ = stderr_reader.read_to_string(&mut buf);
+                *stderr_snapshot.lock().unwrap() = buf;
+            });
+        }
+
+        // 6. 回收子进程（WorkerRelay 通过 wait_process 也监听，这个仅做日志）
+        tokio::task::spawn_blocking(move || {
+            let exit_status = child.wait();
+            let stderr_text = stderr_buf.lock().unwrap().clone();
+
+            match exit_status {
+                Ok(status) => {
+                    if stderr_text.is_empty() {
+                        info!("fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}");
+                    } else {
+                        warn!("fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}, stderr: {stderr_text}");
+                    }
+                }
+                Err(e) => {
+                    let extra = if stderr_text.is_empty() { String::new() } else { format!(" stderr={stderr_text}") };
+                    warn!("fs-worker pid={pid} wait error: {e}{extra}");
+                }
+            }
         });
 
-        // 6. parent_req → app→worker tarpc client
+        // 7. parent_req → app→worker tarpc client
         parent_req.set_nonblocking(true)?;
         let req_stream = UnixStream::from_std(parent_req)?;
         let req_transport = tarpc::serde_transport::new(
@@ -825,7 +870,7 @@ impl WorkerRelay {
         let client =
             FsWorkerServiceClient::new(tarpc::client::Config::default(), req_transport).spawn();
 
-        // 7. parent_cb → 服务 AppCallbackService（worker→app）
+        // 8. parent_cb → 服务 AppCallbackService（worker→app）
         parent_cb.set_nonblocking(true)?;
         let cb_stream = UnixStream::from_std(parent_cb)?;
         serve_callback(cb_stream, registry);

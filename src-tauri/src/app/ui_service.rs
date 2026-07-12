@@ -21,6 +21,7 @@
 //! - 每个窗口只有一个活跃 tab，非活跃 tab 的 watcher 停止推送。
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tauri::Emitter;
@@ -321,13 +322,26 @@ impl UIService {
                 }
             }
             NavTarget::Filesystem(path) => {
-                match self.mgr.fs_service.watch_dir(&token, path).await {
+                match self.mgr.fs_service.watch_dir(&token, Path::new(path)).await {
                     Ok(watcher) => {
+                        let tab_id_pump = tab_id;
+                        let path_pump = path.clone();
                         let handle = tokio::spawn(async move {
                             let mut watcher = watcher;
+                            info!("start_watch pump started for tab={tab_id_pump} path={path_pump}");
                             while let Some(delta) = watcher.events.recv().await {
+                                match &delta {
+                                    WatchDelta::ConnectionLost { reason, reconnecting, .. } => {
+                                        info!("start_watch pump tab={tab_id_pump}: ConnectionLost reason={reason} reconnecting={reconnecting}");
+                                    }
+                                    WatchDelta::Reset(files) => {
+                                        debug!("start_watch pump tab={tab_id_pump}: Reset {} entries", files.len());
+                                    }
+                                    _ => {}
+                                }
                                 let _ = window.emit("hf:file-list", &delta);
                             }
+                            info!("start_watch pump ended for tab={tab_id_pump} path={path_pump}");
                         });
                         self.file_watchers
                             .write()
@@ -339,7 +353,9 @@ impl UIService {
                         let _ = window.emit(
                             "hf:file-list",
                             &WatchDelta::Inaccessible {
-                                path: path.clone(),
+                                path: PathBuf::from(path.clone()),
+                                ancestor: PathBuf::from(path),
+                                level: 0,
                                 reason: e,
                             },
                         );
@@ -492,7 +508,7 @@ impl UIService {
         let (total, free) = {
             let resp = token
                 .send_request(crate::fsworker::WorkerRequestContent::StatVfs {
-                    path: "/".to_string(),
+                    path: PathBuf::from("/"),
                 })
                 .await
                 .map_err(|e| format!("statvfs: {e}"))?;
@@ -881,7 +897,7 @@ impl UIService {
     pub async fn create(
         self: &Arc<Self>,
         tab_id: u64,
-        path: &str,
+        path: &Path,
         kind: EntryKind,
         ctx_id: ContextId,
     ) -> Result<(), String> {
@@ -894,7 +910,7 @@ impl UIService {
     pub async fn rename(
         self: &Arc<Self>,
         tab_id: u64,
-        path: &str,
+        path: &Path,
         new_name: &str,
         ctx_id: ContextId,
     ) -> Result<(), String> {

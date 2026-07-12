@@ -110,6 +110,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const currentPathRef = useRef(currentPath);
   // eslint-disable-next-line react-hooks/refs -- keep ref in sync for stable callbacks during render
   currentPathRef.current = currentPath;
+  const initialPathRef = useRef(initialPath);
+  initialPathRef.current = initialPath;
 
   const lastToastKeyRef = useRef('');
 
@@ -146,7 +148,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     if (path === 'app://dashboard') {
       setCurrentPath(path);
-      onPathChange(path);
       return;
     }
 
@@ -185,7 +186,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       console.log(`[explorer] loadPath("${path}") → ${data.length} files, actualPath="${actualPath}"`);
       setFiles(data);
       setCurrentPath(actualPath);
-      onPathChange(actualPath);
       addToRecents(actualPath);
       // 更新 sessionStorage，供 onDragDropEvent 使用
       sessionStorage.setItem('hnfm-current-path', actualPath);
@@ -210,7 +210,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       console.error('Failed to load path', path, e);
       showToast(t('error.cannot_open_dir', (e as Error)?.message || String(e) || '未知错误'), 'error');
     }
-  }, [onPathChange, tabId, addToRecents]);
+  }, [tabId, addToRecents]);
 
   /**
    * 浏览器环境下的外部拖入处理。
@@ -293,8 +293,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if ("Reset" in delta) {
           const mapped = delta.Reset.map(mapBackendFile);
           setFiles(mapped);
-          setCurrentPath(initialPath);
-          addToRecents(initialPath);
+          setCurrentPath(initialPathRef.current);
+          addToRecents(initialPathRef.current);
         } else if ("Upsert" in delta) {
           const entry = mapBackendFile(delta.Upsert);
           setFiles((prev) => {
@@ -439,15 +439,18 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       const last = lastNavRef.current;
       if (last?.path === file.path && now - last.time < 300) return;
       lastNavRef.current = { path: file.path, time: now };
-      loadPath(file.path, true);
+      loadingPathRef.current = file.path;
+      onPathChange(file.path);
     } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
       const devPath = file.devicePath || file.path;
       if (file.mountedAt) {
-        loadPath(file.mountedAt, true);
+        loadingPathRef.current = file.mountedAt;
+        onPathChange(file.mountedAt);
       } else if (file.canAutoMount && onMountDevice) {
         const result = await onMountDevice(devPath);
         if (result && 'success' in result && result.success && result.mountpoint) {
-          loadPath(result.mountpoint, true);
+          loadingPathRef.current = result.mountpoint;
+          onPathChange(result.mountpoint);
         }
         // error toast handled by useDeviceActions
       } else {
@@ -458,7 +461,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     } else {
       openFile(file.path);
     }
-  }, [loadPath, onMountDevice]);
+  }, [onPathChange, loadPath, onMountDevice]);
 
   const handleRename = useCallback(async (file: IFile, newName: string) => {
     const lastSlash = file.path.lastIndexOf('/');
@@ -469,7 +472,8 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const handleUp = async () => {
     if (window.electron && currentPath) {
       const parent = await window.electron.getParentPath(currentPath);
-      loadPath(parent, true);
+      loadingPathRef.current = parent;
+      onPathChange(parent);
     }
   };
 
