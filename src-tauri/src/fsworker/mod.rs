@@ -48,14 +48,14 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use nix::{
-    fcntl::{fcntl, FcntlArg, FdFlag},
+    fcntl::{FcntlArg, FdFlag, fcntl},
     unistd,
 };
 use tokio::{net::UnixStream, sync::mpsc, sync::oneshot};
@@ -83,11 +83,11 @@ pub struct FsWorkerOpts {
     /// FS Worker ID
     pub fs_worker_id: u64,
     /// 请求通道 fd（app→worker，Worker 作 server）
-    pub fd: Option<i32>,
+    pub fd: i32,
     /// 回调通道 fd（worker→app，Worker 作 client）
-    pub cb_fd: Option<i32>,
+    pub cb_fd: i32,
     /// 主进程 PID（用于 Worker 侧孤儿检测，绕过 pkexec 中介）。
-    pub parent_pid: Option<u32>,
+    pub parent_pid: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -137,16 +137,44 @@ pub struct WorkerRequest {
 /// 请求内容。
 #[derive(Clone)]
 pub enum WorkerRequestContent {
-    WatchDir { watch_id: u64, dir: PathBuf },
-    WatchStat { watch_id: u64, file: PathBuf },
-    Refresh { watch_id: u64 },
-    Unwatch { watch_id: u64 },
-    RunCreate { op_id: u64, path: PathBuf, kind: EntryKind },
-    RunRename { op_id: u64, path: PathBuf, new_name: String },
-    RunMove { op_id: u64, items: Vec<(PathBuf, PathBuf)> },
-    RunCopy { op_id: u64, items: Vec<(PathBuf, PathBuf)> },
-    CancelOp { op_id: u64 },
-    StatVfs { path: PathBuf },
+    WatchDir {
+        watch_id: u64,
+        dir: PathBuf,
+    },
+    WatchStat {
+        watch_id: u64,
+        file: PathBuf,
+    },
+    Refresh {
+        watch_id: u64,
+    },
+    Unwatch {
+        watch_id: u64,
+    },
+    RunCreate {
+        op_id: u64,
+        path: PathBuf,
+        kind: EntryKind,
+    },
+    RunRename {
+        op_id: u64,
+        path: PathBuf,
+        new_name: String,
+    },
+    RunMove {
+        op_id: u64,
+        items: Vec<(PathBuf, PathBuf)>,
+    },
+    RunCopy {
+        op_id: u64,
+        items: Vec<(PathBuf, PathBuf)>,
+    },
+    CancelOp {
+        op_id: u64,
+    },
+    StatVfs {
+        path: PathBuf,
+    },
 }
 
 /// WorkerRelay → FsService 的响应。
@@ -156,7 +184,10 @@ pub enum WorkerResponse {
     /// Worker 尚未连接，调用方稍后重试。
     Connecting,
     /// statvfs 结果。
-    StatVfsResult { total_bytes: u64, free_bytes: u64 },
+    StatVfsResult {
+        total_bytes: u64,
+        free_bytes: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +277,9 @@ impl CallbackRegistry {
                 });
             }
         }
-        info!("notify_connection_lost: reason={reason:?} reconnecting={reconnecting} watches={watch_count} ops={op_count}");
+        info!(
+            "notify_connection_lost: reason={reason:?} reconnecting={reconnecting} watches={watch_count} ops={op_count}"
+        );
     }
 
     // --- 由回调 server 调用 ---
@@ -269,13 +302,7 @@ impl CallbackRegistry {
         conflict_id: u64,
         item: ConflictItem,
     ) -> ConflictResolution {
-        self.push_progress(
-            op_id,
-            ProgressEvent::Conflict {
-                conflict_id,
-                item,
-            },
-        );
+        self.push_progress(op_id, ProgressEvent::Conflict { conflict_id, item });
         let (tx, rx) = oneshot::channel();
         self.conflicts
             .lock()
@@ -321,9 +348,12 @@ impl UidToken {
     }
 
     /// 向 WorkerRelay 发送请求并等待响应。
-    /// 
+    ///
     /// 若 Worker 尚未连接（返回 `Connecting`），内部自动等待重试。
-    pub async fn send_request(&self, content: WorkerRequestContent) -> Result<WorkerResponse, String> {
+    pub async fn send_request(
+        &self,
+        content: WorkerRequestContent,
+    ) -> Result<WorkerResponse, String> {
         loop {
             let (response_tx, response_rx) = oneshot::channel();
             let request = WorkerRequest {
@@ -462,7 +492,9 @@ impl FsWorkerPool {
     }
 
     /// 获取状态接收端（供上层监听 Worker 连接状态）。
-    pub fn status_receiver(&self) -> Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<WorkerStatus>>> {
+    pub fn status_receiver(
+        &self,
+    ) -> Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<WorkerStatus>>> {
         self.status_rx.clone()
     }
 }
@@ -525,32 +557,36 @@ impl WorkerRelay {
             }
 
             let fs_worker_id = FS_WORKER_ID.fetch_add(1, Ordering::Relaxed);
-            info!("WorkerRelay uid={uid}: spawning fs_worker_id={fs_worker_id} (attempt={attempt})");
+            info!(
+                "WorkerRelay uid={uid}: spawning fs_worker_id={fs_worker_id} (attempt={attempt})"
+            );
 
-            let (child_pid, client) = match Self::spawn_fs_worker(uid, fs_worker_id, registry.clone()).await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("failed to spawn fs-worker for uid {uid}: {e}");
-                    let reason = DisconnectReason::Other {
-                        message: format!("failed to spawn fs-worker: {e}"),
-                    };
-                    let _ = status_tx.send(WorkerStatus::Disconnected {
-                        uid,
-                        reason: reason.clone(),
-                        reconnecting: true,
-                    });
-                    registry.notify_connection_lost(reason, true);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
+            let (child_pid, client) =
+                match Self::spawn_fs_worker(uid, fs_worker_id, registry.clone()).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("failed to spawn fs-worker for uid {uid}: {e}");
+                        let reason = DisconnectReason::Other {
+                            message: format!("failed to spawn fs-worker: {e}"),
+                        };
+                        let _ = status_tx.send(WorkerStatus::Disconnected {
+                            uid,
+                            reason: reason.clone(),
+                            reconnecting: true,
+                        });
+                        registry.notify_connection_lost(reason, true);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
 
             pid.store(child_pid, Ordering::Relaxed);
 
             // 进入 Connecting 阶段：响应请求立即以 Connecting 应答，心跳只在连接确认后启动
             let _ = status_tx.send(WorkerStatus::Connecting { uid });
 
-            let reason = Self::run_relay(uid, child_pid, &client, &mut request_rx, &status_tx).await;
+            let reason =
+                Self::run_relay(uid, child_pid, &client, &mut request_rx, &status_tx).await;
             pid.store(0, Ordering::Relaxed);
 
             let _ = status_tx.send(WorkerStatus::Disconnected {
@@ -744,11 +780,9 @@ impl WorkerRelay {
                 let _ = client.unwatch(ctx, watch_id).await;
                 Ok(Ok(()))
             }
-            WorkerRequestContent::RunCreate {
-                op_id,
-                path,
-                kind,
-            } => client.run_create(ctx, op_id, path, kind).await,
+            WorkerRequestContent::RunCreate { op_id, path, kind } => {
+                client.run_create(ctx, op_id, path, kind).await
+            }
             WorkerRequestContent::RunRename {
                 op_id,
                 path,
@@ -820,9 +854,7 @@ impl WorkerRelay {
         // 3. 启动
         let mut child = cmd.spawn()?;
         let pid = child.id();
-        info!(
-            "spawned fs-worker pid={pid} fs_worker_id={fs_worker_id} target_uid={target_uid}"
-        );
+        info!("spawned fs-worker pid={pid} fs_worker_id={fs_worker_id} target_uid={target_uid}");
 
         // 4. 关闭子端副本
         drop(child_req);
@@ -848,13 +880,21 @@ impl WorkerRelay {
             match exit_status {
                 Ok(status) => {
                     if stderr_text.is_empty() {
-                        info!("fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}");
+                        info!(
+                            "fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}"
+                        );
                     } else {
-                        warn!("fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}, stderr: {stderr_text}");
+                        warn!(
+                            "fs-worker pid={pid} fs_worker_id={fs_worker_id} exited with {status}, stderr: {stderr_text}"
+                        );
                     }
                 }
                 Err(e) => {
-                    let extra = if stderr_text.is_empty() { String::new() } else { format!(" stderr={stderr_text}") };
+                    let extra = if stderr_text.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" stderr={stderr_text}")
+                    };
                     warn!("fs-worker pid={pid} wait error: {e}{extra}");
                 }
             }
@@ -1009,12 +1049,10 @@ fn clear_cloexec(fd: RawFd) -> io::Result<()> {
     // SAFETY: fd 此刻有效
     let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
     let mut flags = FdFlag::from_bits_retain(
-        fcntl(borrowed, FcntlArg::F_GETFD)
-            .map_err(|e| io::Error::other(e.to_string()))?,
+        fcntl(borrowed, FcntlArg::F_GETFD).map_err(|e| io::Error::other(e.to_string()))?,
     );
     flags.remove(FdFlag::FD_CLOEXEC);
-    fcntl(borrowed, FcntlArg::F_SETFD(flags))
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    fcntl(borrowed, FcntlArg::F_SETFD(flags)).map_err(|e| io::Error::other(e.to_string()))?;
     Ok(())
 }
 

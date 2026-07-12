@@ -36,9 +36,9 @@ async fn main() {
             tracing::info!("launching fs-worker mode");
             let opts = hnfm_lib::fsworker::FsWorkerOpts {
                 fs_worker_id: cmd.fs_worker_id,
-                fd: Some(cmd.fd),
-                cb_fd: Some(cmd.cb_fd),
-                parent_pid: Some(cmd.parent_pid),
+                fd: cmd.fd,
+                cb_fd: cmd.cb_fd,
+                parent_pid: cmd.parent_pid,
             };
             hnfm_lib::fsworker::run_fs_worker(opts).await;
         }

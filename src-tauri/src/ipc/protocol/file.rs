@@ -1,25 +1,13 @@
-//! RPC 服务定义 (tarpc service traits) 和共享数据类型。
+//! 文件系统相关类型和 RPC 接口定义。
 //!
-//! ## 传输层
-//!
-//! | 场景            | transport               | 方向                          |
-//! | --------------- | ----------------------- | ----------------------------- |
-//! | 实例→实例       | named UDS + tarpc       | 全连接 Mesh，每个实例既 server 又 client |
-//! | 实例→Worker     | 匿名 socketpair + tarpc | 主进程=client, Worker=server  |
-//! | Worker→实例回调 | 匿名 socketpair + tarpc | Worker=client, 主进程=server  |
-//!
-//! ## 设计原则
-//!
-//! - **无 list_dir / 无 stat**：快照会变，一切皆订阅（`watch_dir` / `watch_stat`）。
-//! - **所有变更操作都假设可能很慢**（软盘/NFS/坏块）→ 一律立刻返回，进度通过反向回调汇报。
-//! - `File` 的 mime / 缩略图是**渐进式**读取的，先出基础 stat，算好后再补发 `Upsert`。
+//! 包括：文件条目、Watcher 增量事件、批处理进度/冲突、FsWorker RPC 接口。
 
 use std::{path::PathBuf, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// 共享数据类型
+// 文件系统条目
 // ---------------------------------------------------------------------------
 
 /// 文件系统条目信息。
@@ -59,17 +47,6 @@ pub enum EntryKind {
     File,
     /// 目录
     Dir,
-}
-
-/// Tab（标签页）的可传输/持久化状态。
-///
-/// 不含 `UidToken`（运行时的）。接收方通过 `FsService.try_request_uid_token(uid)` 重建。
-/// `uid` 由 TabManager 在创建/恢复时赋值，不在 TabState 中传输。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TabState {
-    pub id: u64,
-    pub nav_history: Vec<NavEntry>,
-    pub nav_index: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +99,11 @@ pub enum WatchDelta {
         reason: String,
     },
     /// Worker 连接断开
-    ConnectionLost { watch_id: u64, reason: String, reconnecting: bool },
+    ConnectionLost {
+        watch_id: u64,
+        reason: String,
+        reconnecting: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -178,9 +159,16 @@ pub enum ProgressEvent {
         status: ItemStatus,
     },
     /// 进度心跳
-    Tick { done: u64, total: u64, current: PathBuf },
+    Tick {
+        done: u64,
+        total: u64,
+        current: PathBuf,
+    },
     /// 抛出一个冲突，等待上层通过 `Progress::resolve` 决策
-    Conflict { conflict_id: u64, item: ConflictItem },
+    Conflict {
+        conflict_id: u64,
+        item: ConflictItem,
+    },
     /// 操作结束
     Done {
         succeeded: u64,
@@ -188,194 +176,11 @@ pub enum ProgressEvent {
         cancelled: bool,
     },
     /// Worker 连接断开
-    ConnectionLost { op_id: u64, reason: String, reconnecting: bool },
-}
-
-// ---------------------------------------------------------------------------
-// 上下文 / 剪贴板 / 拖放
-// ---------------------------------------------------------------------------
-
-/// 通用任务/资源关联标识。UIService 用它按 tab/window 归组 Progress。
-#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum ContextId {
-    Tab(u64),
-    Window(u64),
-}
-
-/// 拖放操作类型。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum DragOp {
-    Copy,
-    Move,
-}
-
-/// 剪贴板操作类型。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum ClipOp {
-    Copy,
-    Cut,
-}
-
-/// 剪贴板状态。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClipboardState {
-    pub operation: Option<ClipOp>,
-    pub files: Vec<String>,
-}
-
-/// UI 导航与设备管理。
-
-/// 导航目标。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NavTarget {
-    Dashboard,
-    Filesystem(String),
-}
-
-/// 导航历史中的一个节点。
-///
-/// `accessible` 不存此处——它是当前 watcher 的 live 属性，不是历史快照。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NavEntry {
-    pub target: NavTarget,
-    pub selected: Vec<String>,
-}
-
-/// Tab 列表事件载荷（`hf:tabs`）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TabsPayload {
-    pub tabs: Vec<TabInfo>,
-    pub active_tab_id: u64,
-}
-
-/// 轻量 Tab 信息（不含文件内容）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TabInfo {
-    pub id: u64,
-    pub title: String,
-    pub nav_target: NavTarget,
-}
-
-/// 导航状态事件载荷（`hf:nav-state`）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NavStatePayload {
-    pub tab_id: u64,
-    pub target: NavTarget,
-    pub can_go_back: bool,
-    pub can_go_forward: bool,
-}
-
-/// 仪表盘内容。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DashboardData {
-    pub storage: StorageSummary,
-    pub common_locations: Vec<CommonLocation>,
-}
-
-/// 存储空间汇总。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageSummary {
-    pub total_bytes: u64,
-    pub used_bytes: u64,
-    pub free_bytes: u64,
-}
-
-/// 常用位置（按 uid 的 home 解析）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommonLocation {
-    pub name: String,
-    pub path: String,
-    pub exists: bool,
-}
-
-/// 设备条目（FsWorker 上报，自主裁决 can_mount/can_unmount）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceEntry {
-    pub name: String,
-    pub device_path: String,
-    pub mount_point: Option<String>,
-    pub fs_type: String,
-    pub size_bytes: u64,
-    pub available_bytes: u64,
-    pub can_mount: bool,
-    pub can_unmount: bool,
-}
-
-/// 设备变更增量。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DeviceDelta {
-    Reset(Vec<DeviceEntry>),
-    Upsert(DeviceEntry),
-    Remove(String),
-    ConnectionLost,
-}
-
-// ---------------------------------------------------------------------------
-// 窗口间消息 / 实例间消息
-// ---------------------------------------------------------------------------
-
-/// 窗口间消息 — WindowBus 专用。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WindowMessage {
-    /// DnD 拖拽开始（广播给同实例所有窗口 + 跨实例转发）
-    DndSessionActive {
-        session_id: u64,
-        files: Vec<String>,
-        operation: DragOp,
+    ConnectionLost {
+        op_id: u64,
+        reason: String,
+        reconnecting: bool,
     },
-    /// DnD 放置完成（发回源窗口）
-    DndSessionCompleted { session_id: u64 },
-    /// Tab 已附加到目标窗口
-    TabAttached { tab: TabState },
-}
-
-/// 实例间消息 — InstanceBus 专用。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum InstanceMessage {
-    /// 窗口注册广播
-    WindowRegistered { window_id: u64, instance_id: u64 },
-    /// 窗口注销广播
-    WindowUnregistered { window_id: u64 },
-    /// 剪贴板同步广播
-    ClipboardSync { state: ClipboardState },
-    /// Tab 转移到指定实例
-    TransferTab { tab: TabState, to_instance: u64 },
-    /// 转发 WindowMessage 到指定窗口
-    ForwardToWindow { window_id: u64, msg: WindowMessage },
-}
-
-// ---------------------------------------------------------------------------
-// 实例间 RPC: InstanceService
-// ---------------------------------------------------------------------------
-
-/// 实例间 RPC 服务。
-///
-/// Mesh 全连接：每个实例既是 server（监听连接）又是 client（连接其他实例）。
-/// 所有方法都是 P2P 直连，不经过中转。
-#[tarpc::service]
-pub trait InstanceService {
-    /// 请求在当前实例打开新窗口（CLI `hnfm /path` 复用已有实例时使用）。
-    ///
-    /// `paths` 为空时创建空窗口（导航至根目录）。
-    async fn open_window(paths: Vec<String>);
-
-    /// 将一个 tab 从其他实例转移到当前实例。
-    async fn transfer_tab(tab: TabState);
-
-    /// 窗口注册（fan-out 广播给所有实例）。
-    async fn window_register(window_id: u64, instance_id: u64);
-
-    /// 窗口注销（fan-out 广播给所有实例）。
-    async fn window_unregister(window_id: u64);
-
-    /// 转发 WindowMessage 到当前实例的指定窗口。
-    async fn forward(window_id: u64, msg: WindowMessage);
-
-    /// 剪贴板同步（fan-out 广播给所有实例）。
-    async fn clipboard_sync(state: ClipboardState);
-
-    /// 存活检查。
-    async fn ping() -> bool;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,5 +236,9 @@ pub trait AppCallbackService {
     /// 推送批处理进度。
     async fn progress(op_id: u64, ev: ProgressEvent);
     /// 询问冲突如何解决（阻塞式，直到上层给出决策）。
-    async fn ask_conflict(op_id: u64, conflict_id: u64, item: ConflictItem) -> ConflictResolution;
+    async fn ask_conflict(
+        op_id: u64,
+        conflict_id: u64,
+        item: ConflictItem,
+    ) -> ConflictResolution;
 }

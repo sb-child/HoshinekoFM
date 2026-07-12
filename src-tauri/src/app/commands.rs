@@ -235,6 +235,36 @@ pub async fn rename_entry(
     ui.rename(tab_id, Path::new(&path), &new_name, ctx).await
 }
 
+/// 批量移动文件。
+#[command]
+pub async fn move_files(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    pairs: Vec<(String, String)>,
+    ctx_id: ContextId,
+) -> Result<(), String> {
+    let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = pairs
+        .into_iter()
+        .map(|(s, d)| (std::path::PathBuf::from(s), std::path::PathBuf::from(d)))
+        .collect();
+    ui.move_files_by_paths(tab_id, pairs, ctx_id).await
+}
+
+/// 批量复制文件。
+#[command]
+pub async fn copy_files(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    pairs: Vec<(String, String)>,
+    ctx_id: ContextId,
+) -> Result<(), String> {
+    let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = pairs
+        .into_iter()
+        .map(|(s, d)| (std::path::PathBuf::from(s), std::path::PathBuf::from(d)))
+        .collect();
+    ui.copy_files_by_paths(tab_id, pairs, ctx_id).await
+}
+
 // ---------------------------------------------------------------------------
 // UIService 权限变更命令
 // ---------------------------------------------------------------------------

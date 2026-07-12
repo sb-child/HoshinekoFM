@@ -75,7 +75,7 @@ pub struct FsWorkerCmd {
 
     /// 主进程 PID（用于 Worker 侧孤儿检测）
     #[arg(long)]
-    pub parent_pid: u32,
+    pub parent_pid: i32,
 }
 
 // ---------------------------------------------------------------------------

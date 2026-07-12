@@ -12,11 +12,7 @@
 //! - 仅通过继承 FD 通信，无对外暴露端口。
 //! - 所有 UID 相关操作以本进程 EUID 执行（提权由父进程 pkexec 完成）。
 
-use std::{
-    os::unix::io::FromRawFd,
-    os::unix::net::UnixStream as StdUnixStream,
-    time::Duration,
-};
+use std::{os::unix::io::FromRawFd, os::unix::net::UnixStream as StdUnixStream, time::Duration};
 
 use tokio::net::UnixStream;
 use tracing::{info, warn};
@@ -49,10 +45,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     }));
 
     // 1. 孤儿检测：每 0.5s 用 kill(parent_pid, 0) 检测主进程存活。
-    let parent_pid = opts
-        .parent_pid
-        .expect("--parent-pid is required for fs-worker mode")
-        as i32;
+    let parent_pid = opts.parent_pid;
     tokio::spawn(async move {
         let mut failures: u32 = 0;
         let mut interval = tokio::time::interval(Duration::from_millis(500));
@@ -94,12 +87,10 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     });
 
     // 2. 回调通道（worker → app）：恢复 fd → tarpc client
-    let cb_fd = opts.cb_fd.expect("--cb-fd is required for fs-worker mode");
+    let cb_fd = opts.cb_fd;
     info!("fs worker {} restoring cb-fd={}", opts.fs_worker_id, cb_fd);
     let cb_std = unsafe { StdUnixStream::from_raw_fd(cb_fd) };
-    cb_std
-        .set_nonblocking(true)
-        .expect("cb set_nonblocking");
+    cb_std.set_nonblocking(true).expect("cb set_nonblocking");
     let cb_stream = UnixStream::from_std(cb_std).expect("cb to tokio stream");
     let cb_transport = serde_transport::new(
         crate::ipc::frame_stream(cb_stream),
@@ -109,12 +100,10 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
 
     // 3. 请求通道（app → worker）：恢复 fd → tarpc server
     let server = FsWorkerServer::new(opts.fs_worker_id, cb);
-    let fd = opts.fd.expect("--fd is required for fs-worker mode");
+    let fd = opts.fd;
     info!("fs worker {} restoring fd={}", opts.fs_worker_id, fd);
     let std_stream = unsafe { StdUnixStream::from_raw_fd(fd) };
-    std_stream
-        .set_nonblocking(true)
-        .expect("set_nonblocking");
+    std_stream.set_nonblocking(true).expect("set_nonblocking");
     let stream = UnixStream::from_std(std_stream).expect("to tokio stream");
     let transport = serde_transport::new(
         crate::ipc::frame_stream(stream),
