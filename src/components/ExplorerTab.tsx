@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from '@tauri-apps/api/core';
 import { showToast, showProgressToast, updateProgress, finishToast, dismissToast, shortPath } from '../utils/toast';
 import { useClipboard } from '../contexts/ClipboardContext';
@@ -8,6 +9,7 @@ import { IconButton } from './IconButton';
 import { Icon } from './Icon';
 import { FileSystemService } from '../services/FileSystemService';
 import type { IFile } from '../types/files';
+import type { WatchDelta, FileEntry } from '../types/tauriEvents';
 import {
   renameFile,
   trashFiles,
@@ -37,11 +39,23 @@ import {
   type ConflictResult,
 } from '../utils/fileConflict';
 
+/** 将后端 FileEntry 映射为前端 IFile */
+function mapBackendFile(f: FileEntry): IFile {
+  return {
+    name: f.name,
+    path: f.path,
+    isDirectory: f.is_directory,
+    size: f.size,
+    mtime: new Date(f.modified * 1000),
+    mime: f.mime,
+  };
+}
+
 interface ExplorerTabProps {
-    tabId: string;
+    tabId: number;
     isActive: boolean;
     initialPath: string;
-    onPathChange: (id: string, path: string) => void;
+    onPathChange: (path: string) => void;
     onContextMenu: (e: React.MouseEvent, file: IFile | null) => void;
     onBgMenuItems: (items: ContextMenuItem[]) => void;
     onOpenWithFile: (file: IFile) => void;
@@ -53,14 +67,11 @@ interface ExplorerTabProps {
     iconSize: number;
     viewMode: 'grid' | 'list';
     filledIcons: boolean;
-    refreshSignal: number;
-    scrollToFileName?: string;
-    onScrollToComplete?: () => void;
     onMountDevice?: (devicePath: string) => Promise<{ success: boolean; mountpoint?: string; error?: string }>;
     marqueeEnabled: boolean;
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, refreshSignal, scrollToFileName, onScrollToComplete, onMountDevice, marqueeEnabled }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, onMountDevice, marqueeEnabled }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
@@ -70,6 +81,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const mountMapVersionRef = useRef<string | null>(null);
   const loadingPathRef = useRef<string | null>(null);
   const lastNavRef = useRef<{ path: string; time: number } | null>(null);
+  const unlistenFileListRef = useRef<UnlistenFn | null>(null);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
 
   // Track recents
@@ -134,7 +146,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     if (path === 'app://dashboard') {
       setCurrentPath(path);
-      onPathChange(tabId, path);
+      onPathChange(path);
       return;
     }
 
@@ -173,7 +185,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       console.log(`[explorer] loadPath("${path}") → ${data.length} files, actualPath="${actualPath}"`);
       setFiles(data);
       setCurrentPath(actualPath);
-      onPathChange(tabId, actualPath);
+      onPathChange(actualPath);
       addToRecents(actualPath);
       // 更新 sessionStorage，供 onDragDropEvent 使用
       sessionStorage.setItem('hnfm-current-path', actualPath);
@@ -271,17 +283,67 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, []);
 
+  /** 监听 hf:file-list 事件 — 后端 watcher 推送文件变化 */
+  useEffect(() => {
+    if (!isActive) return;
+
+    const setup = async () => {
+      const ul = await listen<WatchDelta>("hf:file-list", (event) => {
+        const delta = event.payload;
+        if ("Reset" in delta) {
+          const mapped = delta.Reset.map(mapBackendFile);
+          setFiles(mapped);
+          setCurrentPath(initialPath);
+          addToRecents(initialPath);
+        } else if ("Upsert" in delta) {
+          const entry = mapBackendFile(delta.Upsert);
+          setFiles((prev) => {
+            const idx = prev.findIndex((f) => f.path === entry.path);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = entry;
+              return next;
+            }
+            return [...prev, entry];
+          });
+        } else if ("Remove" in delta) {
+          setFiles((prev) => prev.filter((f) => f.path !== delta.Remove));
+        } else if ("Rename" in delta) {
+          const { from, to } = delta.Rename;
+          const toName = to.split("/").pop() || to;
+          setFiles((prev) => {
+            const next = prev.filter((f) => f.path !== from);
+            const existing = prev.find((f) => f.path === from);
+            if (existing) {
+              next.push({ ...existing, path: to, name: toName });
+            }
+            return next;
+          });
+        } else if ("Inaccessible" in delta) {
+          showToast(t("error.cannot_access_dir", delta.Inaccessible.reason), "error");
+        }
+      });
+      unlistenFileListRef.current = ul;
+    };
+    setup();
+
+    return () => {
+      if (unlistenFileListRef.current) {
+        unlistenFileListRef.current();
+        unlistenFileListRef.current = null;
+      }
+    };
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (initialPath && loadingPathRef.current !== initialPath) {
+      if (initialPath === "app://dashboard") {
+        setCurrentPath(initialPath);
+        return;
+      }
       loadPath(initialPath, true);
     }
   }, [initialPath, loadPath]);
-
-  // Refresh when signal changes (dialog rename, paste, delete, extract)
-  useEffect(() => {
-    if (currentPath === 'app://dashboard') return;
-    loadPath(currentPath); // eslint-disable-line react-hooks/set-state-in-effect
-  }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Watch current directory for external filesystem changes
   useEffect(() => {
@@ -619,15 +681,19 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, []);
 
-  // Clear selection on path change (unless scrollToFileName was just cleared after scroll-to)
-  const prevScrollToRef = useRef<string | undefined>(undefined);
+  // Clear selection on path change
+  const prevPathRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!scrollToFileName && prevScrollToRef.current === undefined) {
+    if (prevPathRef.current === undefined) {
+      prevPathRef.current = initialPath;
+      return;
+    }
+    if (prevPathRef.current !== initialPath) {
       setSelectedFiles(new Set());
       setLastSelectedPath(null);
+      prevPathRef.current = initialPath;
     }
-    prevScrollToRef.current = scrollToFileName;
-  }, [currentPath, scrollToFileName]);
+  }, [initialPath]);
 
   const handleSelect = (file: IFile, toggle: boolean, range: boolean) => {
     const newSelection = new Set(toggle ? selectedFiles : []);
@@ -1008,8 +1074,6 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
                 viewMode={viewMode}
                 filledIcons={filledIcons}
                 groupingEnabled={groupingEnabled}
-                scrollToFileName={scrollToFileName}
-                onScrollToComplete={onScrollToComplete}
                 marqueeEnabled={marqueeEnabled}
               />
             </div>

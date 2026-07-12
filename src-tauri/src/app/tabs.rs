@@ -28,6 +28,9 @@ fn tabs_file_path() -> PathBuf {
     base.join("hnfm/tabs.json")
 }
 
+use crate::ipc::protocol::NavEntry;
+use crate::ipc::protocol::NavTarget;
+
 /// Tab 管理器。
 pub struct TabManager {
     /// 所有 tab
@@ -76,15 +79,19 @@ impl TabManager {
         }
     }
 
-    /// 添加一个 tab。
+    /// 添加一个 tab，以初始路径开始导航历史。
     pub fn add_tab(&mut self, path: String) -> TabState {
         let id = self.next_id;
         self.next_id += 1;
 
+        let entry = NavEntry {
+            target: NavTarget::Filesystem(path),
+            selected: Vec::new(),
+        };
         let tab = TabState {
             id,
-            path: PathBuf::from(path),
-            view_state: String::new(),
+            nav_history: vec![entry],
+            nav_index: 0,
         };
         self.tabs.push(tab.clone());
         debug!("added tab id={id}, total={}", self.tabs.len());
@@ -121,13 +128,6 @@ impl TabManager {
     /// 按 ID 查找 tab。
     pub fn get(&self, id: u64) -> Option<&TabState> {
         self.tabs.iter().find(|t| t.id == id)
-    }
-
-    /// 更新 tab 的视图状态。
-    pub fn update_view_state(&mut self, id: u64, view_state: String) {
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-            tab.view_state = view_state;
-        }
     }
 
     /// 跨实例传输 tab。

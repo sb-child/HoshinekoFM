@@ -1,74 +1,15 @@
 //! Tauri Commands —— 前端可调用的后端函数。
 //!
-//! 通过 `invoke()` 调用，如 `invoke("list_tabs")`。
+//! 通过 `invoke()` 调用。前端只发意图，结果通过 event 推送。
 
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{command, Emitter, State};
-use tokio::sync::mpsc;
-use tracing::warn;
+use tauri::{command, State, Window};
 
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
-
-/// Tab 变更事件（后端 → 前端推送）。
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum TabEvent {
-    Added(crate::ipc::protocol::TabState),
-    Removed(crate::ipc::protocol::TabState),
-}
-
-/// 获取所有 tab 列表。
-#[command]
-pub fn list_tabs(
-    mgr: State<'_, Arc<AppStateManager>>,
-) -> Result<Vec<crate::ipc::protocol::TabState>, String> {
-    let tabs = mgr.tabs.lock().unwrap();
-    Ok(tabs.get_all().to_vec())
-}
-
-/// 添加一个 tab。
-#[command]
-pub fn add_tab(
-    mgr: State<'_, Arc<AppStateManager>>,
-    tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
-    path: String,
-) -> Result<crate::ipc::protocol::TabState, String> {
-    let mut tabs = mgr.tabs.lock().unwrap();
-    let tab = tabs.add_tab(path);
-    tabs.save_to_disk();
-
-    let _ = tx.send(TabEvent::Added(tab.clone()));
-    Ok(tab)
-}
-
-/// 关闭一个 tab。
-#[command]
-pub fn close_tab(
-    mgr: State<'_, Arc<AppStateManager>>,
-    tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
-    id: u64,
-) -> Result<(), String> {
-    let mut tabs = mgr.tabs.lock().unwrap();
-    if let Some(removed) = tabs.remove_tab(id) {
-        tabs.save_to_disk();
-        let _ = tx.send(TabEvent::Removed(removed));
-        Ok(())
-    } else {
-        warn!("tab {id} not found");
-        Err(format!("tab {id} not found"))
-    }
-}
-
-/// 前端注册事件监听（预留）。
-#[command]
-pub fn tab_event_sink(
-    _mgr: State<'_, Arc<AppStateManager>>,
-    _tx: State<'_, mpsc::UnboundedSender<TabEvent>>,
-) -> Result<(), String> {
-    Ok(())
-}
+use crate::ipc::protocol::{ContextId, EntryKind, NavTarget};
 
 // ---------------------------------------------------------------------------
 // 多窗口命令
@@ -78,7 +19,7 @@ pub fn tab_event_sink(
 pub fn create_window(
     app: &tauri::AppHandle,
     label: &str,
-    paths: &[String],
+    _paths: &[String],
 ) -> Result<tauri::WebviewWindow, String> {
     use tauri::WebviewWindowBuilder;
 
@@ -93,22 +34,10 @@ pub fn create_window(
 
     tracing::info!("created new window: {label}");
 
-    for p in paths {
-        let _ = window.emit("navigate-to", p);
-    }
-    if paths.is_empty() {
-        let _ = window.emit("navigate-to", "/");
-    }
-
     Ok(window)
 }
 
 /// 创建新窗口（Tauri 命令）。
-///
-/// 1. AppStateManager 生成 label（"w0", "w1" ...）
-/// 2. 创建 Tauri 窗口
-/// 3. 统一注册（router + local map）
-/// 4. 注册到 AppStateManager
 #[command]
 pub async fn new_window(
     app: tauri::AppHandle,
@@ -120,25 +49,73 @@ pub async fn new_window(
     let label = mgr.next_label();
     let window = create_window(&app, &label, &paths)?;
 
-    let bus = mgr.inner().register_window(mgr.instance_bus.clone(), window, label).await;
+    let bus = mgr
+        .inner()
+        .register_window(mgr.instance_bus.clone(), window, label)
+        .await;
     let window_id = bus.window_id();
 
     Ok(window_id)
 }
 
 // ---------------------------------------------------------------------------
-// UIService 命令
+// Ready — 前端就绪
 // ---------------------------------------------------------------------------
 
-/// 返回初始状态（tab 列表 + 激活 tab + 剪贴板状态）。
+/// 前端 mount 后调用。后端重建运行时状态 + 推送初始事件。
 #[command]
-pub fn init_state(
+pub async fn ready(
+    window: Window,
     ui: State<'_, Arc<UIService>>,
-) -> Result<ui_service::InitState, String> {
-    Ok(ui.init())
+) -> Result<(), String> {
+    ui.ready(&window).await
 }
 
-/// 尝试移动 tab。如果阻塞，返回 Blocked 让前端弹窗。
+// ---------------------------------------------------------------------------
+// UIService Tab 生命周期命令
+// ---------------------------------------------------------------------------
+
+/// 获取所有 tab 列表。
+#[command]
+pub fn list_tabs(
+    mgr: State<'_, Arc<AppStateManager>>,
+) -> Result<Vec<crate::ipc::protocol::TabState>, String> {
+    let tabs = mgr.tabs.lock().unwrap();
+    Ok(tabs.get_all().to_vec())
+}
+
+/// 切换到指定 tab。
+#[command]
+pub async fn switch_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+) -> Result<(), String> {
+    ui.switch_tab(&window, tab_id).await
+}
+
+/// 创建新 tab（自动切换为活跃）。
+#[command]
+pub async fn new_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    path: Option<String>,
+) -> Result<u64, String> {
+    ui.new_tab(&window, path).await
+}
+
+/// 关闭 tab。
+#[command]
+pub fn close_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+) -> Result<(), String> {
+    ui.close_tab(&window, tab_id);
+    Ok(())
+}
+
+/// 尝试移动 tab，若阻塞返回 Blocked。
 #[command]
 pub fn move_tab(
     ui: State<'_, Arc<UIService>>,
@@ -147,17 +124,15 @@ pub fn move_tab(
 ) -> Result<MoveTabCmdResult, String> {
     match ui.move_tab(tab_id, target) {
         ui_service::MoveTabResult::Ok => Ok(MoveTabCmdResult::Ok),
-        ui_service::MoveTabResult::Blocked { tasks } => {
-            Ok(MoveTabCmdResult::Blocked {
-                tasks: tasks
-                    .into_iter()
-                    .map(|t| MoveTabTaskInfo {
-                        task_id: t.task_id,
-                        description: t.description,
-                    })
-                    .collect(),
-            })
-        }
+        ui_service::MoveTabResult::Blocked { tasks } => Ok(MoveTabCmdResult::Blocked {
+            tasks: tasks
+                .into_iter()
+                .map(|t| MoveTabTaskInfo {
+                    task_id: t.task_id,
+                    description: t.description,
+                })
+                .collect(),
+        }),
     }
 }
 
@@ -182,4 +157,94 @@ pub enum MoveTabCmdResult {
 pub struct MoveTabTaskInfo {
     pub task_id: u64,
     pub description: String,
+}
+
+// ---------------------------------------------------------------------------
+// UIService 导航命令
+// ---------------------------------------------------------------------------
+
+/// 导航到指定目标。
+#[command]
+pub async fn nav_to(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    target: NavTarget,
+) -> Result<(), String> {
+    ui.nav_to(&window, tab_id, target).await
+}
+
+/// 导航后退。
+#[command]
+pub async fn nav_back(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+) -> Result<(), String> {
+    ui.nav_back(&window, tab_id).await
+}
+
+/// 导航前进。
+#[command]
+pub async fn nav_forward(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+) -> Result<(), String> {
+    ui.nav_forward(&window, tab_id).await
+}
+
+/// 更新选中文件，emit hf:selection。
+#[command]
+pub fn select_files(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    selected: Vec<String>,
+) -> Result<(), String> {
+    ui.update_selection(&window, tab_id, selected);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// UIService 文件操作命令
+// ---------------------------------------------------------------------------
+
+/// 创建文件或目录。
+#[command]
+pub async fn create_entry(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    path: String,
+    kind: EntryKind,
+) -> Result<(), String> {
+    let ctx = ContextId::Tab(tab_id);
+    ui.create(tab_id, &path, kind, ctx).await
+}
+
+/// 重命名文件或目录。
+#[command]
+pub async fn rename_entry(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    path: String,
+    new_name: String,
+) -> Result<(), String> {
+    let ctx = ContextId::Tab(tab_id);
+    ui.rename(tab_id, &path, &new_name, ctx).await
+}
+
+// ---------------------------------------------------------------------------
+// UIService 权限变更命令
+// ---------------------------------------------------------------------------
+
+/// 将 tab 权限切换到指定 uid。
+#[command]
+pub async fn elevate_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    target_uid: u32,
+) -> Result<(), String> {
+    ui.elevate_tab(&window, tab_id, target_uid).await
 }

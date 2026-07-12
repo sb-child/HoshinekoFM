@@ -61,12 +61,15 @@ pub enum EntryKind {
     Dir,
 }
 
-/// Tab（标签页）的完整可传输状态。
+/// Tab（标签页）的可传输/持久化状态。
+///
+/// 不含 `UidToken`（运行时的）。接收方通过 `FsService.try_request_uid_token(uid)` 重建。
+/// `uid` 由 TabManager 在创建/恢复时赋值，不在 TabState 中传输。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabState {
     pub id: u64,
-    pub path: PathBuf,
-    pub view_state: String,
+    pub nav_history: Vec<NavEntry>,
+    pub nav_index: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +80,7 @@ pub struct TabState {
 ///
 /// - 首帧（或 `refresh()` 后）为 `Reset`，给出全量文件。
 /// - 之后为增量：新增/修改/元数据补全均为 `Upsert`，删除为 `Remove`，重命名为 `Rename`。
+/// - `Inaccessible` 表示目标目录暂不可访问，Worker 内部正在监听父目录等待恢复。
 /// - `ConnectionLost` 表示 Worker 连接断开，上层应暂停依赖此 watcher 的 UI。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WatchDelta {
@@ -88,6 +92,8 @@ pub enum WatchDelta {
     Remove(PathBuf),
     /// 重命名
     Rename { from: PathBuf, to: PathBuf },
+    /// 目录暂不可访问（Worker 内部监听父目录等待恢复）
+    Inaccessible { path: String, reason: String },
     /// Worker 连接断开
     ConnectionLost { watch_id: u64, reason: String, reconnecting: bool },
 }
@@ -190,6 +196,97 @@ pub struct ClipboardState {
     pub files: Vec<String>,
 }
 
+/// UI 导航与设备管理。
+
+/// 导航目标。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NavTarget {
+    Dashboard,
+    Filesystem(String),
+}
+
+/// 导航历史中的一个节点。
+///
+/// `accessible` 不存此处——它是当前 watcher 的 live 属性，不是历史快照。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavEntry {
+    pub target: NavTarget,
+    pub selected: Vec<String>,
+}
+
+/// Tab 列表事件载荷（`hf:tabs`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabsPayload {
+    pub tabs: Vec<TabInfo>,
+    pub active_tab_id: u64,
+}
+
+/// 轻量 Tab 信息（不含文件内容）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabInfo {
+    pub id: u64,
+    pub title: String,
+    pub nav_target: NavTarget,
+}
+
+/// 导航状态事件载荷（`hf:nav-state`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavStatePayload {
+    pub tab_id: u64,
+    pub target: NavTarget,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+}
+
+/// 仪表盘内容。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardData {
+    pub storage: StorageSummary,
+    pub common_locations: Vec<CommonLocation>,
+}
+
+/// 存储空间汇总。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageSummary {
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub free_bytes: u64,
+}
+
+/// 常用位置（按 uid 的 home 解析）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommonLocation {
+    pub name: String,
+    pub path: String,
+    pub exists: bool,
+}
+
+/// 设备条目（FsWorker 上报，自主裁决 can_mount/can_unmount）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceEntry {
+    pub name: String,
+    pub device_path: String,
+    pub mount_point: Option<String>,
+    pub fs_type: String,
+    pub size_bytes: u64,
+    pub available_bytes: u64,
+    pub can_mount: bool,
+    pub can_unmount: bool,
+}
+
+/// 设备变更增量。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DeviceDelta {
+    Reset(Vec<DeviceEntry>),
+    Upsert(DeviceEntry),
+    Remove(String),
+    ConnectionLost,
+}
+
+// ---------------------------------------------------------------------------
+// 窗口间消息 / 实例间消息
+// ---------------------------------------------------------------------------
+
 /// 窗口间消息 — WindowBus 专用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WindowMessage {
@@ -288,6 +385,8 @@ pub trait FsWorkerService {
     async fn run_copy(op_id: u64, items: Vec<(String, String)>) -> Result<(), String>;
     /// 取消一个进行中的批处理操作。
     async fn cancel_op(op_id: u64);
+    /// 文件系统空间查询。返回 `(total_bytes, free_bytes)`。
+    async fn stat_vfs(path: String) -> Result<(u64, u64), String>;
 }
 
 // ---------------------------------------------------------------------------

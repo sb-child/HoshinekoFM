@@ -50,15 +50,12 @@ function AppContent() {
   const {
     tabs,
     activeTabId,
-    setActiveTabId,
     currentPath,
     handleAddTab,
     handleCloseTab,
-    handleTabPathUpdate,
+    handleSwitchTab,
     handleSidebarNavigate,
-    handleScrollToComplete,
     refreshActiveTab,
-    handleDetachTab,
   } = useTabs();
 
   const setDragOverPath = useSetDragOver();
@@ -108,10 +105,10 @@ function AppContent() {
   const [tabContextMenu, setTabContextMenu] = useState<{
     x: number;
     y: number;
-    tabId: string;
+    tabId: number;
   } | null>(null);
 
-  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string) => {
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: number) => {
     e.preventDefault();
     e.stopPropagation();
     setTabContextMenu({ x: e.clientX, y: e.clientY, tabId });
@@ -192,10 +189,6 @@ function AppContent() {
     }
   };
 
-  const loadHome = () => {
-    handleAddTab("app://dashboard");
-  };
-
   const hasInitialized = useRef(false);
 
   useEffect(() => {
@@ -205,34 +198,12 @@ function AppContent() {
     ThemeService.loadTheme();
     ThemeService.init();
 
-    const init = async () => {
-      try {
-        console.log("[init] starting...");
-        const tauriEnv = isTauri();
-        console.log("[init] runtime:", tauriEnv ? "Tauri" : "Browser");
-
-        if (window.electron) {
-          const startupPath = await window.electron.getStartupPath();
-          console.log("[init] startupPath:", startupPath);
-          if (startupPath) {
-            handleAddTab(startupPath);
-          } else {
-            loadHome();
-          }
-        } else {
-          console.warn("[init] window.electron not available");
-          loadHome();
-        }
-      } catch (e) {
-        console.error("[init] failed:", e);
-        loadHome();
-      }
-    };
-    init();
+    // useTabs hook 内部调用 invoke("ready") 触发初始状态推送
+    // 无需额外 init 逻辑
 
     const storedCssPath = localStorage.getItem("customCssPath");
     if (storedCssPath) {
-      handleLoadCustomCss(storedCssPath); // eslint-disable-line react-hooks/set-state-in-effect
+      handleLoadCustomCss(storedCssPath);
     }
   }, []);
 
@@ -503,19 +474,15 @@ function AppContent() {
 
       const specialItems: ContextMenuItem[] = [];
       if (item.symlinkTarget && item.mime !== 'inode/symlink') {
-        const targetFileName = item.isDirectory
-          ? item.symlinkTarget.split("/").pop() || ""
-          : "";
         specialItems.push({
           label: t("symlink.go_to_target"),
           icon: "arrow_forward",
           action: () => {
             if (item.isDirectory) {
-              handleSidebarNavigate(item.symlinkTarget!, targetFileName);
+              handleSidebarNavigate(item.symlinkTarget!);
             } else {
               const parent = item.symlinkTarget!.substring(0, item.symlinkTarget!.lastIndexOf("/"));
-              const targetFileName = item.symlinkTarget!.split("/").pop() || "";
-              handleSidebarNavigate(parent || "/", targetFileName);
+              handleSidebarNavigate(parent || "/");
             }
             closeContextMenu();
           },
@@ -527,13 +494,12 @@ function AppContent() {
             item.mountSource.split("/").pop() || ""
           );
         if (isRealDevice) {
-          const targetFileName = item.mountSource.split("/").pop() || "";
           specialItems.push({
             label: t("mountpoint.go_to_source"),
             icon: "hard_drive",
             action: () => {
               const parent = item.mountSource!.substring(0, item.mountSource!.lastIndexOf("/"));
-              handleSidebarNavigate(parent || "/", targetFileName);
+              handleSidebarNavigate(parent || "/");
               closeContextMenu();
             },
           });
@@ -625,14 +591,7 @@ function AppContent() {
             label: "Dashboard",
             active: currentPath === "app://dashboard",
             onClick: () => {
-              const existing = tabs.find((t) =>
-                t.path.startsWith("app://dashboard"),
-              );
-              if (existing) {
-                setActiveTabId(existing.id);
-              } else {
-                handleAddTab("app://dashboard");
-              }
+              handleSidebarNavigate("app://dashboard");
             },
           },
           {
@@ -642,12 +601,7 @@ function AppContent() {
             active: currentPath.startsWith("/home"),
             onClick: async () => {
               const home = await window.electron.getHomePath();
-              const existingHomeTab = tabs.find((t) => t.path === home);
-              if (existingHomeTab) {
-                setActiveTabId(existingHomeTab.id);
-              } else {
-                handleAddTab(home);
-              }
+              handleSidebarNavigate(home);
             },
           },
           {
@@ -688,7 +642,7 @@ function AppContent() {
           <TabBar
             tabs={tabs}
             activeTabId={activeTabId}
-            onTabClick={setActiveTabId}
+            onTabClick={handleSwitchTab}
             onTabClose={handleCloseTab}
             onNewTab={() => handleAddTab()}
             onTabContextMenu={handleTabContextMenu}
@@ -708,7 +662,7 @@ function AppContent() {
                 tabId={tab.id}
                 isActive={tab.id === activeTabId}
                 initialPath={tab.path}
-                onPathChange={handleTabPathUpdate}
+                onPathChange={handleSidebarNavigate}
                 onContextMenu={handleContextMenu}
                 onBgMenuItems={handleBgMenuItems}
                 onOpenWithFile={handleOpenWithFile}
@@ -720,9 +674,6 @@ function AppContent() {
                 iconSize={iconSize}
                 viewMode={viewMode}
                 filledIcons={filledIcons}
-                refreshSignal={tab.version}
-                scrollToFileName={tab.pendingSelectFile}
-                onScrollToComplete={handleScrollToComplete}
                 onMountDevice={handleDeviceMount}
                 marqueeEnabled={marqueeEnabled}
               />
@@ -785,7 +736,7 @@ function AppContent() {
                 label: t("device.go_to_source"),
                 icon: "hard_drive",
                 action: () => {
-                  handleSidebarNavigate("/dev", d.name);
+                  handleSidebarNavigate("/dev");
                   closeDeviceContextMenu();
                 },
               });
@@ -831,7 +782,7 @@ function AppContent() {
               label: t("context_menu.open_in_new_window"),
               icon: "open_in_new",
               action: () => {
-                if (tab) handleDetachTab(tab.id, tab.path);
+                if (tab) handleAddTab(tab.path);
                 closeTabContextMenu();
               },
             },

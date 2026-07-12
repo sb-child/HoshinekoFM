@@ -145,6 +145,7 @@ pub enum WorkerRequestContent {
     RunMove { op_id: u64, items: Vec<(String, String)> },
     RunCopy { op_id: u64, items: Vec<(String, String)> },
     CancelOp { op_id: u64 },
+    StatVfs { path: String },
 }
 
 /// WorkerRelay → FsService 的响应。
@@ -153,6 +154,8 @@ pub enum WorkerResponse {
     Err(String),
     /// Worker 尚未连接，调用方稍后重试。
     Connecting,
+    /// statvfs 结果。
+    StatVfsResult { total_bytes: u64, free_bytes: u64 },
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +696,19 @@ impl WorkerRelay {
         client: &FsWorkerServiceClient,
         content: WorkerRequestContent,
     ) -> WorkerResponse {
+        // StatVfs 返回专用类型，提前处理
+        if let WorkerRequestContent::StatVfs { ref path } = content {
+            let ctx = tarpc::context::current();
+            return match client.stat_vfs(ctx, path.clone()).await {
+                Ok(Ok((total, free))) => WorkerResponse::StatVfsResult {
+                    total_bytes: total,
+                    free_bytes: free,
+                },
+                Ok(Err(e)) => WorkerResponse::Err(e),
+                Err(e) => WorkerResponse::Err(format!("RPC error: {e}")),
+            };
+        }
+
         let ctx = tarpc::context::current();
         let result = match content {
             WorkerRequestContent::WatchDir { watch_id, dir } => {
@@ -728,6 +744,9 @@ impl WorkerRelay {
             WorkerRequestContent::CancelOp { op_id } => {
                 let _ = client.cancel_op(ctx, op_id).await;
                 Ok(Ok(()))
+            }
+            WorkerRequestContent::StatVfs { .. } => {
+                unreachable!("handled before match")
             }
         };
 

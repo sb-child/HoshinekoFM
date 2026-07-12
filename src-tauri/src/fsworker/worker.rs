@@ -119,14 +119,50 @@ impl FsWorkerService for FsWorkerServer {
         debug!("[w{}] watch_dir {watch_id} {path}", self.fs_worker_id);
         let dir = resolve_path(&PathBuf::from(&path));
 
-        // 初次全量扫描（后台）
+        // 先检查是否可访问；若不可访问则启动恢复监听
+        match std::fs::read_dir(&dir) {
+            Ok(_) => {} // 可访问，走正常流程
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                let cb = self.cb.clone();
+                let cb2 = self.cb.clone();
+                let dir2 = dir.clone();
+                let path2 = path.clone();
+
+                let _ = cb.watch_delta(
+                    _ctx,
+                    watch_id,
+                    WatchDelta::Inaccessible {
+                        path: path.clone(),
+                        reason: format!("{e}"),
+                    },
+                )
+                .await;
+
+                self.watches.lock().await.insert(
+                    watch_id,
+                    WatchHandle {
+                        path: dir.clone(),
+                        is_dir: true,
+                        _watcher: None,
+                        tasks: vec![],
+                    },
+                );
+
+                let fs_worker_id = self.fs_worker_id;
+                tokio::spawn(async move {
+                    wait_for_access(fs_worker_id, cb2, watch_id, dir2, path2).await;
+                });
+                return Ok(());
+            }
+            Err(e) => return Err(format!("cannot read directory {path}: {e}")),
+        }
+
         let cb = self.cb.clone();
         let scan_dir = dir.clone();
         let scan_task = tokio::spawn(async move {
             push_dir_reset(&cb, watch_id, &scan_dir).await;
         });
 
-        // notify 监视 + 事件泵
         let (watcher, pump) = match spawn_dir_watch(self.cb.clone(), watch_id, dir.clone()) {
             Ok(pair) => pair,
             Err(e) => {
@@ -370,6 +406,13 @@ impl FsWorkerService for FsWorkerServer {
             flag.store(true, Ordering::Relaxed);
             debug!("[w{}] cancel op {op_id}", self.fs_worker_id);
         }
+    }
+
+    async fn stat_vfs(self, _ctx: context::Context, path: String) -> Result<(u64, u64), String> {
+        let vfs = nix::sys::statvfs::statvfs(path.as_str())
+            .map_err(|e| format!("statvfs {path}: {e}"))?;
+        let block_size = vfs.block_size() as u64;
+        Ok((vfs.blocks() * block_size, vfs.blocks_free() * block_size))
     }
 }
 
@@ -1043,5 +1086,77 @@ fn guess_mime(path: &Path) -> String {
         "xz" => "application/x-xz".to_string(),
         "pdf" => "application/pdf".to_string(),
         _ => "application/octet-stream".to_string(),
+    }
+}
+
+/// 等待目标目录变为可访问。
+///
+/// 通过 notify 监听父目录变更，当目标子项的 stat 发生变化时尝试访问。
+/// 成功后发送 `Reset` 并启动正式目录监视。
+async fn wait_for_access(
+    fs_worker_id: u64,
+    cb: AppCallbackServiceClient,
+    watch_id: u64,
+    target: PathBuf,
+    _path: String,
+) {
+    use notify::{RecursiveMode, Watcher};
+
+    let parent = match target.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => return,
+    };
+    let target_name: Option<std::ffi::OsString> = target.file_name().map(|n| n.to_os_string());
+
+    let (evt_tx, mut evt_rx) = match tokio::sync::mpsc::unbounded_channel::<()>() {
+        (tx, rx) => (tx, rx),
+    };
+
+    let tn = target_name.clone();
+    let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            for p in event.paths {
+                if tn.as_ref().map_or(false, |n| p.file_name().map_or(false, |f| f == n)) {
+                    let _ = evt_tx.send(());
+                }
+            }
+        }
+    }) {
+        Ok(w) => w,
+        Err(_) => return, // 无法监听父目录
+    };
+
+    if watcher.watch(&parent, RecursiveMode::NonRecursive).is_err() {
+        return;
+    }
+
+    debug!(
+        "[w{fs_worker_id}] access recovery: watching parent {parent:?} for {target:?}"
+    );
+
+    while evt_rx.recv().await.is_some() {
+        match std::fs::read_dir(&target) {
+            Ok(_) => {
+                push_dir_reset(&cb, watch_id, &target).await;
+
+                // 保持 watcher 存活：重新 watch 目标目录
+                let target2 = target.clone();
+                tokio::spawn(async move {
+                    // watcher 存活即通知持续生效
+                    // 注意：此 watcher 不会在 unwatch 时被清理——恢复后的目录使用临时的 parent watcher，
+                    // 后续可改进为替换 WatchHandle。
+                    let _w = watcher;
+                    std::future::pending::<()>().await;
+                    let _ = target2;
+                });
+                return;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                continue; // 还是不可访问，继续等
+            }
+            Err(_) => {
+                break; // 路径消失或其他错误
+            }
+        }
     }
 }

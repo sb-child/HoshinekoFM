@@ -4,18 +4,18 @@ import { t } from '../i18n';
 import './TabBar.css';
 
 interface Tab {
-    id: string;
+    id: number;
     title: string;
 }
 
 interface TabBarProps {
     tabs: Tab[];
-    activeTabId: string;
-    onTabClick: (id: string) => void;
-    onTabClose: (id: string) => void;
+    activeTabId: number;
+    onTabClick: (id: number) => void;
+    onTabClose: (id: number) => void;
     onNewTab: () => void;
     /** Tab 右键菜单回调（用于"在新窗口中打开"等操作） */
-    onTabContextMenu?: (e: React.MouseEvent, tabId: string) => void;
+    onTabContextMenu?: (e: React.MouseEvent, tabId: number) => void;
 }
 
 const getTabTitle = (title: string): string => {

@@ -13,12 +13,12 @@ async fn main() {
     let dispatch = hnfm_lib::cli::parse();
 
     match dispatch {
-        hnfm_lib::cli::Dispatch::Launch(cmd) => {
-            let instance_id = cmd.instance_id.unwrap_or(std::process::id() as u64);
+        hnfm_lib::cli::Dispatch::Launch(args) => {
+            let instance_id = args.instance_id.unwrap_or(std::process::id() as u64);
 
             // 尝试复用已有实例（--new-instance 跳过）
-            if !cmd.new_instance {
-                if hnfm_lib::appreuse::run_app_reuse(cmd.instance_id, &cmd.paths).await {
+            if !args.new_instance {
+                if hnfm_lib::appreuse::run_app_reuse(args.instance_id, &args.paths).await {
                     std::process::exit(0);
                 }
             }
@@ -27,7 +27,7 @@ async fn main() {
             tracing::info!("launching new instance {instance_id}");
             hnfm_lib::app::run_app(hnfm_lib::app::RunOpts {
                 instance_id,
-                paths: cmd.paths,
+                paths: args.paths,
             })
             .await;
         }

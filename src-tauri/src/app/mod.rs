@@ -15,10 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{Emitter, Manager};
-use tokio::{
-    net::UnixListener,
-    sync::mpsc,
-};
+use tokio::net::UnixListener;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -26,7 +23,7 @@ use crate::{
     ipc::protocol::{ClipboardState, InstanceService, TabState, WindowMessage},
 };
 
-use self::{commands::TabEvent, state::AppStateManager, tabs::TabManager};
+use self::{state::AppStateManager, tabs::TabManager};
 
 // ---------------------------------------------------------------------------
 // RunOpts
@@ -77,15 +74,7 @@ pub async fn run_app(opts: RunOpts) {
     let mgr = Arc::new(AppStateManager::new(tab_manager, instance_bus.clone()));
     let ui = Arc::new(ui_service::UIService::new(mgr.clone()));
 
-    // 5. 创建 tab 事件通道
-    let (tab_event_tx, mut tab_event_rx) = mpsc::unbounded_channel::<TabEvent>();
-    tokio::spawn(async move {
-        while let Some(event) = tab_event_rx.recv().await {
-            debug!("tab event: {:?}", event);
-        }
-    });
-
-    // 6. 后台监听实例间连接
+    // 5. 后台监听实例间连接
     let ui_for_server = ui.clone();
     tokio::spawn(accept_instance_connections(
         listener,
@@ -93,10 +82,10 @@ pub async fn run_app(opts: RunOpts) {
         ui_for_server,
     ));
 
-    // 7. 告知 Tauri 共用当前 tokio runtime
+    // 6. 告知 Tauri 共用当前 tokio runtime
     tauri::async_runtime::set(tokio::runtime::Handle::current());
 
-    // 8. 构建 Tauri
+    // 7. 构建 Tauri
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_win = shutdown.clone();
     let builder = tauri::Builder::default()
@@ -104,17 +93,23 @@ pub async fn run_app(opts: RunOpts) {
         .manage(mgr.clone())
         .manage(ui.clone())
         .manage(instance_bus.clone())
-        .manage(tab_event_tx.clone())
         .invoke_handler(tauri::generate_handler![
             crate::drag::commands::start_drag,
+            commands::ready,
             commands::list_tabs,
-            commands::add_tab,
+            commands::new_tab,
             commands::close_tab,
-            commands::tab_event_sink,
+            commands::switch_tab,
             commands::new_window,
             commands::move_tab,
             commands::move_tab_force,
-            commands::init_state,
+            commands::nav_to,
+            commands::nav_back,
+            commands::nav_forward,
+            commands::select_files,
+            commands::create_entry,
+            commands::rename_entry,
+            commands::elevate_tab,
             crate::window_bus::commands::get_window_id,
         ])
         .setup({
@@ -304,7 +299,7 @@ impl InstanceService for MeshServer {
 
     async fn transfer_tab(self, _ctx: tarpc::context::Context, tab: TabState) {
         info!("received transfer_tab: id={}", tab.id);
-        self.ui.receive_transfer_tab(tab);
+        self.ui.receive_transfer_tab(tab).await;
     }
 
     async fn clipboard_sync(
