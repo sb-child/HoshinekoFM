@@ -430,9 +430,12 @@ impl WatchShared {
 
             if self.is_dir {
                 // 对每个变更路径：exists → Upsert，否则 Remove
+                // 跳过被监视目录自身（inotify 会因目录内文件变动而报告目录本身）
+                let target = self.target.clone();
                 let deltas: Vec<WatchDelta> = tokio::task::spawn_blocking(move || {
                     paths
                         .into_iter()
+                        .filter(|p| *p != target)
                         .filter_map(|p| {
                             if p.exists() {
                                 build_file(&p).map(WatchDelta::Upsert)

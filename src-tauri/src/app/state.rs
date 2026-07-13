@@ -20,7 +20,9 @@ use tauri::WebviewWindow;
 use tracing::warn;
 
 use crate::instance_bus::InstanceBus;
+use crate::ipc::protocol::DragOp;
 use crate::window_bus::WindowBus;
+use crate::window_bus::bus_master::BusMaster;
 
 use super::fs_service::FsService;
 use super::tabs::TabManager;
@@ -137,17 +139,27 @@ impl AppStateManager {
         }
     }
 
-    /// 统一窗口注册入口：抢占 window_id + 注册路由表 + 注册本地 map。
-    ///
-    /// 合并了原先 `WindowBus::init` + `self.register` 的两步模式。
+    /// 统一窗口注册入口：抢占 window_id + 通过 BusMaster 创建 WindowBus。
     pub async fn register_window(
         self: &Arc<Self>,
-        instance_bus: Arc<InstanceBus>,
+        bus_master: &Arc<BusMaster>,
         window: tauri::WebviewWindow,
         label: String,
     ) -> WindowBus {
-        let bus = WindowBus::init(instance_bus, window, self.clone()).await;
-        let window_id = bus.window_id();
+        let instance_bus = bus_master.instance_bus();
+        let window_id = self.claim_window_id(instance_bus).await;
+
+        // 通过 BusMaster 创建 WindowBus（含 tarpc 连接）
+        let handler: Arc<dyn crate::window_bus::WindowMessageHandler> =
+            Arc::new(NoopWindowMessageHandler);
+        let bus = bus_master.spawn_window(window_id, handler).await;
+
+        // 注册到本地 window_registry（供 InstanceBusHandler::on_forward 使用）
+        self.window_registry
+            .lock()
+            .unwrap()
+            .insert(window_id, window);
+
         self.windows.lock().unwrap().insert(
             label,
             WindowState {
@@ -162,4 +174,15 @@ impl AppStateManager {
     pub fn unregister(&self, label: &str) {
         self.windows.lock().unwrap().remove(label);
     }
+}
+
+/// No-op `WindowMessageHandler`（`WindowMessage` 变体目前从未被构造）。
+///
+/// 当需要实际处理窗口间消息时，替换为真实实现。
+struct NoopWindowMessageHandler;
+
+impl crate::window_bus::WindowMessageHandler for NoopWindowMessageHandler {
+    fn on_dnd_session_active(&self, _session_id: u64, _files: Vec<String>, _operation: DragOp) {}
+    fn on_dnd_session_completed(&self, _session_id: u64) {}
+    fn on_tab_attached(&self, _tab: crate::ipc::protocol::TabState) {}
 }

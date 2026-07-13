@@ -7,7 +7,6 @@
 
 pub mod commands;
 pub mod fs_service;
-pub mod mesh_server;
 pub mod state;
 pub mod tabs;
 pub mod ui_service;
@@ -18,7 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tracing::{error, info};
 
+use crate::instance_bus::server::InstanceBusHandler;
 use crate::instance_bus::{self, InstanceBus};
+use crate::ipc::protocol::{ClipboardState, TabState, WindowMessage};
+use crate::window_bus::bus_master::BusMaster;
 
 use self::{state::AppStateManager, tabs::TabManager};
 
@@ -29,6 +31,48 @@ use self::{state::AppStateManager, tabs::TabManager};
 pub struct RunOpts {
     pub instance_id: u64,
     pub paths: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// AppMeshHandler — InstanceBusHandler 实现
+// ---------------------------------------------------------------------------
+
+/// App 层 `InstanceBusHandler` 实现。
+///
+/// 将 InstanceBus 收到的跨实例消息分发到 UIService 和 BusMaster。
+struct AppMeshHandler {
+    ui: Arc<ui_service::UIService>,
+    bus_master: Arc<BusMaster>,
+}
+
+impl InstanceBusHandler for AppMeshHandler {
+    fn on_open_window(
+        &self,
+        paths: Vec<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let ui = self.ui.clone();
+        Box::pin(async move {
+            ui.open_window(paths).await;
+        })
+    }
+
+    fn on_transfer_tab(
+        &self,
+        tab: TabState,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let ui = self.ui.clone();
+        Box::pin(async move {
+            ui.receive_transfer_tab(tab).await;
+        })
+    }
+
+    fn on_clipboard_sync(&self, state: ClipboardState) {
+        self.ui.clipboard_sync(state);
+    }
+
+    fn on_forward(&self, window_id: u64, msg: WindowMessage) {
+        self.bus_master.dispatch_to(window_id, &msg);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +92,7 @@ pub async fn run_app(opts: RunOpts) {
         }
     };
 
-    // 2. 启动 InstanceBus（不扫描 peer，由 watch_instances 统一发现）
+    // 2. 启动 InstanceBus
     let instance_bus = InstanceBus::start(instance_id)
         .await
         .expect("failed to start InstanceBus");
@@ -71,13 +115,17 @@ pub async fn run_app(opts: RunOpts) {
     let mgr = Arc::new(AppStateManager::new(tab_manager, instance_bus.clone()));
     let ui = Arc::new(ui_service::UIService::new(mgr.clone()));
 
-    // 5. 后台监听实例间连接
-    let ui_for_server = ui.clone();
-    tokio::spawn(mesh_server::accept_instance_connections(
-        listener,
-        instance_bus.clone(),
-        ui_for_server,
-    ));
+    // 5. 创建 BusMaster + 注册 InstanceBus handler + 启动 listen
+    let bus_master = BusMaster::new(instance_bus.clone(), mgr.clone());
+    let handler = Arc::new(AppMeshHandler {
+        ui: ui.clone(),
+        bus_master: bus_master.clone(),
+    });
+    instance_bus.set_handler(handler);
+    let ib_listen = instance_bus.clone();
+    tokio::spawn(async move {
+        ib_listen.listen(listener).await;
+    });
 
     // 6. 告知 Tauri 共用当前 tokio runtime
     tauri::async_runtime::set(tokio::runtime::Handle::current());
@@ -90,6 +138,7 @@ pub async fn run_app(opts: RunOpts) {
         .manage(mgr.clone())
         .manage(ui.clone())
         .manage(instance_bus.clone())
+        .manage(bus_master.clone())
         .invoke_handler(tauri::generate_handler![
             crate::drag::commands::start_drag,
             commands::ready,
@@ -158,14 +207,14 @@ pub async fn run_app(opts: RunOpts) {
 
 /// `.setup()` 闭包的实际逻辑：注入 AppHandle + 创建首窗口。
 fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, paths: &[String]) {
-    let ib = handle.state::<Arc<InstanceBus>>().inner().clone();
+    let bus_master = handle.state::<Arc<BusMaster>>().inner().clone();
     let label = mgr.next_label();
     match commands::create_window(handle, &label, paths) {
         Ok(window) => {
             let (tx, rx) = crate::channel::oneshot::oneshot();
             let mgr_c = mgr.clone();
             tokio::spawn(async move {
-                let bus = mgr_c.register_window(ib, window, label).await;
+                let bus = mgr_c.register_window(&bus_master, window, label).await;
                 let _ = tx.send(bus);
             });
             rx.recv().expect("register_window dropped sender");

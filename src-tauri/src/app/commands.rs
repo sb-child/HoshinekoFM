@@ -11,6 +11,7 @@ use tauri::{State, Window, command};
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
 use crate::ipc::protocol::{ContextId, EntryKind, NavTarget};
+use crate::window_bus::bus_master::BusMaster;
 
 // ---------------------------------------------------------------------------
 // 多窗口命令
@@ -43,6 +44,7 @@ pub fn create_window(
 pub async fn new_window(
     app: tauri::AppHandle,
     mgr: State<'_, Arc<AppStateManager>>,
+    bus_master: State<'_, Arc<BusMaster>>,
     paths: Option<Vec<String>>,
 ) -> Result<u64, String> {
     let paths = paths.unwrap_or_default();
@@ -52,7 +54,7 @@ pub async fn new_window(
 
     let bus = mgr
         .inner()
-        .register_window(mgr.instance_bus.clone(), window, label)
+        .register_window(bus_master.inner(), window, label)
         .await;
     let window_id = bus.window_id();
 
