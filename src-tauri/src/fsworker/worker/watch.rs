@@ -128,7 +128,7 @@ impl WatchShared {
     pub(super) async fn push_reset_to(&self, watch_id: u64, cb: &AppCallbackServiceClient) {
         let ctx = tarpc::context::current();
 
-        match self.try_access() {
+        match self.try_access().await {
             AccessResult::Ok => {}
             AccessResult::PermissionDenied => {
                 let _ = cb
@@ -251,6 +251,7 @@ impl WatchShared {
     /// 统一分发循环：虚拟文件走 poll，实体文件走 inotify 级联。
     /// run_poll / cascade 返回时重新检测文件类型并路由到正确分支，
     /// 处理暂停期间文件类型被替换的场景（普通→虚拟 或 虚拟→普通）。
+    /// cascade() 返回 false 时表示 FatalError（级联全失败），永久休眠等 unregister。
     async fn run(&self) {
         loop {
             if self.subscribers.lock().await.is_empty() {
@@ -258,9 +259,15 @@ impl WatchShared {
             }
             if !self.is_dir && is_virtual_fs(&self.target) {
                 self.run_poll().await;
-            } else {
-                self.cascade().await;
+                continue;
             }
+            if self.cascade().await {
+                // run_event_pump / recovery_loop 正常结束，重入检查
+                continue;
+            }
+            // FatalError: 级联全失败，永久休眠等 unregister
+            self.exit_signal().await;
+            return;
         }
     }
 
@@ -268,12 +275,13 @@ impl WatchShared {
     /// - 从 target (level=0) 开始逐级上溯
     /// - 每层：挂 inotify → 尝试访问 target → 成功则进入 Live 事件泵
     /// - 失败则汇报状态 → 继续上一级 → 直到 `/` 都失败则 Dead
-    async fn cascade(&self) {
+    /// - 返回 true: 恢复成功或 subscriber 清空；false: FatalError（放弃）
+    async fn cascade(&self) -> bool {
         const MAX_CASCADE: usize = 64;
 
         for level in 0..MAX_CASCADE {
             if self.subscribers.lock().await.is_empty() {
-                return;
+                return true;
             }
 
             let ancestor = self.ancestor_at(level);
@@ -294,18 +302,18 @@ impl WatchShared {
                             reason: format!("cannot watch /: {e}"),
                         })
                         .await;
-                        return;
+                        return false;
                     }
                     continue;
                 }
             };
 
-            match self.try_access() {
+            match self.try_access().await {
                 AccessResult::Ok => {
                     self.push_reset().await;
                     while let Ok(_) = evt_rx.try_recv() {}
                     self.run_event_pump(watcher, evt_rx).await;
-                    return;
+                    return true;
                 }
                 AccessResult::PermissionDenied => {
                     self.push_all(&WatchDelta::Inaccessible {
@@ -316,14 +324,14 @@ impl WatchShared {
                     })
                     .await;
                     self.recovery_loop(level, &ancestor, watcher, evt_rx).await;
-                    return;
+                    return true;
                 }
                 AccessResult::Other(_) => {
                     debug!(
                         "watch: target not accessible from {ancestor:?} level={level}, entering recovery"
                     );
                     self.recovery_loop(level, &ancestor, watcher, evt_rx).await;
-                    return;
+                    return true;
                 }
             }
         }
@@ -333,6 +341,7 @@ impl WatchShared {
             reason: "exceeded max cascade levels".into(),
         })
         .await;
+        false
     }
 
     // -----------------------------------------------------------------------
@@ -357,10 +366,10 @@ impl WatchShared {
             }
         };
 
-        let async_fd = match AsyncFd::new(fd) {
+        let async_fd = match AsyncFd::with_interest(fd, tokio::io::Interest::PRIORITY) {
             Ok(af) => af,
             Err(e) => {
-                warn!("run_poll AsyncFd::new {:?} failed: {e}", self.target);
+                warn!("run_poll AsyncFd::with_interest {:?} failed: {e}", self.target);
                 return;
             }
         };
@@ -445,7 +454,7 @@ impl WatchShared {
                         );
                         return;
                     }
-                    match self.try_access() {
+            match self.try_access().await {
                         AccessResult::Ok => {
                             self.push_reset().await;
                             drop(evt_rx);
@@ -548,7 +557,7 @@ impl WatchShared {
                         return;
                     }
                     // 检查 target 是否变得不可访问（如权限变化、挂载点卸载等）
-                    if let AccessResult::Ok = self.try_access() {
+                    if let AccessResult::Ok = self.try_access().await {
                     } else {
                         debug!(
                             "event_pump: {:?} became inaccessible, re-entering cascade",
@@ -587,24 +596,31 @@ impl WatchShared {
         Ok((watcher, rx))
     }
 
-    fn try_access(&self) -> AccessResult {
-        if self.is_dir {
-            match std::fs::read_dir(&self.target) {
-                Ok(_) => AccessResult::Ok,
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                    AccessResult::PermissionDenied
+    async fn try_access(&self) -> AccessResult {
+        let target = self.target.clone();
+        let is_dir = self.is_dir;
+
+        tokio::task::spawn_blocking(move || {
+            if is_dir {
+                match std::fs::read_dir(&target) {
+                    Ok(_) => AccessResult::Ok,
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        AccessResult::PermissionDenied
+                    }
+                    Err(e) => AccessResult::Other(e.to_string()),
                 }
-                Err(e) => AccessResult::Other(e.to_string()),
-            }
-        } else {
-            match std::fs::metadata(&self.target) {
-                Ok(_) => AccessResult::Ok,
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                    AccessResult::PermissionDenied
+            } else {
+                match std::fs::metadata(&target) {
+                    Ok(_) => AccessResult::Ok,
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        AccessResult::PermissionDenied
+                    }
+                    Err(e) => AccessResult::Other(e.to_string()),
                 }
-                Err(e) => AccessResult::Other(e.to_string()),
             }
-        }
+        })
+        .await
+        .unwrap_or(AccessResult::Other("spawn_blocking panicked".into()))
     }
 
     fn ancestor_at(&self, level: usize) -> PathBuf {

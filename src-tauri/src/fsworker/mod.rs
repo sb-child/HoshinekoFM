@@ -621,6 +621,9 @@ impl WorkerRelay {
         let mut last_heartbeat = Instant::now();
         let mut heartbeat_failures: u32 = 0;
 
+        let wait_fut = Self::wait_process(child_pid);
+        tokio::pin!(wait_fut);
+
         loop {
             tokio::select! {
                 maybe_req = request_rx.recv() => {
@@ -707,7 +710,7 @@ impl WorkerRelay {
                     }
                 }
 
-                status = Self::wait_process(child_pid) => {
+                status = &mut wait_fut => {
                     info!("WorkerRelay uid={uid}: wait_process returned {status:?}");
                     return status;
                 }
