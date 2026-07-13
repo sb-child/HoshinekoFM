@@ -369,7 +369,10 @@ impl WatchShared {
         let async_fd = match AsyncFd::with_interest(fd, tokio::io::Interest::PRIORITY) {
             Ok(af) => af,
             Err(e) => {
-                warn!("run_poll AsyncFd::with_interest {:?} failed: {e}", self.target);
+                warn!(
+                    "run_poll AsyncFd::with_interest {:?} failed: {e}",
+                    self.target
+                );
                 return;
             }
         };
@@ -454,7 +457,7 @@ impl WatchShared {
                         );
                         return;
                     }
-            match self.try_access().await {
+                    match self.try_access().await {
                         AccessResult::Ok => {
                             self.push_reset().await;
                             drop(evt_rx);
@@ -512,62 +515,75 @@ impl WatchShared {
             match paths {
                 Err(_) => return,
                 Ok(paths) => {
-                    if self.is_dir {
-                        let target = self.target.clone();
-                        let deltas: Vec<WatchDelta> = tokio::task::spawn_blocking(move || {
-                            paths
-                                .into_iter()
-                                .filter(|p| *p != target)
-                                .filter_map(|p| {
-                                    if p.exists() {
-                                        build_file(&p).map(WatchDelta::Upsert)
-                                    } else {
-                                        Some(WatchDelta::Remove(p))
-                                    }
-                                })
-                                .collect()
-                        })
-                        .await
-                        .unwrap_or_default();
-                        for d in deltas {
-                            self.push_delta(d).await;
-                        }
-                    } else {
-                        let target = self.target.clone();
-                        let delta = tokio::task::spawn_blocking(move || {
-                            if target.exists() {
-                                build_file(&target).map(WatchDelta::Upsert)
-                            } else {
-                                Some(WatchDelta::Remove(target))
-                            }
-                        })
-                        .await
-                        .unwrap_or(None);
-                        if let Some(d) = delta {
-                            self.push_delta(d).await;
-                        }
-                    }
+                    self.process_pump_paths(paths).await;
 
-                    // 文件类型可能在暂停期间变化（如普通文件被替换为虚拟文件）
-                    if !self.is_dir && is_virtual_fs(&self.target) {
-                        debug!(
-                            "event_pump: {:?} became virtual, switching to poll",
-                            self.target
-                        );
-                        return;
-                    }
-                    // 检查 target 是否变得不可访问（如权限变化、挂载点卸载等）
-                    if let AccessResult::Ok = self.try_access().await {
-                    } else {
-                        debug!(
-                            "event_pump: {:?} became inaccessible, re-entering cascade",
-                            self.target
-                        );
+                    if self.check_pump_divert().await {
                         return;
                     }
                 }
             }
         }
+    }
+
+    /// 将 inotify 事件路径转换为 WatchDelta 并推送。
+    async fn process_pump_paths(&self, paths: Vec<PathBuf>) {
+        if self.is_dir {
+            let target = self.target.clone();
+            let deltas: Vec<WatchDelta> = tokio::task::spawn_blocking(move || {
+                paths
+                    .into_iter()
+                    .filter(|p| *p != target)
+                    .filter_map(|p| {
+                        if p.exists() {
+                            build_file(&p).map(WatchDelta::Upsert)
+                        } else {
+                            Some(WatchDelta::Remove(p))
+                        }
+                    })
+                    .collect()
+            })
+            .await
+            .unwrap_or_default();
+            for d in deltas {
+                self.push_delta(d).await;
+            }
+        } else {
+            let target = self.target.clone();
+            let delta = tokio::task::spawn_blocking(move || {
+                if target.exists() {
+                    build_file(&target).map(WatchDelta::Upsert)
+                } else {
+                    Some(WatchDelta::Remove(target))
+                }
+            })
+            .await
+            .unwrap_or(None);
+            if let Some(d) = delta {
+                self.push_delta(d).await;
+            }
+        }
+    }
+
+    /// 检查是否需要从 event_pump 分流（文件类型变更或不可访问）。
+    /// 返回 true 表示需要退出 event_pump。
+    async fn check_pump_divert(&self) -> bool {
+        if !self.is_dir && is_virtual_fs(&self.target) {
+            debug!(
+                "event_pump: {:?} became virtual, switching to poll",
+                self.target
+            );
+            return true;
+        }
+        if let AccessResult::Ok = self.try_access().await {
+            // 仍可访问
+        } else {
+            debug!(
+                "event_pump: {:?} became inaccessible, re-entering cascade",
+                self.target
+            );
+            return true;
+        }
+        false
     }
 
     // -----------------------------------------------------------------------
