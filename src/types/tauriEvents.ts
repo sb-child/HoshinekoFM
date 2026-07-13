@@ -38,7 +38,9 @@ export type WatchDelta =
   | { Upsert: FileEntry }
   | { Remove: string }
   | { Rename: { from: string; to: string } }
-  | { Inaccessible: { path: string; reason: string } }
+  | { Inaccessible: { path: string; ancestor: string; level: number; reason: string } }
+  | { Recovering: { path: string; ancestor: string; level: number } }
+  | { FatalError: { path: string; reason: string } }
   | { ConnectionLost: { watch_id: number; reason: string; reconnecting: boolean } };
 
 /** 文件条目（后端协议 File 类型） */

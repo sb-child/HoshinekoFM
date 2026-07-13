@@ -109,7 +109,48 @@ impl WatchShared {
     }
 
     /// 对单个 watch_id 推送 Reset（用于新 subscriber 加入已有 WatchShared）。
+    ///
+    /// 先检查 target 可访问性：不可达时推送 Inaccessible 而非空 Reset，
+    /// 避免前端 Inaccessible UI 被清空。
     pub(super) async fn push_reset_to(&self, watch_id: u64, cb: &AppCallbackServiceClient) {
+        let ctx = tarpc::context::current();
+
+        // 先检查 target 是否可访问
+        match self.try_access() {
+            AccessResult::Ok => {}
+            AccessResult::PermissionDenied => {
+                let _ = cb
+                    .watch_delta(
+                        ctx,
+                        watch_id,
+                        WatchDelta::Inaccessible {
+                            path: self.target.clone(),
+                            ancestor: self.target.clone(),
+                            level: 0,
+                            reason: "permission denied".into(),
+                        },
+                    )
+                    .await;
+                return;
+            }
+            AccessResult::Other(reason) => {
+                let _ = cb
+                    .watch_delta(
+                        ctx,
+                        watch_id,
+                        WatchDelta::Inaccessible {
+                            path: self.target.clone(),
+                            ancestor: self.target.clone(),
+                            level: 0,
+                            reason,
+                        },
+                    )
+                    .await;
+                return;
+            }
+        }
+
+        // target 可访问 → 正常 Reset
         let delta = if self.is_dir {
             let dir = self.target.clone();
             let files = tokio::task::spawn_blocking(move || list_dir_files(&dir))
@@ -125,9 +166,7 @@ impl WatchShared {
             let files = file.map(|f| vec![f]).unwrap_or_default();
             WatchDelta::Reset(files)
         };
-        let _ = cb
-            .watch_delta(tarpc::context::current(), watch_id, delta)
-            .await;
+        let _ = cb.watch_delta(ctx, watch_id, delta).await;
     }
 
     async fn has_subscribers(&self) -> bool {
@@ -209,6 +248,14 @@ impl WatchShared {
             let (watcher, evt_rx) = match self.setup_inotify(&ancestor) {
                 Ok(p) => p,
                 Err(e) => {
+                    // 推送 Inaccessible 让前端知道原因（即使还没法 watch 这层）
+                    self.push_all(&WatchDelta::Inaccessible {
+                        path: self.target.clone(),
+                        ancestor: ancestor.clone(),
+                        level: level as u32,
+                        reason: format!("cannot watch {}: {}", ancestor.display(), e),
+                    })
+                    .await;
                     if ancestor.as_os_str() == "/" {
                         self.push_all(&WatchDelta::FatalError {
                             path: self.target.clone(),
@@ -217,7 +264,7 @@ impl WatchShared {
                         .await;
                         return;
                     }
-                    warn!("inotify failed at {ancestor:?} level={level}: {e}");
+                    // 级联到上一级祖先
                     continue;
                 }
             };
@@ -236,11 +283,13 @@ impl WatchShared {
                         path: self.target.clone(),
                         ancestor: ancestor.clone(),
                         level: level as u32,
-                        reason: format!("permission denied: {}", ancestor.display()),
+                        reason: format!("permission denied: {}", self.target.display()),
                     })
                     .await;
-                    drop(watcher);
-                    continue;
+                    // 不丢 watcher — 已在 ancestor 上成功挂载 inotify
+                    // 进入 recovery_loop 自恢复，用户无需手动重试
+                    self.recovery_loop(level, &ancestor, watcher, evt_rx).await;
+                    return;
                 }
                 AccessResult::Other(_) => {
                     // 无法访问（非权限原因），在当前级等待恢复
@@ -319,15 +368,17 @@ impl WatchShared {
                             return;
                         }
                         AccessResult::PermissionDenied => {
-                            self.push_all(&WatchDelta::Inaccessible {
-                                path: self.target.clone(),
-                                ancestor: ancestor.clone(),
-                                level: level as u32,
-                                reason: "permission revoked during recovery".into(),
-                            })
-                            .await;
-                            return;
-                            // 由外层 run 从 level+1 重入
+                            // 权限仍不可达 — 继续在 ancestor 上等待（chmod/挂载等）
+                            if last_report.elapsed() >= report_interval {
+                                self.push_all(&WatchDelta::Inaccessible {
+                                    path: self.target.clone(),
+                                    ancestor: ancestor.clone(),
+                                    level: level as u32,
+                                    reason: "permission denied, waiting for access...".into(),
+                                })
+                                .await;
+                                last_report = tokio::time::Instant::now();
+                            }
                         }
                         AccessResult::Other(_) => {
                             // 继续等待

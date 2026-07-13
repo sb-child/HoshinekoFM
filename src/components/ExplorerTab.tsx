@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from '@tauri-apps/api/core';
-import { showToast, showProgressToast, updateProgress, finishToast, dismissToast, shortPath } from '../utils/toast';
+import { showToast, showProgressToast, updateProgress, finishToast } from '../utils/toast';
 import { useClipboard } from '../contexts/ClipboardContext';
 import { StatusBar } from './StatusBar';
 import { FileList } from './FileList';
 import { IconButton } from './IconButton';
 import { Icon } from './Icon';
-import { FileSystemService } from '../services/FileSystemService';
 import type { IFile } from '../types/files';
 import type { WatchDelta, FileEntry } from '../types/tauriEvents';
 import {
@@ -16,7 +16,6 @@ import {
   pasteFiles,
   createDirectory,
   createFile,
-  importFiles,
   openFile,
   copyToClipboard,
   cutToClipboard,
@@ -26,7 +25,6 @@ import type { DragEndEvent } from '@dnd-kit/core';
 
 import { Omnibar } from './Omnibar';
 import { Dashboard } from './Dashboard';
-import { useLocalStorage } from '../hooks/useLocalStorage';
 import { t } from '../i18n';
 import { getSemanticGroup, GROUP_ORDER } from '../utils/fileUtils';
 import type { ContextMenuItem } from './ContextMenu';
@@ -69,42 +67,19 @@ interface ExplorerTabProps {
     filledIcons: boolean;
     onMountDevice?: (devicePath: string) => Promise<{ success: boolean; mountpoint?: string; error?: string }>;
     marqueeEnabled: boolean;
+    /** 刷新当前 tab 文件列表（F5） */
+    onRefresh?: () => void;
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, onMountDevice, marqueeEnabled }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, onMountDevice, marqueeEnabled, onRefresh }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
-  const suppressWatchRef = useRef(false);
-  const loadPathTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingReloadRef = useRef(false);
-  const mountMapVersionRef = useRef<string | null>(null);
-  const loadingPathRef = useRef<string | null>(null);
+  /** 目录不可访问状态（由后端 Inaccessible 事件设置） */
+  const [inaccessible, setInaccessible] = useState<{ path: string; ancestor: string; reason: string } | null>(null);
   const lastNavRef = useRef<{ path: string; time: number } | null>(null);
   const unlistenFileListRef = useRef<UnlistenFn | null>(null);
   const { copy, cut, clipboard, clear: clearClipboard } = useClipboard();
-
-  // Track recents
-  const [, setRecentFiles] = useLocalStorage<IFile[]>('dashboard.recent', []);
-
-  const addToRecents = useCallback((path: string) => {
-    if (path === 'app://dashboard') return;
-
-    const name = path.split('/').pop() || path;
-    const newItem: IFile = {
-      name,
-      path,
-      isDirectory: true,
-      size: 0,
-      mtime: new Date(),
-      mime: null
-    };
-
-    setRecentFiles(prev => {
-      const filtered = prev.filter(f => f.path !== path);
-      return [newItem, ...filtered].slice(0, 20); // Keep last 20
-    });
-  }, [setRecentFiles]);
 
   // Search State
   const currentPathRef = useRef(currentPath);
@@ -113,104 +88,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
   const initialPathRef = useRef(initialPath);
   initialPathRef.current = initialPath;
 
-  const lastToastKeyRef = useRef('');
-
-  const [searchActive, setSearchActive] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const handleSearch = async (query: string) => {
-    setSearchActive(true);
-    setSearchQuery(query);
-    let toastId: ReturnType<typeof showProgressToast> | null = null;
-    const timer = setTimeout(() => {
-      toastId = showProgressToast(t('toast.searching'));
-    }, 500);
-    const clearToast = () => {
-      clearTimeout(timer);
-      if (toastId) dismissToast(toastId);
-    };
-    try {
-      if (window.electron && window.electron.search) {
-        const results = await window.electron.search(currentPath, query);
-        setFiles(results);
-      }
-      clearToast();
-    } catch (e) {
-      clearToast();
-      console.error(e);
-      showToast(t('error.search_failed', (e as Error)?.message || String(e) || '未知错误'), 'error');
-    }
+  /** 搜索（待对接 fff-search crate） */
+  const handleSearch = async (_query: string) => {
+    showToast(t('toast.searching') || '搜索功能开发中', 'info');
   };
-
-  const loadPath = useCallback(async (path: string, showDelayedToast = false) => {
-    setSearchActive(false); // Reset search
-    setSearchQuery('');
-
-    if (path === 'app://dashboard') {
-      setCurrentPath(path);
-      return;
-    }
-
-    loadingPathRef.current = path;
-
-    suppressWatchRef.current = true;
-    if (loadPathTimeoutRef.current !== null) {
-      clearTimeout(loadPathTimeoutRef.current);
-    }
-    loadPathTimeoutRef.current = setTimeout(() => {
-      loadPathTimeoutRef.current = null;
-      suppressWatchRef.current = false;
-      if (pendingReloadRef.current) {
-        pendingReloadRef.current = false;
-        loadPath(currentPathRef.current);
-      }
-    }, 1000);
-
-    let toastId: ReturnType<typeof showProgressToast> | null = null;
-    let toastTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function clearToast() {
-      if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
-      if (toastId) { dismissToast(toastId); toastId = null; }
-    }
-
-    if (showDelayedToast) {
-      toastTimer = setTimeout(() => {
-        toastId = showProgressToast(t('toast.loading_dir', shortPath(path)));
-      }, 500);
-    }
-
-    try {
-      const { data, actualPath, error } = await FileSystemService.listDir(path);
-      clearToast();
-      console.log(`[explorer] loadPath("${path}") → ${data.length} files, actualPath="${actualPath}"`);
-      setFiles(data);
-      setCurrentPath(actualPath);
-      addToRecents(actualPath);
-      // 更新 sessionStorage，供 onDragDropEvent 使用
-      sessionStorage.setItem('hnfm-current-path', actualPath);
-
-      if (error && actualPath !== path) {
-        const toastKey = `${error.code}:${error.originalPath}`;
-        if (lastToastKeyRef.current !== toastKey) {
-          lastToastKeyRef.current = toastKey;
-          const reason = error.code === 'EACCES' || error.code === 'EPERM'
-            ? t('error.permission_denied')
-            : error.code === 'ENOENT'
-              ? t('error.not_found')
-              : t('error.cannot_access');
-          showToast(
-            t('error.path_fallback', error.originalPath, reason, actualPath),
-            'warning',
-          );
-        }
-      }
-    } catch (e) {
-      clearToast();
-      console.error('Failed to load path', path, e);
-      showToast(t('error.cannot_open_dir', (e as Error)?.message || String(e) || '未知错误'), 'error');
-    }
-  }, [tabId, addToRecents]);
 
   /**
    * 浏览器环境下的外部拖入处理。
@@ -256,12 +137,11 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         e.preventDefault();
         const targetFolder = sessionStorage.getItem("hnfm-dragover-folder");
         const target = targetFolder || currentPathRef.current || "/";
-        importFiles(
-          paths.map((p) => ({ path: p })),
-          target,
-          () => loadPath(currentPathRef.current),
-        ).then(() => {
+        invoke("import_files", { tabId, sources: paths, targetDir: target }).then(() => {
           showToast(t("toast.imported_files", paths.length), "success");
+        }).catch((e) => {
+          console.error("[dnd] importFiles failed:", e);
+          showToast(t("error.import_failed") || "导入失败", "error");
         });
       }
     };
@@ -283,7 +163,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, []);
 
-  /** 监听 hf:file-list 事件 — 后端 watcher 推送文件变化 */
+  /** 监听 hf:file-list 事件 — 后端 watcher 推送文件变化（纯事件驱动） */
   useEffect(() => {
     if (!isActive) return;
 
@@ -293,9 +173,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         if ("Reset" in delta) {
           const mapped = delta.Reset.map(mapBackendFile);
           setFiles(mapped);
+          setInaccessible(null);
           setCurrentPath(initialPathRef.current);
-          addToRecents(initialPathRef.current);
         } else if ("Upsert" in delta) {
+          setInaccessible(null);
           const entry = mapBackendFile(delta.Upsert);
           setFiles((prev) => {
             const idx = prev.findIndex((f) => f.path === entry.path);
@@ -320,7 +201,19 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             return next;
           });
         } else if ("Inaccessible" in delta) {
-          showToast(t("error.cannot_access_dir", delta.Inaccessible.reason), "error");
+          const { path, ancestor, reason } = delta.Inaccessible;
+          setInaccessible({ path: path.toString(), ancestor: ancestor.toString(), reason });
+          setFiles([]);
+        } else if ("Recovering" in delta) {
+          const { path, ancestor } = delta.Recovering;
+          setInaccessible({
+            path: path.toString(),
+            ancestor: ancestor.toString(),
+            reason: `目录暂不可访问，正在 ${ancestor} 等待恢复...`,
+          });
+        } else if ("FatalError" in delta) {
+          setInaccessible({ path: delta.FatalError.path.toString(), ancestor: '', reason: delta.FatalError.reason });
+          setFiles([]);
         }
       });
       unlistenFileListRef.current = ul;
@@ -335,103 +228,15 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     };
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 同步 initialPath（后端 nav 推送的路径）到 currentPath */
   useEffect(() => {
-    if (initialPath && loadingPathRef.current !== initialPath) {
-      if (initialPath === "app://dashboard") {
-        setCurrentPath(initialPath);
-        return;
-      }
-      loadPath(initialPath, true);
+    if (initialPath === "app://dashboard") {
+      setCurrentPath(initialPath);
+      setInaccessible(null);
+      return;
     }
-  }, [initialPath, loadPath]);
-
-  // Watch current directory for external filesystem changes
-  useEffect(() => {
-    if (!isActive || currentPath === 'app://dashboard') return;
-
-    let cancelled = false;
-
-    // If the directory was deleted while tab was inactive,
-    // the inotify watch was silently removed. Check existence first;
-    // if gone, trigger the walk-up fallback immediately.
-    FileSystemService.exists(currentPath).then((exists) => {
-      if (cancelled) return;
-      if (!exists) {
-        loadPath(currentPath);
-      }
-    });
-
-    window.electron?.watchDirectory?.(currentPath);
-    const cleanup = window.electron?.onDirChanged?.((dir: string) => {
-      if (suppressWatchRef.current) {
-        pendingReloadRef.current = true;
-        return;
-      }
-      if (dir === currentPathRef.current) {
-        loadPath(currentPathRef.current);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      cleanup?.();
-      window.electron?.unwatchDirectory?.(currentPath);
-    };
-  }, [isActive, currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Poll mount map to detect device mount/unmount changes
-  useEffect(() => {
-    if (!isActive || currentPath === 'app://dashboard') return;
-    // Reset on path change so stale mount map from previous dir
-    // doesn't trigger a spurious loadPath on the first poll
-    mountMapVersionRef.current = null;
-    let lastMountMapLoadPath = 0; // rate limit: 30s cooldown
-    let cancelled = false;
-    let pollTimer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      if (cancelled) return;
-      try {
-        const map = await FileSystemService.getMountMap();
-        if (cancelled) return;
-        // Filter to only block-device-backed mounts — ignoring virtual
-        // filesystems (proc, sysfs, cgroup, tmpfs, snap squashfs overlays)
-        // whose entries churn frequently and would trigger unnecessary reloads
-        const relevantEntries = Object.entries(map).filter(([, info]) =>
-          info.source.startsWith('/dev/')
-        );
-        // Sort by mount point for stable JSON comparison across polls
-        relevantEntries.sort(([a], [b]) => a.localeCompare(b));
-        const json = JSON.stringify(Object.fromEntries(relevantEntries));
-        if (mountMapVersionRef.current !== null && mountMapVersionRef.current !== json) {
-          const now = Date.now();
-          if (now - lastMountMapLoadPath >= 30000) {
-            lastMountMapLoadPath = now;
-            loadPath(currentPathRef.current);
-          }
-        }
-        mountMapVersionRef.current = json;
-      } catch {
-        // ignore
-      }
-      if (!cancelled) {
-        pollTimer = setTimeout(poll, 2000);
-      }
-    };
-    pollTimer = setTimeout(poll, 2000);
-    return () => {
-      cancelled = true;
-      clearTimeout(pollTimer);
-    };
-  }, [isActive, currentPath, loadPath]);
-
-  // Clean up loadPath timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (loadPathTimeoutRef.current !== null) {
-        clearTimeout(loadPathTimeoutRef.current);
-      }
-    };
-  }, []);
+    setCurrentPath(initialPath);
+  }, [initialPath]);
 
   const handleNavigate = useCallback(async (file: IFile) => {
     if (file.isDirectory) {
@@ -439,17 +244,14 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       const last = lastNavRef.current;
       if (last?.path === file.path && now - last.time < 300) return;
       lastNavRef.current = { path: file.path, time: now };
-      loadingPathRef.current = file.path;
       onPathChange(file.path);
     } else if (file.mime === 'inode/blockdevice' && file.isMountable) {
       const devPath = file.devicePath || file.path;
       if (file.mountedAt) {
-        loadingPathRef.current = file.mountedAt;
         onPathChange(file.mountedAt);
       } else if (file.canAutoMount && onMountDevice) {
         const result = await onMountDevice(devPath);
         if (result && 'success' in result && result.success && result.mountpoint) {
-          loadingPathRef.current = result.mountpoint;
           onPathChange(result.mountpoint);
         }
         // error toast handled by useDeviceActions
@@ -461,18 +263,17 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     } else {
       openFile(file.path);
     }
-  }, [onPathChange, loadPath, onMountDevice]);
+  }, [onPathChange, onMountDevice]);
 
   const handleRename = useCallback(async (file: IFile, newName: string) => {
     const lastSlash = file.path.lastIndexOf('/');
     const parentDir = file.path.substring(0, lastSlash);
-    await renameFile(file.path, `${parentDir}/${newName}`, () => loadPath(currentPath));
-  }, [loadPath, currentPath]);
+    await renameFile(file.path, `${parentDir}/${newName}`, () => onRefresh?.());
+  }, [onRefresh]);
 
-  const handleUp = async () => {
-    if (window.electron && currentPath) {
-      const parent = await window.electron.getParentPath(currentPath);
-      loadingPathRef.current = parent;
+  const handleUp = () => {
+    if (currentPath && currentPath !== 'app://dashboard') {
+      const parent = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
       onPathChange(parent);
     }
   };
@@ -558,10 +359,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           finishToast(toastId, t('toast.failed_items', data.fail), 'error');
         }
 
-        loadPath(currentPath);
+        onRefresh?.();
       });
     },
-    [onConflictDialog, loadPath, currentPath],
+    [onConflictDialog],
   );
 
   // Sort State
@@ -738,11 +539,11 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         currentPath,
         existingNames,
         clipboard.operation === 'cut' ? clearClipboard : undefined,
-        () => loadPath(currentPath),
+        () => onRefresh?.(),
         (conflicts) => onConflictDialog(conflicts, currentPath, existingNames),
       );
     }
-  }, [clipboard, files, currentPath, clearClipboard, loadPath, onConflictDialog]);
+  }, [clipboard, files, currentPath, clearClipboard, onRefresh, onConflictDialog]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -763,7 +564,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
       if (e.key === 'F5') {
         e.preventDefault();
-        loadPath(currentPath);
+        onRefresh?.();
         return;
       }
 
@@ -771,7 +572,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         e.preventDefault();
         if (selectedFiles.size > 0) {
           if (window.confirm(t('dialog.delete.confirm', selectedFiles.size))) {
-            await trashFiles(Array.from(selectedFiles), () => loadPath(currentPath));
+            await trashFiles(Array.from(selectedFiles), () => onRefresh?.());
           }
         }
         return;
@@ -805,7 +606,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, sortedFiles, selectedFiles, currentPath, loadPath, clipboard]);
+  }, [isActive, sortedFiles, selectedFiles, currentPath, onRefresh, clipboard]);
 
   const handleBackgroundContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -823,7 +624,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
       {
         label: t('context_menu.refresh'),
         icon: 'refresh',
-        action: () => loadPath(currentPath)
+        action: () => onRefresh?.()
       },
       { label: '', divider: true, action: () => {} },
       {
@@ -834,7 +635,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           void (async () => {
             const name = await onCreateDialog('folder', t('dialog.create.default_folder'), existingNames);
             if (name) {
-              await createDirectory(currentPath + '/' + name, () => loadPath(currentPath));
+              await createDirectory(currentPath + '/' + name, () => onRefresh?.());
             }
           })();
         },
@@ -847,7 +648,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           void (async () => {
             const name = await onCreateDialog('file', t('dialog.create.default_file'), existingNames);
             if (name) {
-              await createFile(currentPath + '/' + name, () => loadPath(currentPath));
+              await createFile(currentPath + '/' + name, () => onRefresh?.());
             }
           })();
         },
@@ -885,7 +686,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
     onContextMenu(e, null);
     onBgMenuItems(customItems);
-  }, [currentPath, files, clipboard, onCreateDialog, loadPath, executePasteAction, onOpenTerminalAt, onOpenWithFile, onPropertiesFile, onContextMenu, onBgMenuItems]);
+  }, [currentPath, files, clipboard, onCreateDialog, onRefresh, executePasteAction, onOpenTerminalAt, onOpenWithFile, onPropertiesFile, onContextMenu, onBgMenuItems]);
 
   // ── Stable callback wrappers for FileList (ref pattern to prevent unnecessary re-renders) ──
   const handleSelectRef = useRef(handleSelect);
@@ -1008,7 +809,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             <div style={{ flex: 1, overflow: 'hidden' }}>
             <Omnibar
               currentPath={currentPath}
-              onNavigate={(p: string) => loadPath(p, true)}
+              onNavigate={(p: string) => onPathChange(p)}
               onSearch={handleSearch}
             />
             </div>
@@ -1047,39 +848,48 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
 
         {currentPath === 'app://dashboard' ? (
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', overflow: 'hidden' }}>
-            <Dashboard onNavigate={(p: string) => loadPath(p, true)} />
+            <Dashboard onNavigate={(p: string) => onPathChange(p)} />
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-            {searchActive && (
-              <div style={{ padding: '8px 24px', background: 'var(--md-sys-color-surface-container)', color: 'var(--md-sys-color-on-surface-variant)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Icon name="search" />
-                <span>{t('search.results', files.length, searchQuery)}</span>
-                <IconButton onClick={() => loadPath(currentPath, true)} variant="standard" title={t('search.clear')}>
-                  <Icon name="close" />
-                </IconButton>
-              </div>
-            )}
             <div style={{ flex: 1, overflow: 'hidden' }}>
-              <FileList
-                files={sortedFiles}
-                selectedFiles={selectedFiles}
-                onSelect={stableHandleSelect}
-                onNavigate={handleNavigate}
-                onRename={handleRename}
-                onContextMenu={handleFileContextMenu}
-                onBackgroundContextMenu={handleBackgroundContextMenu}
-                onDeselectAll={handleDeselectAll}
-                onSetSelected={setSelectedFiles}
-                onSelectionModeChange={handleSelectionModeChange}
-                onHoverFile={handleHoverFile}
-                currentPath={currentPath}
-                iconSize={iconSize}
-                viewMode={viewMode}
-                filledIcons={filledIcons}
-                groupingEnabled={groupingEnabled}
-                marqueeEnabled={marqueeEnabled}
-              />
+              {inaccessible ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', color: 'var(--md-sys-color-on-surface-variant)' }}>
+                  <Icon name="lock" size={48} />
+                  <div style={{ textAlign: 'center' }}>
+                    <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 500 }}>{inaccessible.path}</h3>
+                    <p style={{ margin: 0, fontSize: '14px', opacity: 0.8 }}>{inaccessible.reason}</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <IconButton onClick={() => { setInaccessible(null); onPathChange(inaccessible.ancestor || '/'); }} variant="filled" title={t('breadcrumbs.go_to_root') || '后退'}>
+                      <Icon name="arrow_back" />
+                    </IconButton>
+                    <IconButton onClick={() => onRefresh?.()} variant="standard" title={t('context_menu.refresh') || '刷新'}>
+                      <Icon name="refresh" />
+                    </IconButton>
+                  </div>
+                </div>
+              ) : (
+                <FileList
+                  files={sortedFiles}
+                  selectedFiles={selectedFiles}
+                  onSelect={stableHandleSelect}
+                  onNavigate={handleNavigate}
+                  onRename={handleRename}
+                  onContextMenu={handleFileContextMenu}
+                  onBackgroundContextMenu={handleBackgroundContextMenu}
+                  onDeselectAll={handleDeselectAll}
+                  onSetSelected={setSelectedFiles}
+                  onSelectionModeChange={handleSelectionModeChange}
+                  onHoverFile={handleHoverFile}
+                  currentPath={currentPath}
+                  iconSize={iconSize}
+                  viewMode={viewMode}
+                  filledIcons={filledIcons}
+                  groupingEnabled={groupingEnabled}
+                  marqueeEnabled={marqueeEnabled}
+                />
+              )}
             </div>
           </div>
         )}

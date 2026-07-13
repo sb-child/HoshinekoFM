@@ -676,6 +676,7 @@ function AppContent() {
                 filledIcons={filledIcons}
                 onMountDevice={handleDeviceMount}
                 marqueeEnabled={marqueeEnabled}
+                onRefresh={refreshActiveTab}
               />
             </div>
           ))}

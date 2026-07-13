@@ -134,19 +134,14 @@ export function useTabs() {
     [activeTabId],
   );
 
-  /** 刷新活跃 tab（导航到自己触发重新 watch） */
+  /** 刷新活跃 tab 的文件列表（通知 watcher 重新读取） */
   const refreshActiveTab = useCallback(async () => {
-    if (currentPathRef.current) {
-      try {
-        const target = currentPathRef.current === "app://dashboard"
-          ? { Dashboard: null }
-          : { Filesystem: currentPathRef.current };
-        await invoke("nav_to", { tabId: activeTabId, target });
-      } catch (e) {
-        console.error("[useTabs] refresh failed:", e);
-      }
+    try {
+      await invoke("refresh_tab");
+    } catch (e) {
+      console.error("[useTabs] refresh failed:", e);
     }
-  }, [activeTabId]);
+  }, []);
 
   return {
     tabs,

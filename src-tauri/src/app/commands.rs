@@ -279,3 +279,29 @@ pub async fn elevate_tab(
 ) -> Result<(), String> {
     ui.elevate_tab(&window, tab_id, target_uid).await
 }
+
+/// 导入外部文件到当前 tab 目录。
+///
+/// `sources` 为外部文件的绝对路径列表，`target_dir` 为目标目录。
+/// 使用 tab 的 UidToken 执行 copy 操作。
+#[command]
+pub async fn import_files(
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+    sources: Vec<String>,
+    target_dir: String,
+) -> Result<(), String> {
+    let ctx = ContextId::Tab(tab_id);
+    let target = Path::new(&target_dir);
+    let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = sources
+        .into_iter()
+        .map(|src| {
+            let file_name = std::path::Path::new(&src)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".into());
+            (std::path::PathBuf::from(src), target.join(file_name))
+        })
+        .collect();
+    ui.copy_files_by_paths(tab_id, pairs, ctx).await
+}
