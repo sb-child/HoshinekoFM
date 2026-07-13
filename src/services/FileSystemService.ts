@@ -49,10 +49,6 @@ export const FileSystemService = {
     return window.electron.getAllDevices();
   },
 
-  async getMountMap(): Promise<Record<string, { source: string; fstype: string }>> {
-    return window.electron.getMountMap();
-  },
-
   async mountDevice(devicePath: string): Promise<{ success: boolean; mountpoint?: string; error?: string }> {
     return window.electron.mountDevice(devicePath);
   },
@@ -63,13 +59,5 @@ export const FileSystemService = {
 
   async ejectDevice(devicePath: string): Promise<{ success: boolean; error?: string }> {
     return window.electron.ejectDevice(devicePath);
-  },
-
-  async getSymlinkTarget(path: string): Promise<{ isSymlink: boolean; target?: string; targetExists: boolean }> {
-    return window.electron.getSymlinkTarget(path);
-  },
-
-  async checkSymlinks(paths: string[]): Promise<{ path: string; isSymlink: boolean; target?: string }[]> {
-    return window.electron.checkSymlinks(paths);
   },
 };

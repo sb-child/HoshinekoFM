@@ -46,7 +46,7 @@ pub struct Watcher {
     pub events: channel::RxAsync<WatchDelta>,
     pub(crate) watch_id: u64,
     /// 保活对应 Worker + 发送请求
-    _token: UidToken,
+    pub(crate) _token: UidToken,
 }
 
 impl Watcher {
@@ -63,6 +63,19 @@ impl Watcher {
                 watch_id: self.watch_id,
             })
             .await;
+    }
+
+    /// 拆解 Watcher 为部件。消耗 self 避免 Drop 触发 unwatch，
+    /// 调用者负责用返回的部件自行管理生命周期。
+    pub fn into_parts(self) -> (channel::RxAsync<WatchDelta>, u64, UidToken) {
+        use std::mem::ManuallyDrop;
+        let me = ManuallyDrop::new(self);
+        unsafe {
+            let events = std::ptr::read(&me.events);
+            let watch_id = me.watch_id;
+            let token = std::ptr::read(&me._token);
+            (events, watch_id, token)
+        }
     }
 }
 
@@ -234,6 +247,39 @@ impl FsService {
             .send_request(WorkerRequestContent::WatchStat {
                 watch_id,
                 file: file.to_path_buf(),
+            })
+            .await
+        {
+            Ok(crate::fsworker::WorkerResponse::Ok) => Ok(Watcher {
+                events: rx,
+                watch_id,
+                _token: token.clone(),
+            }),
+            Ok(crate::fsworker::WorkerResponse::Err(e)) => {
+                token.registry.unregister_watch(watch_id);
+                Err(e)
+            }
+            Ok(_) => unreachable!("Connecting handled internally by send_request"),
+            Err(e) => {
+                token.registry.unregister_watch(watch_id);
+                Err(e)
+            }
+        }
+    }
+
+    /// 监听面包屑路径段信息（home/mount 判断）。
+    /// 首帧立即推送，后续 /proc/mounts 变化时重推。
+    pub(crate) async fn watch_breadcrumb(
+        &self,
+        token: &UidToken,
+        path: &Path,
+    ) -> Result<Watcher, String> {
+        let watch_id = self.next_id();
+        let rx = token.registry.register_watch(watch_id);
+        match token
+            .send_request(WorkerRequestContent::WatchBreadcrumb {
+                watch_id,
+                path: path.to_path_buf(),
             })
             .await
         {

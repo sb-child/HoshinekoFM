@@ -45,7 +45,6 @@ export interface IElectronAPI {
     listDir: (path: string) => Promise<{ data: IFile[]; actualPath: string; error?: { code: string; originalPath: string } }>;
     getParentPath: (path: string) => Promise<string>;
     getHomePath: () => Promise<string>;
-    getHomeMap: () => Promise<Record<string, { username: string; uid: number }>>;
     getPlaces: () => Promise<Array<{ name: string; path: string; icon: string }>>;
     copyFile: (source: string, dest: string) => Promise<boolean>;
     moveFile: (source: string, dest: string) => Promise<boolean>;
@@ -69,13 +68,9 @@ export interface IElectronAPI {
     getStorageUsage: () => Promise<{ total: number; used: number; free: number } | null>;
     getDrives: () => Promise<IDrive[]>;
     getAllDevices: () => Promise<AllDevice[]>;
-    getMountMap: () => Promise<Record<string, { source: string; fstype: string }>>;
     mountDevice: (devicePath: string) => Promise<{ success: boolean; mountpoint?: string; error?: string }>;
     unmountDevice: (devicePath: string) => Promise<{ success: boolean; error?: string }>;
     ejectDevice: (devicePath: string) => Promise<{ success: boolean; error?: string }>;
-    getSymlinkTarget: (path: string) => Promise<{ isSymlink: boolean; target?: string; targetExists: boolean }>;
-    checkSymlinks: (paths: string[]) => Promise<{ path: string; isSymlink: boolean; target?: string }[]>;
-    realpath: (path: string) => Promise<string>;
     getRecommendedApps: (path: string) => Promise<{ name: string; icon: string | null; exec: string; path: string; }[]>;
 
     // PTY

@@ -131,9 +131,6 @@ const electronMock = {
   async getHomePath() {
     return "/tmp/mock-home";
   },
-  async getHomeMap() {
-    return {};
-  },
   async getPlaces() {
     return [
       { name: "Home", path: "/tmp/mock-home", icon: "home" },
@@ -180,15 +177,6 @@ const electronMock = {
   },
   async existsBatch(paths: string[]) {
     return Object.fromEntries(paths.map((p) => [p, p in MOCK_FS]));
-  },
-  async getSymlinkTarget(_path: string) {
-    return { isSymlink: false, targetExists: false };
-  },
-  async checkSymlinks(paths: string[]) {
-    return paths.map((path) => ({ path, isSymlink: false }));
-  },
-  async realpath(path: string) {
-    return path;
   },
   async getDirectorySize(_path: string) {
     // 递归计算 mock 文件系统中该目录下的所有文件大小
@@ -248,9 +236,6 @@ const electronMock = {
   },
   async getAllDevices(): Promise<AllDevice[]> {
     return [];
-  },
-  async getMountMap() {
-    return {};
   },
   async mountDevice(_devicePath: string) {
     return { success: false, error: "[mock] mount not available" };

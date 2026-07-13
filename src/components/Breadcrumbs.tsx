@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import "./Breadcrumbs.css";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
@@ -6,40 +6,16 @@ import { Icon } from "./Icon";
 import { Chip } from "./md";
 import { ContextMenu } from "./ContextMenu";
 import { t } from "../i18n";
+import type { BreadcrumbEntry } from "../types/tauriEvents";
 
-type HomeMap = Record<string, { username: string; uid: number }>;
-
-/**
- * 从 homeMap 中找到最深匹配的用户家目录。
- * 按路径长度降序排列键，返回首个前缀匹配的 home（路径最长的匹配优先）。
- *
- * @param currentPath - 当前路径（已 sanitize 开头为 `/`）
- * @param map - /etc/passwd 解析出的 home → { username, uid } 映射
- * @returns 匹配的 `{ path, username }`，无匹配时返回 `null`
- */
-function findBestHome(currentPath: string, map: HomeMap): { path: string; username: string } | null {
-  const keys = Object.keys(map).sort((a, b) => b.length - a.length);
-  for (const home of keys) {
-    if (currentPath === home || currentPath.startsWith(home + "/")) {
-      return { path: home, username: map[home].username };
-    }
-  }
-  return null;
-}
-
-/** 挂载源 → 显示配置。后续按 mount source 扩展，不硬编码路径。 */
+/** 特殊挂载源 → 显示配置 */
 interface MountDisplayConfig {
-  /** Material Symbols 图标名 */
   icon: string;
-  /** i18n key：Chip 标签文字 */
   labelKey: string;
-  /** i18n key：Chip tooltip，参数为 mountpoint 路径 */
   titleKey: string;
-  /** 是否在标签后追加 mountpoint 最后一段路径名 */
   showPath: boolean;
 }
 
-/** mountSource → 显示配置。通过 getMountMap() 返回的 source 字段动态匹配。 */
 const MOUNT_SOURCE_DISPLAY: Record<string, MountDisplayConfig> = {
   devtmpfs: { icon: 'devices', labelKey: 'breadcrumbs.dev', titleKey: 'breadcrumbs.dev_title', showPath: false },
   devpts:   { icon: 'terminal_2', labelKey: 'breadcrumbs.devpts', titleKey: 'breadcrumbs.devpts_title', showPath: false },
@@ -48,290 +24,97 @@ const MOUNT_SOURCE_DISPLAY: Record<string, MountDisplayConfig> = {
   tmpfs:    { icon: 'auto_delete', labelKey: 'breadcrumbs.tmpfs', titleKey: 'breadcrumbs.tmpfs_title', showPath: true },
 };
 
-/**
- * 按挂载点路径查询 {@link MOUNT_SOURCE_DISPLAY} 中配置的特殊挂载源。
- *
- * @param path - 要查询的路径
- * @param mountMap - 完整挂载映射表
- * @param exactOnly - 若为 true，仅匹配挂载点路径与 path 完全一致；否则也匹配父挂载点（prefix match）
- * @returns 匹配结果，或 null
- */
-function findSpecialMount(
-  path: string,
-  mountMap: Record<string, { source: string; fstype: string }>,
-  exactOnly = false,
-): { mountpoint: string; source: string; config: MountDisplayConfig } | null {
-  const entries = Object.entries(mountMap)
-    .filter(([mp]) => exactOnly ? path === mp : (path === mp || path.startsWith(mp + '/')))
-    .sort((a, b) => a[0].length - b[0].length);
-  for (const [mp, info] of entries) {
-    const config = MOUNT_SOURCE_DISPLAY[info.source];
-    if (config) return { mountpoint: mp, source: info.source, config };
-  }
-  return null;
+/** 通常唯一的挂载源（全局仅一个挂载点） */
+const UNIQUE_SOURCES = new Set(["devtmpfs", "devpts", "proc", "sysfs"]);
+
+function isUniqueSource(source: string | null): boolean {
+  return source !== null && UNIQUE_SOURCES.has(source);
 }
 
-/**
- * 构造特殊挂载 Chip 的标签 JSX。
- *
- * @param config - 显示配置
- * @param mountpoint - 挂载点完整路径
- * @param bold - 若为 true，路径段（或标签）以 600 weight 显示
- * @param folded - 若为 true，隐藏标签仅显示最后一段路径名（用于多个 showPath chip 场景）
- * @param italic - 若为 true，整体文字以斜体显示（用于软链接 Chip）
- * @returns React 节点
- */
-function buildSpecialLabel(
+function chipLabel(
   config: MountDisplayConfig,
   mountpoint: string,
-  bold = false,
-  folded = false,
-  italic = false,
+  bold: boolean,
+  folded: boolean,
+  italic: boolean,
 ): React.ReactNode {
   const base = t(config.labelKey);
-  const segments = mountpoint.split('/').filter(Boolean);
-  const last = segments[segments.length - 1];
+  const lastSeg = mountpoint.split('/').filter(Boolean).pop() ?? mountpoint;
 
-  const content = (() => {
-    if (folded) {
-      return bold
-        ? <span style={{ fontWeight: 600 }}>{last}</span>
-        : last;
-    }
-    if (!config.showPath) {
-      return bold
-        ? <span style={{ fontWeight: 600 }}>{base}</span>
-        : base;
-    }
-    return bold
-      ? <>{base} <span style={{ fontWeight: 600 }}>{last}</span></>
-      : <>{base} {last}</>;
-  })();
+  const content = folded
+    ? (bold ? <span style={{ fontWeight: 600 }}>{lastSeg}</span> : lastSeg)
+    : config.showPath
+      ? (bold ? <>{base} <span style={{ fontWeight: 600 }}>{lastSeg}</span></> : <>{base} {lastSeg}</>)
+      : (bold ? <span style={{ fontWeight: 600 }}>{base}</span> : base);
 
-  if (italic) {
-    return <span style={{ fontStyle: 'italic' }}>{content}</span>;
-  }
-  return content;
+  return italic ? <span style={{ fontStyle: 'italic' }}>{content}</span> : content;
 }
 
 interface BreadcrumbsProps {
-  currentPath: string;
+  entries: BreadcrumbEntry[];
   onNavigate: (path: string) => void;
 }
 
-interface SymlinkInfo {
-  isSymlink: boolean;
-  target?: string;
-}
-
-interface BreadcrumbCtxMenuState {
+interface CtxMenuState {
   x: number;
   y: number;
-  realPath: string;
-  isChip: boolean;
-  /** 当 Chip 是软链接时，记录软链接目标路径 */
+  targetPath: string;
   symlinkTarget?: string;
+  isChip: boolean;
 }
 
+/**
+ * 面包屑导航 — 纯 props 组件。
+ *
+ * 所有数据（home / mount / symlink）由后端 `hf:breadcrumbs` 事件推送，
+ * 前端仅负责渲染，不调用任何 Electron IPC。
+ */
 export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
-  currentPath,
+  entries,
   onNavigate,
 }) => {
-  const sanitizedPath = currentPath.startsWith("/")
-    ? currentPath
-    : "/" + currentPath;
-  const parts = useMemo(() => sanitizedPath.split("/").filter(Boolean), [sanitizedPath]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastRef = useRef<HTMLSpanElement>(null);
-
-  const [homeMap, setHomeMap] = useState<HomeMap>({});
-  const [symlinkInfo, setSymlinkInfo] = useState<Map<string, SymlinkInfo>>(
-    new Map(),
-  );
-  const [breadcrumbCtxMenu, setBreadcrumbCtxMenu] =
-    useState<BreadcrumbCtxMenuState | null>(null);
-
-  useEffect(() => {
-    window.electron
-      .getHomeMap()
-      .then(setHomeMap)
-      .catch(() => {});
-  }, []);
-
-  const [mountMap, setMountMap] = useState<Record<string, { source: string; fstype: string }>>({});
-
-  useEffect(() => {
-    window.electron
-      .getMountMap()
-      .then(setMountMap)
-      .catch(() => {});
-  }, []);
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
 
   useEffect(() => {
     if (lastRef.current) {
       lastRef.current.scrollIntoView({ block: "nearest", inline: "end" });
     }
-  }, [currentPath]);
+  }, [entries]);
 
-  useEffect(() => {
-    const segmentPaths = parts.map(
-      (_, i) => "/" + parts.slice(0, i + 1).join("/"),
-    );
-    if (segmentPaths.length === 0) return;
-
-    let cancelled = false;
-    const check = async () => {
-      try {
-        if (window.electron.checkSymlinks) {
-          const results = await window.electron.checkSymlinks(segmentPaths);
-          if (cancelled) return;
-          const info = new Map<string, SymlinkInfo>();
-          for (const r of results) {
-            info.set(r.path, { isSymlink: r.isSymlink, target: r.target });
-          }
-          setSymlinkInfo(info);
-        }
-      } catch {
-        // ignore errors
-      }
-    };
-    check();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentPath, parts]);
-
-  const handleBreadcrumbContextMenu = useCallback(
-    (e: React.MouseEvent, realPath: string, isChip = false) => {
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => {
       e.preventDefault();
       e.stopPropagation();
-      const info = symlinkInfo.get(realPath);
-      setBreadcrumbCtxMenu({
+      setCtxMenu({
         x: e.clientX,
         y: e.clientY,
-        realPath,
+        targetPath: entry.path,
+        symlinkTarget: entry.is_symlink && entry.symlink_target
+          ? entry.symlink_target
+          : undefined,
         isChip,
-        symlinkTarget: info?.isSymlink && info.target ? info.target : undefined,
       });
     },
-    [symlinkInfo],
+    [],
   );
 
-  const matchedHome = findBestHome(sanitizedPath, homeMap);
-  const isInHome = matchedHome !== null;
-  const homeMatchPath = matchedHome?.path ?? null;
-  const homeSegments = matchedHome ? matchedHome.path.split("/").filter(Boolean) : [];
-  const remainingParts = isInHome ? parts.slice(homeSegments.length) : parts;
-  const ownerName = matchedHome?.username ?? "";
+  if (entries.length === 0) {
+    return (
+      <div ref={scrollRef} className="breadcrumb-container">
+        <RootChip onNavigate={onNavigate} onContextMenu={handleContextMenu} alwaysChip />
+      </div>
+    );
+  }
 
-  const displayParts = isInHome ? remainingParts : parts;
-  const homeSegmentCount = isInHome ? homeSegments.length : 0;
+  const homeIdx = entries.findIndex(e => e.is_home);
+  const mountIdx = entries.findIndex(
+    e => e.is_mount_point && e.mount_source !== null && e.mount_source in MOUNT_SOURCE_DISPLAY,
+  );
 
-  const matchedSpecial = isInHome ? null : findSpecialMount(sanitizedPath, mountMap);
-  const isInSpecial = matchedSpecial !== null;
-  const specialMountpointSegments = matchedSpecial
-    ? matchedSpecial.mountpoint.split('/').filter(Boolean)
-    : [];
-  const specialSegmentCount = specialMountpointSegments.length;
-
-  /**
-   * 该挂载源在系统中只出现一次时，Chip 直接从根级显示，不渲染前缀段。
-   * （例如 devpts 只挂载在 /dev/pts，不应显示 /dev 这段）
-   */
-  const sourceIsUnique = matchedSpecial
-    ? Object.values(mountMap).filter((info) => info.source === matchedSpecial.source).length <= 1
-    : false;
-
-  const preSegments = isInSpecial && !sourceIsUnique
-    ? parts.slice(0, specialSegmentCount - 1)
-    : [];
-  const postSegments = isInSpecial
-    ? parts.slice(specialSegmentCount)
-    : [];
-
-  /** Home Chip 仅在无后续段时为"最后一个元素" */
-  const homeIsLast = isInHome && displayParts.length === 0;
-  /** Special Chip 仅在无 postSegments 时为"最后一个元素" */
-  const specialIsLast = isInSpecial && postSegments.length === 0;
-
-  /** 已渲染的 showPath chip 数量，用于判断后续 showPath chip 是否需要折叠 */
-  let showPathSeen = 0;
-
-  /**
-   * 渲染面包屑段落（分隔符 + 目录名按钮），用于 pre-segments、post-segments、
-   * 以及 home/root 后的剩余段。
-   *
-   * @param segments - 要渲染的目录名数组
-   * @param offset - absoluteIndex 的偏移量（从 parts 中第几个开始）
-   * @param lastRefTarget - 若为 true，最后一段的 separator 绑定 lastRef 实现自动滚动
-   * @param checkSpecial - 若为 true，检查每段是否为特殊挂载点并渲染 Chip（用于 !sourceIsUnique 的 pre-segments）
-   */
-  const renderSegments = (segments: string[], offset: number, lastRefTarget: boolean, checkSpecial = false) => {
-    return segments.map((p, i) => {
-      const absoluteIndex = offset + i;
-      const segmentPath = "/" + parts.slice(0, absoluteIndex + 1).join("/");
-      const isLast = lastRefTarget && i === segments.length - 1;
-
-      /** 检查该段是否为特殊挂载点 — 仅 pre-segments 时启用 */
-      if (checkSpecial) {
-        const segSpecial = findSpecialMount(segmentPath, mountMap, true);
-        if (segSpecial) {
-          const folded = segSpecial.config.showPath && showPathSeen > 0;
-          if (segSpecial.config.showPath) showPathSeen++;
-          const segSymlink = symlinkInfo.get(segmentPath);
-          const isSegSymlink = !!(segSymlink?.isSymlink && segSymlink.target);
-          const segTitle = t(segSpecial.config.titleKey, segSpecial.mountpoint);
-          return (
-            <React.Fragment key={segmentPath}>
-              <span className="breadcrumb-separator">/</span>
-              <Chip
-                title={isSegSymlink ? `${segTitle}\n${t("symlink.tooltip", segSymlink!.target!)}` : segTitle}
-                onClick={() => onNavigate(segmentPath)}
-                onContextMenu={(e) => handleBreadcrumbContextMenu(e, segmentPath, true)}
-                className={`breadcrumb-chip`}
-              >
-                <Icon name={segSpecial.config.icon} slot="icon" />
-                {buildSpecialLabel(segSpecial.config, segSpecial.mountpoint, false, folded, isSegSymlink)}
-              </Chip>
-            </React.Fragment>
-          );
-        }
-      }
-
-      const info = symlinkInfo.get(segmentPath);
-      const isSymlinkDir = info?.isSymlink ?? false;
-      const symlinkTarget = info?.target;
-
-      return (
-        <React.Fragment key={segmentPath}>
-          <span
-            ref={isLast ? lastRef : undefined}
-            className={`breadcrumb-separator`}
-          >
-            /
-          </span>
-          <Button
-            variant="text"
-            onClick={() => { onNavigate(segmentPath); }}
-            onContextMenu={(e) => {
-              if (isSymlinkDir && symlinkTarget) {
-                handleBreadcrumbContextMenu(e, symlinkTarget);
-              }
-            }}
-            className={`breadcrumb-item${isSymlinkDir ? " symlink" : ""}`}
-            style={{ fontWeight: isLast ? 600 : 400 }}
-            title={
-              isSymlinkDir && symlinkTarget
-                ? t("symlink.tooltip", symlinkTarget)
-                : undefined
-            }
-          >
-            {p}
-          </Button>
-        </React.Fragment>
-      );
-    });
-  };
+  const hasHome = homeIdx >= 0;
+  const hasMount = !hasHome && mountIdx >= 0;
 
   return (
     <div
@@ -343,140 +126,240 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
         }
       }}
     >
-      {/* 优先级: home → special mount → root */}
-      {isInHome && homeMatchPath ? (
-        <Chip
-          title={
-            (symlinkInfo.get(homeMatchPath)?.isSymlink && symlinkInfo.get(homeMatchPath)?.target)
-              ? `${t("breadcrumbs.home", ownerName, homeMatchPath)}\n${t("symlink.tooltip", symlinkInfo.get(homeMatchPath)!.target!)}`
-              : t("breadcrumbs.home", ownerName, homeMatchPath)
-          }
-          onClick={() => onNavigate(homeMatchPath)}
-          onContextMenu={(e) => handleBreadcrumbContextMenu(e, homeMatchPath, true)}
-          className={`breadcrumb-chip`}
-        >
-          <Icon name="home" slot="icon" />
-          {symlinkInfo.get(homeMatchPath)?.isSymlink
-            ? <span style={{ fontStyle: 'italic', fontWeight: homeIsLast ? 600 : 400 }}>{ownerName}</span>
-            : (homeIsLast
-              ? <span style={{ fontWeight: 600 }}>{ownerName}</span>
-              : ownerName
-            )
-          }
-        </Chip>
-      ) : isInSpecial ? (
-        <>
-          {preSegments.length > 0 && (
-            <IconButton
-              variant="standard"
-              onClick={() => onNavigate("/")}
-              className="breadcrumb-root"
-              title={t("breadcrumbs.root_title", "/")}
-            >
-              <Icon name="tag" />
-            </IconButton>
-          )}
-          {renderSegments(preSegments, 0, false, true)}
-          {preSegments.length > 0 && (
-            <span className="breadcrumb-separator">/</span>
-          )}
-          {(() => {
-            const mainFolded = matchedSpecial!.config.showPath && showPathSeen > 0;
-            if (matchedSpecial!.config.showPath) showPathSeen++;
-            const mountPath = matchedSpecial!.mountpoint;
-            const isMountSymlink = !!(symlinkInfo.get(mountPath)?.isSymlink && symlinkInfo.get(mountPath)?.target);
-            return (
-              <Chip
-                title={
-                  isMountSymlink
-                    ? `${t(matchedSpecial!.config.titleKey, mountPath)}\n${t("symlink.tooltip", symlinkInfo.get(mountPath)!.target!)}`
-                    : t(matchedSpecial!.config.titleKey, mountPath)
-                }
-                onClick={() => onNavigate(mountPath)}
-                onContextMenu={(e) => handleBreadcrumbContextMenu(e, mountPath, true)}
-                className={`breadcrumb-chip`}
-              >
-                <Icon name={matchedSpecial!.config.icon} slot="icon" />
-                {buildSpecialLabel(matchedSpecial!.config, mountPath, specialIsLast, mainFolded, isMountSymlink)}
-              </Chip>
-            );
-          })()}
-        </>
-      ) : parts.length === 0 ? (
-        <Chip
-          title={
-            (symlinkInfo.get("/")?.isSymlink && symlinkInfo.get("/")?.target)
-              ? `${t("breadcrumbs.root_title", "/")}\n${t("symlink.tooltip", symlinkInfo.get("/")!.target!)}`
-              : t("breadcrumbs.root_title", "/")
-          }
-          onClick={() => onNavigate("/")}
-          onContextMenu={(e) => handleBreadcrumbContextMenu(e, "/", true)}
-          className={`breadcrumb-chip`}
-        >
-          <Icon name="tag" slot="icon" />
-          {(symlinkInfo.get("/")?.isSymlink && symlinkInfo.get("/")?.target)
-            ? <span style={{ fontStyle: 'italic', fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
-            : <span style={{ fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
-          }
-        </Chip>
+      {hasHome ? (
+        <HomeMode
+          entries={entries}
+          homeIdx={homeIdx}
+          onNavigate={onNavigate}
+          onContextMenu={handleContextMenu}
+          lastRef={lastRef}
+        />
+      ) : hasMount ? (
+        <MountMode
+          entries={entries}
+          mountIdx={mountIdx}
+          onNavigate={onNavigate}
+          onContextMenu={handleContextMenu}
+          lastRef={lastRef}
+        />
       ) : (
-        <IconButton
-          variant="standard"
-          onClick={() => onNavigate("/")}
-          className={`breadcrumb-root`}
-          title={t("breadcrumbs.root_title", "/")}
-        >
-          <Icon name="tag" />
-        </IconButton>
+        <DefaultMode
+          entries={entries}
+          onNavigate={onNavigate}
+          onContextMenu={handleContextMenu}
+          lastRef={lastRef}
+        />
       )}
 
-      {renderSegments(
-        isInSpecial ? postSegments : displayParts,
-        isInSpecial ? specialSegmentCount : homeSegmentCount,
-        true,
-        isInSpecial,
-      )}
-
-      {breadcrumbCtxMenu && (
+      {ctxMenu && (
         <ContextMenu
-          x={breadcrumbCtxMenu.x}
-          y={breadcrumbCtxMenu.y}
-          items={
-            breadcrumbCtxMenu.isChip
-              ? [
-                ...(breadcrumbCtxMenu.symlinkTarget
-                  ? [{
-                    label: t("symlink.go_to_target"),
-                    icon: "arrow_forward",
-                    action: () => {
-                      onNavigate(breadcrumbCtxMenu.symlinkTarget!);
-                      setBreadcrumbCtxMenu(null);
-                    },
-                  }]
-                  : []),
-                {
-                  label: t("breadcrumbs.go_to_root"),
-                  icon: "home",
-                  action: () => {
-                    onNavigate("/");
-                    setBreadcrumbCtxMenu(null);
-                  },
-                },
-              ]
-              : [
-                {
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={ctxMenu.isChip
+            ? [
+              ...(ctxMenu.symlinkTarget
+                ? [{
                   label: t("symlink.go_to_target"),
                   icon: "arrow_forward",
                   action: () => {
-                    onNavigate(breadcrumbCtxMenu.realPath);
-                    setBreadcrumbCtxMenu(null);
+                    onNavigate(ctxMenu.symlinkTarget!);
+                    setCtxMenu(null);
                   },
-                },
-              ]
+                }]
+                : []),
+              {
+                label: t("breadcrumbs.go_to_root"),
+                icon: "home",
+                action: () => { onNavigate("/"); setCtxMenu(null); },
+              },
+            ]
+            : [{
+              label: t("symlink.go_to_target"),
+              icon: "arrow_forward",
+              action: () => {
+                onNavigate(ctxMenu.targetPath);
+                setCtxMenu(null);
+              },
+            }]
           }
-          onClose={() => setBreadcrumbCtxMenu(null)}
+          onClose={() => setCtxMenu(null)}
         />
       )}
     </div>
   );
 };
+
+// ─── Root Chip ────────────────────────────────────────────────────────────
+
+const RootChip: React.FC<{
+  onNavigate: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => void;
+  alwaysChip?: boolean;
+}> = ({ onNavigate, onContextMenu, alwaysChip }) => {
+  const rootEntry: BreadcrumbEntry = {
+    name: "",
+    path: "/",
+    is_symlink: false,
+    symlink_target: null,
+    is_mount_point: false,
+    mount_source: null,
+    is_home: false,
+    home_username: null,
+    accessible: true,
+  };
+
+  if (alwaysChip) {
+    return (
+      <Chip
+        title={t("breadcrumbs.root_title", "/")}
+        onClick={() => onNavigate("/")}
+        onContextMenu={(e) => onContextMenu(e, rootEntry, true)}
+        className="breadcrumb-chip"
+      >
+        <Icon name="tag" slot="icon" />
+        <span style={{ fontWeight: 600 }}>{t("breadcrumbs.root")}</span>
+      </Chip>
+    );
+  }
+
+  return (
+    <IconButton
+      variant="standard"
+      onClick={() => onNavigate("/")}
+      className="breadcrumb-root"
+      title={t("breadcrumbs.root_title", "/")}
+    >
+      <Icon name="tag" />
+    </IconButton>
+  );
+};
+
+// ─── Home Mode ────────────────────────────────────────────────────────────
+
+const HomeMode: React.FC<{
+  entries: BreadcrumbEntry[];
+  homeIdx: number;
+  onNavigate: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => void;
+  lastRef: React.RefObject<HTMLSpanElement | null>;
+}> = ({ entries, homeIdx, onNavigate, onContextMenu, lastRef }) => {
+  const home = entries[homeIdx];
+  const suffix = entries.slice(homeIdx + 1);
+  const isHomeLast = suffix.length === 0;
+
+  return (
+    <>
+      <Chip
+        title={home.is_symlink && home.symlink_target
+          ? `${t("breadcrumbs.home", home.home_username ?? "", home.path)}\n${t("symlink.tooltip", home.symlink_target)}`
+          : t("breadcrumbs.home", home.home_username ?? "", home.path)}
+        onClick={() => onNavigate(home.path)}
+        onContextMenu={(e) => onContextMenu(e, home, true)}
+        className="breadcrumb-chip"
+      >
+        <Icon name="home" slot="icon" />
+        {home.is_symlink
+          ? <span style={{ fontStyle: 'italic', fontWeight: isHomeLast ? 600 : 400 }}>{home.home_username}</span>
+          : isHomeLast
+            ? <span style={{ fontWeight: 600 }}>{home.home_username}</span>
+            : home.home_username
+        }
+      </Chip>
+      {renderSegments(suffix, onNavigate, onContextMenu, lastRef)}
+    </>
+  );
+};
+
+// ─── Mount Mode ───────────────────────────────────────────────────────────
+
+const MountMode: React.FC<{
+  entries: BreadcrumbEntry[];
+  mountIdx: number;
+  onNavigate: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => void;
+  lastRef: React.RefObject<HTMLSpanElement | null>;
+}> = ({ entries, mountIdx, onNavigate, onContextMenu, lastRef }) => {
+  const mount = entries[mountIdx];
+  const config = MOUNT_SOURCE_DISPLAY[mount.mount_source!];
+  const unique = isUniqueSource(mount.mount_source);
+  const prefix = unique ? [] : entries.slice(0, mountIdx);
+  const suffix = entries.slice(mountIdx + 1);
+  const isMountLast = suffix.length === 0;
+
+  const mountChip = (
+    <Chip
+      title={mount.is_symlink && mount.symlink_target
+        ? `${t(config.titleKey, mount.path)}\n${t("symlink.tooltip", mount.symlink_target)}`
+        : t(config.titleKey, mount.path)}
+      onClick={() => onNavigate(mount.path)}
+      onContextMenu={(e) => onContextMenu(e, mount, true)}
+      className="breadcrumb-chip"
+    >
+      <Icon name={config.icon} slot="icon" />
+      {chipLabel(config, mount.path, isMountLast, false, !!(mount.is_symlink && mount.symlink_target))}
+    </Chip>
+  );
+
+  return (
+    <>
+      {!unique && <RootChip onNavigate={onNavigate} onContextMenu={onContextMenu} />}
+      {renderSegments(prefix, onNavigate, onContextMenu)}
+      {prefix.length > 0 && <span className="breadcrumb-separator">/</span>}
+      {mountChip}
+      {renderSegments(suffix, onNavigate, onContextMenu, lastRef)}
+    </>
+  );
+};
+
+// ─── Default Mode ─────────────────────────────────────────────────────────
+
+const DefaultMode: React.FC<{
+  entries: BreadcrumbEntry[];
+  onNavigate: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => void;
+  lastRef: React.RefObject<HTMLSpanElement | null>;
+}> = ({ entries, onNavigate, onContextMenu, lastRef }) => {
+  return (
+    <>
+      <RootChip onNavigate={onNavigate} onContextMenu={onContextMenu} />
+      {renderSegments(entries, onNavigate, onContextMenu, lastRef)}
+    </>
+  );
+};
+
+// ─── Common Segments ──────────────────────────────────────────────────────
+
+function renderSegments(
+  segs: BreadcrumbEntry[],
+  onNavigate: (path: string) => void,
+  onContextMenu: (e: React.MouseEvent, entry: BreadcrumbEntry, isChip: boolean) => void,
+  lastRef?: React.RefObject<HTMLSpanElement | null>,
+): React.ReactNode {
+  return segs.map((entry, i) => {
+    const isLast = !!lastRef && i === segs.length - 1;
+    const symlink = entry.is_symlink && entry.symlink_target;
+
+    return (
+      <React.Fragment key={entry.path}>
+        <span
+          ref={isLast ? lastRef : undefined}
+          className="breadcrumb-separator"
+        >
+          /
+        </span>
+        <Button
+          variant="text"
+          onClick={() => onNavigate(entry.path)}
+          onContextMenu={(e) => {
+            if (symlink) onContextMenu(e, entry, false);
+          }}
+          className={`breadcrumb-item${entry.is_symlink ? " symlink" : ""}`}
+          style={{ fontWeight: isLast ? 600 : 400 }}
+          title={symlink ? t("symlink.tooltip", entry.symlink_target!) : undefined}
+        >
+          {entry.name}
+        </Button>
+      </React.Fragment>
+    );
+  });
+}

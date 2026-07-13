@@ -2,28 +2,36 @@
 //!
 //! ## 设计
 //!
-//! - [`WatchPool`]：按 canonical path 去重，同一路径多个 watch_id 共享一个 [`WatchShared`]。
+//! - [`WatchPool`]：按 normalized path 去重（不跟随符号链接），
+//!   同一路径多个 watch_id 共享一个 [`WatchShared`]。
 //! - 尽力而为：从 target 开始逐级上溯挂 inotify，每层汇报状态，
 //!   直到 `/` 都失败则标记 Dead 并推送 `FatalError`。
 //! - 不 list 中间层级目录，只在 target 可访问后发 `Reset`。
-//! - `WatchShared` 只有一个后台任务（run），统一管理三个状态（Recovering / Live / Dead）。
+//! - `WatchShared` 只有一个后台任务（run），统一管理三个分支：
+//!   虚拟文件 poll 模式 / 实体文件 inotify 级联恢复 / Live 事件泵。
+//! - 零 timeout、零 sleep：退出通过 `tokio::sync::Notify` 驱动，
+//!   事件泵纯 select! 阻塞。
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, io, os::unix::fs::OpenOptionsExt, path::PathBuf, sync::Arc};
 
 use notify::{RecursiveMode, Watcher};
-use tokio::sync::Mutex;
+use tokio::{
+    io::unix::AsyncFd,
+    select,
+    sync::{Mutex, Notify},
+};
 use tracing::{debug, warn};
 
 use crate::channel;
 use crate::ipc::protocol::{AppCallbackServiceClient, WatchDelta};
 
-use super::files::{build_file, list_dir_files, resolve_path};
+use super::files::{build_file, list_dir_files, normalize_path_no_symlink};
 
 // ---------------------------------------------------------------------------
 // WatchPool
 // ---------------------------------------------------------------------------
 
-/// 全局 Watch 池。canonical path → 共享条目，同路径复用。
+/// 全局 Watch 池。normalized path → 共享条目，同路径复用。
 pub struct WatchPool {
     entries: Mutex<HashMap<PathBuf, Arc<WatchShared>>>,
 }
@@ -48,23 +56,23 @@ impl WatchPool {
         is_dir: bool,
         cb: AppCallbackServiceClient,
     ) -> Arc<WatchShared> {
-        let canonical = resolve_path(&path);
+        let normalized = normalize_path_no_symlink(&path);
         let mut entries = self.entries.lock().await;
 
-        if let Some(existing) = entries.get(&canonical) {
+        if let Some(existing) = entries.get(&normalized) {
             existing.add_subscriber(watch_id, cb.clone()).await;
-            // 新 subscriber 立即收到首帧数据
             existing.push_reset_to(watch_id, &cb).await;
             return existing.clone();
         }
 
         let shared = Arc::new(WatchShared {
-            target: canonical.clone(),
+            target: normalized.clone(),
             is_dir,
             subscribers: Mutex::new(HashMap::from([(watch_id, cb)])),
+            exit_notify: Notify::new(),
         });
 
-        entries.insert(canonical, shared.clone());
+        entries.insert(normalized, shared.clone());
         drop(entries);
 
         let s = shared.clone();
@@ -73,19 +81,22 @@ impl WatchPool {
         shared
     }
 
-    /// 移除一个 watcher 的订阅。若 subscriber 数为 0 则删除 WatchShared。
+    /// 移除一个 watcher 的订阅。若 subscriber 数为 0 则删除 WatchShared
+    /// 并通知后台任务退出。
     pub async fn unregister(&self, watch_id: u64, canonical: &PathBuf) {
-        let removed = {
+        let (_removed, shared_to_notify) = {
             let entries = self.entries.lock().await;
             if let Some(shared) = entries.get(canonical) {
                 let mut subs = shared.subscribers.lock().await;
                 subs.remove(&watch_id);
-                subs.is_empty()
+                let empty = subs.is_empty();
+                (empty, if empty { Some(shared.clone()) } else { None })
             } else {
-                false
+                (false, None)
             }
         };
-        if removed {
+        if let Some(shared) = shared_to_notify {
+            shared.exit_notify.notify_waiters();
             self.entries.lock().await.remove(canonical);
         }
     }
@@ -101,6 +112,8 @@ pub struct WatchShared {
     is_dir: bool,
     /// watch_id → 回调 client
     subscribers: Mutex<HashMap<u64, AppCallbackServiceClient>>,
+    /// 订阅归零时唤醒，通知后台任务退出
+    exit_notify: Notify,
 }
 
 impl WatchShared {
@@ -115,7 +128,6 @@ impl WatchShared {
     pub(super) async fn push_reset_to(&self, watch_id: u64, cb: &AppCallbackServiceClient) {
         let ctx = tarpc::context::current();
 
-        // 先检查 target 是否可访问
         match self.try_access() {
             AccessResult::Ok => {}
             AccessResult::PermissionDenied => {
@@ -150,7 +162,6 @@ impl WatchShared {
             }
         }
 
-        // target 可访问 → 正常 Reset
         let delta = if self.is_dir {
             let dir = self.target.clone();
             let files = tokio::task::spawn_blocking(move || list_dir_files(&dir))
@@ -167,10 +178,6 @@ impl WatchShared {
             WatchDelta::Reset(files)
         };
         let _ = cb.watch_delta(ctx, watch_id, delta).await;
-    }
-
-    async fn has_subscribers(&self) -> bool {
-        !self.subscribers.lock().await.is_empty()
     }
 
     /// 向每个 subscriber 推送 delta（带上各自的 watch_id）。
@@ -191,7 +198,6 @@ impl WatchShared {
     }
 
     /// 事件泵专用：对多个 subscriber 推送单个增量条目。
-    /// 与 push_all 不同，此方法不做 extra clone——调用者确保 delta 不共享引用。
     async fn push_delta(&self, delta: WatchDelta) {
         let subs: Vec<_> = self
             .subscribers
@@ -226,29 +232,55 @@ impl WatchShared {
         }
     }
 
+    /// 给 exit_notify.notified() 套一层可借号短命的 future。
+    /// select! 要求所有分支的 future 都需 `&mut` 借用并在此期间存活，
+    /// 因此不能直接写 `self.exit_notify.notified()` —— 其返回的 future 会
+    /// borrow &self/&Notify 太久。用此函数把 notified future 立刻取下
+    /// 再 pin_mut 即可避开 borrow checker 限制。
+    fn exit_signal(&self) -> impl std::future::Future<Output = ()> + '_ {
+        let n = self.exit_notify.notified();
+        async move {
+            n.await;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 主循环
     // -----------------------------------------------------------------------
 
-    /// 尽力而为的主循环：
+    /// 统一分发循环：虚拟文件走 poll，实体文件走 inotify 级联。
+    /// run_poll / cascade 返回时重新检测文件类型并路由到正确分支，
+    /// 处理暂停期间文件类型被替换的场景（普通→虚拟 或 虚拟→普通）。
+    async fn run(&self) {
+        loop {
+            if self.subscribers.lock().await.is_empty() {
+                return;
+            }
+            if !self.is_dir && is_virtual_fs(&self.target) {
+                self.run_poll().await;
+            } else {
+                self.cascade().await;
+            }
+        }
+    }
+
+    /// 尽力而为的级联恢复。
     /// - 从 target (level=0) 开始逐级上溯
     /// - 每层：挂 inotify → 尝试访问 target → 成功则进入 Live 事件泵
     /// - 失败则汇报状态 → 继续上一级 → 直到 `/` 都失败则 Dead
-    async fn run(&self) {
+    async fn cascade(&self) {
         const MAX_CASCADE: usize = 64;
 
         for level in 0..MAX_CASCADE {
-            if !self.has_subscribers().await {
+            if self.subscribers.lock().await.is_empty() {
                 return;
             }
 
             let ancestor = self.ancestor_at(level);
 
-            // 1. 挂 inotify
             let (watcher, evt_rx) = match self.setup_inotify(&ancestor) {
                 Ok(p) => p,
                 Err(e) => {
-                    // 推送 Inaccessible 让前端知道原因（即使还没法 watch 这层）
                     self.push_all(&WatchDelta::Inaccessible {
                         path: self.target.clone(),
                         ancestor: ancestor.clone(),
@@ -264,16 +296,13 @@ impl WatchShared {
                         .await;
                         return;
                     }
-                    // 级联到上一级祖先
                     continue;
                 }
             };
 
-            // 2. 尝试访问 target
             match self.try_access() {
                 AccessResult::Ok => {
                     self.push_reset().await;
-                    // 排空 inotify 初始 burst（Reset 已涵盖全量）
                     while let Ok(_) = evt_rx.try_recv() {}
                     self.run_event_pump(watcher, evt_rx).await;
                     return;
@@ -286,13 +315,10 @@ impl WatchShared {
                         reason: format!("permission denied: {}", self.target.display()),
                     })
                     .await;
-                    // 不丢 watcher — 已在 ancestor 上成功挂载 inotify
-                    // 进入 recovery_loop 自恢复，用户无需手动重试
                     self.recovery_loop(level, &ancestor, watcher, evt_rx).await;
                     return;
                 }
                 AccessResult::Other(_) => {
-                    // 无法访问（非权限原因），在当前级等待恢复
                     debug!(
                         "watch: target not accessible from {ancestor:?} level={level}, entering recovery"
                     );
@@ -310,6 +336,71 @@ impl WatchShared {
     }
 
     // -----------------------------------------------------------------------
+    // 虚拟文件 poll 事件循环
+    // -----------------------------------------------------------------------
+
+    /// 用 `poll(2)` / `AsyncFd` 监听虚拟文件系统（如 /proc/mounts）。
+    /// inotify 对这类文件永不触发，必须通过 kernel poll (POLLPRI | POLLERR)
+    /// 来感知变化。零 timeout、零 busy-wait。
+    async fn run_poll(&self) {
+        debug!("poll mode started for {:?}", self.target);
+        self.push_reset().await;
+
+        let fd = match open_nonblock(&self.target) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!(
+                    "run_poll open {:?} failed: {e}, falling back to inotify",
+                    self.target
+                );
+                return;
+            }
+        };
+
+        let async_fd = match AsyncFd::new(fd) {
+            Ok(af) => af,
+            Err(e) => {
+                warn!("run_poll AsyncFd::new {:?} failed: {e}", self.target);
+                return;
+            }
+        };
+
+        loop {
+            let exit = self.exit_signal();
+            tokio::pin!(exit);
+
+            select! {
+                biased;
+
+                _ = &mut exit => {
+                    return;
+                }
+
+                result = async_fd.readable() => {
+                    match result {
+                        Ok(mut guard) => {
+                            guard.clear_ready();
+                            if !is_virtual_fs(&self.target) {
+                                debug!(
+                                    "poll: {:?} no longer virtual, switching to inotify",
+                                    self.target
+                                );
+                                return;
+                            }
+                            // 文件内容可能变了，重置 seek 并推送当前状态
+                            self.push_reset().await;
+                        }
+                        Err(e) => {
+                            warn!("run_poll {:?} readable error: {e}", self.target);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // 恢复循环：等待 target 可访问，进入 Live
     // -----------------------------------------------------------------------
 
@@ -321,8 +412,6 @@ impl WatchShared {
         evt_rx: channel::RxAsync<Vec<PathBuf>>,
     ) {
         let ancestor = ancestor.clone();
-        let report_interval = Duration::from_secs(10);
-        let mut last_report = tokio::time::Instant::now();
 
         self.push_all(&WatchDelta::Recovering {
             path: self.target.clone(),
@@ -332,65 +421,40 @@ impl WatchShared {
         .await;
 
         loop {
-            if !self.has_subscribers().await {
-                return;
-            }
+            let exit = self.exit_signal();
+            tokio::pin!(exit);
 
-            // 等待 inotify 事件或超时
-            match tokio::time::timeout(report_interval, evt_rx.recv()).await {
-                Err(_) => {
-                    // 超时：推送 Recovering 心跳
-                    if last_report.elapsed() >= report_interval {
-                        self.push_all(&WatchDelta::Recovering {
-                            path: self.target.clone(),
-                            ancestor: ancestor.clone(),
-                            level: level as u32,
-                        })
-                        .await;
-                        last_report = tokio::time::Instant::now();
-                    }
-                }
-                Ok(Err(_)) => {
-                    // 通道关闭 → 掉出此循环，由外层 run 从当前 level 重入
+            let paths = select! {
+                biased;
+
+                _ = &mut exit => {
                     return;
                 }
-                Ok(Ok(_paths)) => {
-                    // inotify 事件 → 检查 target
+
+                p = evt_rx.recv() => p,
+            };
+
+            match paths {
+                Err(_) => return,
+                Ok(_paths) => {
+                    // 文件类型可能在暂停期间变化（如普通文件被替换为虚拟文件）
+                    if !self.is_dir && is_virtual_fs(&self.target) {
+                        debug!(
+                            "recovery: {:?} became virtual, switching to poll",
+                            self.target
+                        );
+                        return;
+                    }
                     match self.try_access() {
                         AccessResult::Ok => {
                             self.push_reset().await;
-                            // watcher 已在祖先目录上，继续使用
                             drop(evt_rx);
-                            // 重新在 target 上挂 watcher 并进入事件泵
-                            // 注意：当前的 watcher 在 ancestor 上，需要重建
                             drop(watcher);
                             self.try_live_pump().await;
                             return;
                         }
-                        AccessResult::PermissionDenied => {
-                            // 权限仍不可达 — 继续在 ancestor 上等待（chmod/挂载等）
-                            if last_report.elapsed() >= report_interval {
-                                self.push_all(&WatchDelta::Inaccessible {
-                                    path: self.target.clone(),
-                                    ancestor: ancestor.clone(),
-                                    level: level as u32,
-                                    reason: "permission denied, waiting for access...".into(),
-                                })
-                                .await;
-                                last_report = tokio::time::Instant::now();
-                            }
-                        }
-                        AccessResult::Other(_) => {
-                            // 继续等待
-                            if last_report.elapsed() >= report_interval {
-                                self.push_all(&WatchDelta::Recovering {
-                                    path: self.target.clone(),
-                                    ancestor: ancestor.clone(),
-                                    level: level as u32,
-                                })
-                                .await;
-                                last_report = tokio::time::Instant::now();
-                            }
+                        _ => {
+                            // 仍不可达，继续等待下一个 inotify 事件
                         }
                     }
                 }
@@ -407,7 +471,6 @@ impl WatchShared {
             }
             Err(e) => {
                 warn!("recovered target inotify failed: {e}");
-                // fallback: 重新跑 run() 从 level=0 开始级联
             }
         }
     }
@@ -423,46 +486,76 @@ impl WatchShared {
     ) {
         debug!("event_pump started for {:?}", self.target);
 
-        while let Ok(paths) = evt_rx.recv().await {
-            if !self.has_subscribers().await {
-                return;
-            }
+        loop {
+            let exit = self.exit_signal();
+            tokio::pin!(exit);
 
-            if self.is_dir {
-                // 对每个变更路径：exists → Upsert，否则 Remove
-                // 跳过被监视目录自身（inotify 会因目录内文件变动而报告目录本身）
-                let target = self.target.clone();
-                let deltas: Vec<WatchDelta> = tokio::task::spawn_blocking(move || {
-                    paths
-                        .into_iter()
-                        .filter(|p| *p != target)
-                        .filter_map(|p| {
-                            if p.exists() {
-                                build_file(&p).map(WatchDelta::Upsert)
+            let paths = select! {
+                biased;
+
+                _ = &mut exit => {
+                    return;
+                }
+
+                p = evt_rx.recv() => p,
+            };
+
+            match paths {
+                Err(_) => return,
+                Ok(paths) => {
+                    if self.is_dir {
+                        let target = self.target.clone();
+                        let deltas: Vec<WatchDelta> = tokio::task::spawn_blocking(move || {
+                            paths
+                                .into_iter()
+                                .filter(|p| *p != target)
+                                .filter_map(|p| {
+                                    if p.exists() {
+                                        build_file(&p).map(WatchDelta::Upsert)
+                                    } else {
+                                        Some(WatchDelta::Remove(p))
+                                    }
+                                })
+                                .collect()
+                        })
+                        .await
+                        .unwrap_or_default();
+                        for d in deltas {
+                            self.push_delta(d).await;
+                        }
+                    } else {
+                        let target = self.target.clone();
+                        let delta = tokio::task::spawn_blocking(move || {
+                            if target.exists() {
+                                build_file(&target).map(WatchDelta::Upsert)
                             } else {
-                                Some(WatchDelta::Remove(p))
+                                Some(WatchDelta::Remove(target))
                             }
                         })
-                        .collect()
-                })
-                .await
-                .unwrap_or_default();
-                for d in deltas {
-                    self.push_delta(d).await;
-                }
-            } else {
-                let target = self.target.clone();
-                let delta = tokio::task::spawn_blocking(move || {
-                    if target.exists() {
-                        build_file(&target).map(WatchDelta::Upsert)
-                    } else {
-                        Some(WatchDelta::Remove(target))
+                        .await
+                        .unwrap_or(None);
+                        if let Some(d) = delta {
+                            self.push_delta(d).await;
+                        }
                     }
-                })
-                .await
-                .unwrap_or(None);
-                if let Some(d) = delta {
-                    self.push_delta(d).await;
+
+                    // 文件类型可能在暂停期间变化（如普通文件被替换为虚拟文件）
+                    if !self.is_dir && is_virtual_fs(&self.target) {
+                        debug!(
+                            "event_pump: {:?} became virtual, switching to poll",
+                            self.target
+                        );
+                        return;
+                    }
+                    // 检查 target 是否变得不可访问（如权限变化、挂载点卸载等）
+                    if let AccessResult::Ok = self.try_access() {
+                    } else {
+                        debug!(
+                            "event_pump: {:?} became inaccessible, re-entering cascade",
+                            self.target
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -527,7 +620,7 @@ impl WatchShared {
 }
 
 // ---------------------------------------------------------------------------
-// 小类型
+// 小类型 & 工具函数
 // ---------------------------------------------------------------------------
 
 enum AccessResult {
@@ -535,4 +628,19 @@ enum AccessResult {
     PermissionDenied,
     #[allow(dead_code)]
     Other(String),
+}
+
+/// 检测路径是否在虚拟文件系统上（/proc、/sys）。
+/// 这些文件系统不产生 inotify 事件，必须用 kernel poll (POLLPRI) 监听。
+fn is_virtual_fs(path: &PathBuf) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("/proc/") || s.starts_with("/sys/")
+}
+
+/// 以 O_RDONLY | O_NONBLOCK 打开文件，用于 AsyncFd 包装。
+fn open_nonblock(path: &PathBuf) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
 }

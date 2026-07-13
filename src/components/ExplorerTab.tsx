@@ -9,7 +9,7 @@ import { FileList } from './FileList';
 import { IconButton } from './IconButton';
 import { Icon } from './Icon';
 import type { IFile } from '../types/files';
-import type { WatchDelta, FileEntry } from '../types/tauriEvents';
+import type { WatchDelta, FileEntry, BreadcrumbEntry } from '../types/tauriEvents';
 import {
   renameFile,
   trashFiles,
@@ -69,9 +69,11 @@ interface ExplorerTabProps {
     marqueeEnabled: boolean;
     /** 刷新当前 tab 文件列表（F5） */
     onRefresh?: () => void;
+    /** 面包屑条目（来自后端 hf:breadcrumbs 事件） */
+    breadcrumbs: BreadcrumbEntry[];
 }
 
-export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, onMountDevice, marqueeEnabled, onRefresh }: ExplorerTabProps) {
+export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onContextMenu, onBgMenuItems, onOpenWithFile, onPropertiesFile, onOpenTerminalAt, onCreateDialog, onConflictDialog, showHiddenFiles, iconSize, viewMode, filledIcons, onMountDevice, marqueeEnabled, onRefresh, breadcrumbs }: ExplorerTabProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [files, setFiles] = useState<IFile[]>([]);
   const [hoveredFile, setHoveredFile] = useState<IFile | null>(null);
@@ -809,6 +811,7 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
             <div style={{ flex: 1, overflow: 'hidden' }}>
             <Omnibar
               currentPath={currentPath}
+              breadcrumbs={breadcrumbs}
               onNavigate={(p: string) => onPathChange(p)}
               onSearch={handleSearch}
             />

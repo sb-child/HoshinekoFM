@@ -19,7 +19,9 @@ use tarpc::context;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use crate::ipc::protocol::{AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent};
+use crate::ipc::protocol::{
+    AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent, WatchDelta,
+};
 
 use super::{
     files::ProceedStrategy,
@@ -398,6 +400,54 @@ impl FsWorkerService for FsWorkerServer {
         let block_size = vfs.block_size() as u64;
         Ok((vfs.blocks() * block_size, vfs.blocks_free() * block_size))
     }
+
+    async fn watch_breadcrumb(
+        self,
+        _ctx: context::Context,
+        watch_id: u64,
+        path: PathBuf,
+    ) -> Result<(), String> {
+        set_last_op!(11, watch_id);
+        debug!(
+            "[w{}] watch_breadcrumb {watch_id} {path:?}",
+            self.fs_worker_id
+        );
+
+        // 首帧：立即推送当前面包屑段信息
+        let initial_segments = tokio::task::spawn_blocking({
+            let path = path.clone();
+            move || {
+                let home_map = HOME_MAP.clone();
+                let mount_map = load_mount_map();
+                build_breadcrumb_segments(&path, &home_map, &mount_map)
+            }
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?;
+
+        let _ = self
+            .cb
+            .watch_delta(
+                context::current(),
+                watch_id,
+                WatchDelta::BreadcrumbSegments(initial_segments),
+            )
+            .await;
+
+        // 复用 WatchPool 监听 /proc/mounts 变化
+        // WatchPool 按 canonical path 去重，多个 watch_breadcrumb 共享同一个 watcher
+        let mount_path = PathBuf::from("/proc/mounts");
+        let shared = self
+            .pool
+            .register(watch_id, mount_path.clone(), false, self.cb.clone())
+            .await;
+        self.watch_canonical
+            .lock()
+            .await
+            .insert(watch_id, shared.target.clone());
+
+        Ok(())
+    }
 }
 
 impl FsWorkerServer {
@@ -409,3 +459,124 @@ impl FsWorkerServer {
 }
 
 use super::ops::Decision;
+
+// ---------------------------------------------------------------------------
+// 面包屑辅助：/etc/passwd + /proc/mounts 读取与路径段判断
+// ---------------------------------------------------------------------------
+
+use std::sync::LazyLock;
+
+/// 家目录缓存：path → (username, uid)。/etc/passwd 极少变化，进程生命周期内缓存。
+static HOME_MAP: LazyLock<HashMap<String, (String, u32)>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+        for line in content.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() >= 7 {
+                let username = fields[0].to_string();
+                let uid: u32 = fields[2].parse().unwrap_or(0);
+                let home = fields[5].to_string();
+                if home != "/" && !home.is_empty() {
+                    map.insert(home, (username, uid));
+                }
+            }
+        }
+    }
+    map
+});
+
+/// 加载挂载映射：mountpoint → (source, fstype)。
+/// /proc/mounts 随挂载变化，每次调用重新读取。
+fn load_mount_map() -> HashMap<String, (String, String)> {
+    let mut map = HashMap::new();
+    if let Ok(content) = std::fs::read_to_string("/proc/mounts") {
+        for line in content.lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() >= 3 {
+                let source = unescape_mount(fields[0]);
+                let mountpoint = unescape_mount(fields[1]);
+                let fstype = fields[2].to_string();
+                if !mountpoint.is_empty() {
+                    map.insert(mountpoint, (source, fstype));
+                }
+            }
+        }
+    }
+    map
+}
+
+/// 还原 /proc/mounts 中的转义字符（\040→空格 等）。
+fn unescape_mount(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 3 < bytes.len()
+            && bytes[i] == b'\\'
+            && bytes[i + 1].is_ascii_digit()
+            && bytes[i + 2].is_ascii_digit()
+            && bytes[i + 3].is_ascii_digit()
+        {
+            let octal =
+                (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + (bytes[i + 3] - b'0');
+            result.push(octal as char);
+            i += 4;
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// 将路径拆分为逐级祖先目录。
+fn split_path_segments(path: &std::path::Path) -> Vec<PathBuf> {
+    let mut segments = Vec::new();
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component);
+        if current == std::path::Path::new("/") {
+            continue;
+        }
+        segments.push(current.clone());
+    }
+    segments
+}
+
+/// 为面包屑构建每个路径段的 home/mount 信息。
+fn build_breadcrumb_segments(
+    path: &std::path::Path,
+    home_map: &HashMap<String, (String, u32)>,
+    mount_map: &HashMap<String, (String, String)>,
+) -> Vec<crate::ipc::protocol::BreadcrumbSegment> {
+    let seg_paths = split_path_segments(path);
+    seg_paths
+        .iter()
+        .map(|seg_path| {
+            let path_str = seg_path.to_string_lossy().to_string();
+            let name = seg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "/".to_string());
+
+            let (is_home, home_username) = match home_map.get(&path_str) {
+                Some((username, _)) => (true, Some(username.clone())),
+                None => (false, None),
+            };
+
+            let (is_mount_point, mount_source) = match mount_map.get(&path_str) {
+                Some((source, _fstype)) => (true, Some(source.clone())),
+                None => (false, None),
+            };
+
+            crate::ipc::protocol::BreadcrumbSegment {
+                name,
+                path: path_str,
+                is_home,
+                home_username,
+                is_mount_point,
+                mount_source,
+            }
+        })
+        .collect()
+}

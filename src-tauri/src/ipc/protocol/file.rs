@@ -104,6 +104,11 @@ pub enum WatchDelta {
         reason: String,
         reconnecting: bool,
     },
+    /// 面包屑路径段信息（home/mount 判断结果）。
+    ///
+    /// FsWorker 监听 /proc/mounts 变化，当挂载状态改变时重新推送。
+    /// 首帧或 refresh 后也会推送。
+    BreadcrumbSegments(Vec<BreadcrumbSegment>),
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +192,26 @@ pub enum ProgressEvent {
 // Worker RPC: FsWorkerService（主进程 → Worker）
 // ---------------------------------------------------------------------------
 
+/// 面包屑路径段信息（FsWorker → 主进程）。
+///
+/// FsWorker 内部读取 /etc/passwd 和 /proc/mounts，对每个祖先目录段
+/// 返回 home / mount 判断结果。主进程无需直接访问这些系统文件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreadcrumbSegment {
+    /// 段名（如 "Documents"）
+    pub name: String,
+    /// 截至该段的完整路径（如 "/home/sbchild/Documents"）
+    pub path: String,
+    /// 是否为某个用户的家目录
+    pub is_home: bool,
+    /// 家目录对应的用户名（仅当 is_home=true 时有值）
+    pub home_username: Option<String>,
+    /// 是否为挂载点
+    pub is_mount_point: bool,
+    /// 挂载源名称（如 "devtmpfs"、"tmpfs"，仅当 is_mount_point=true 时有值）
+    pub mount_source: Option<String>,
+}
+
 /// FS Worker 子进程提供的 RPC 服务。
 ///
 /// 主进程为 client，Worker 为 server。传输层为匿名 socketpair + tarpc。
@@ -219,6 +244,8 @@ pub trait FsWorkerService {
     async fn cancel_op(op_id: u64);
     /// 文件系统空间查询。返回 `(total_bytes, free_bytes)`。
     async fn stat_vfs(path: PathBuf) -> Result<(u64, u64), String>;
+    /// 监听面包屑路径段信息。首帧立即推送，后续 /proc/mounts 变化时重推。
+    async fn watch_breadcrumb(watch_id: u64, path: PathBuf) -> Result<(), String>;
 }
 
 // ---------------------------------------------------------------------------

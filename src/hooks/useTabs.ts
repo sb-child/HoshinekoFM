@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { TabsPayload, NavStatePayload, TabInfo } from "../types/tauriEvents";
+import type { TabsPayload, NavStatePayload, TabInfo, BreadcrumbsPayload, BreadcrumbEntry } from "../types/tauriEvents";
 
 export interface TabState {
   id: number;
@@ -19,6 +19,9 @@ export function useTabs() {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<number>(0);
   const [currentPath, setCurrentPath] = useState("");
+  const [breadcrumbs, setBreadcrumbs] = useState<Map<number, BreadcrumbEntry[]>>(
+    new Map(),
+  );
   const currentPathRef = useRef<string>("");
   const readyRef = useRef(false);
   const unlistens = useRef<UnlistenFn[]>([]);
@@ -76,7 +79,16 @@ export function useTabs() {
         }
       });
 
-      unlistens.current = [ul1, ul2];
+      const ul3 = await listen<BreadcrumbsPayload>("hf:breadcrumbs", (event) => {
+        const payload = event.payload;
+        setBreadcrumbs((prev) => {
+          const next = new Map(prev);
+          next.set(payload.tab_id, payload.entries);
+          return next;
+        });
+      });
+
+      unlistens.current = [ul1, ul2, ul3];
 
       // 告诉后端：就绪
       try {
@@ -143,11 +155,20 @@ export function useTabs() {
     }
   }, []);
 
+  /** 获取指定 tab 的面包屑条目 */
+  const getBreadcrumbs = useCallback(
+    (tabId: number): BreadcrumbEntry[] => {
+      return breadcrumbs.get(tabId) ?? [];
+    },
+    [breadcrumbs],
+  );
+
   return {
     tabs,
     activeTabId,
     setActiveTabId,
     currentPath,
+    getBreadcrumbs,
     handleAddTab,
     handleCloseTab,
     handleSwitchTab,

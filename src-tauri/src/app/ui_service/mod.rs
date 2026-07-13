@@ -26,6 +26,7 @@
 //! - `clipboard` — 剪贴板 + DnD 状态
 //! - `progress` — 操作归组 + 进度泵
 
+pub mod breadcrumbs;
 pub mod clipboard;
 pub mod nav;
 pub mod progress;

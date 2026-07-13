@@ -58,7 +58,24 @@ export interface FileEntry {
   thumbnail: number[] | null; // Vec<u8> as byte array
 }
 
-/** `hf:dashboard` 事件载荷 */
+/** `hf:breadcrumbs` 事件 — 单个路径段信息 */
+export interface BreadcrumbEntry {
+  name: string;
+  path: string;
+  is_symlink: boolean;
+  symlink_target: string | null;
+  is_mount_point: boolean;
+  mount_source: string | null;
+  is_home: boolean;
+  home_username: string | null;
+  accessible: boolean;
+}
+
+/** `hf:breadcrumbs` 事件载荷 */
+export interface BreadcrumbsPayload {
+  tab_id: number;
+  entries: BreadcrumbEntry[];
+}
 export interface DashboardData {
   storage: {
     total_bytes: number;

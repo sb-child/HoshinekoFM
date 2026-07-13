@@ -95,6 +95,42 @@ pub struct NavStatePayload {
     pub can_go_forward: bool,
 }
 
+/// 面包屑事件载荷（`hf:breadcrumbs`）。
+///
+/// 后端 watch 线程在导航目标变更或路径段属性变化时推送。
+/// 前端应以此为准渲染面包屑，不再自行调用 `getHomeMap` / `getMountMap` / `checkSymlinks`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreadcrumbsPayload {
+    pub tab_id: u64,
+    pub entries: Vec<BreadcrumbEntry>,
+}
+
+/// 面包屑单个路径段。
+///
+/// 后端通过 `watch_stat` 监听每个祖先目录的属性变化，
+/// 实时更新 home / mount / symlink / accessible 等信息。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreadcrumbEntry {
+    /// 段名（如 "Documents"）
+    pub name: String,
+    /// 截至该段的完整路径（如 "/home/sbchild/Documents"）
+    pub path: String,
+    /// 是否为符号链接
+    pub is_symlink: bool,
+    /// 软链接目标路径（仅当 is_symlink=true 时有值）
+    pub symlink_target: Option<String>,
+    /// 是否为挂载点
+    pub is_mount_point: bool,
+    /// 挂载源名称（如 "devtmpfs"、"tmpfs"，仅当 is_mount_point=true 时有值）
+    pub mount_source: Option<String>,
+    /// 是否为某个用户的家目录
+    pub is_home: bool,
+    /// 家目录对应的用户名（仅当 is_home=true 时有值）
+    pub home_username: Option<String>,
+    /// 路径是否可访问（权限不足/路径不存在时为 false）
+    pub accessible: bool,
+}
+
 /// 仪表盘内容。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardData {

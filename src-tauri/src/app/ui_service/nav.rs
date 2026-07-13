@@ -22,6 +22,7 @@ use crate::ipc::protocol::{
 };
 
 use super::UIService;
+use super::breadcrumbs::{BreadcrumbCommand, BreadcrumbManager};
 
 // ---------------------------------------------------------------------------
 // 运行时 Tab 状态（含 UidToken）
@@ -198,6 +199,10 @@ impl WatchSnapshot {
                     reason: reason.clone(),
                     reconnecting: *reconnecting,
                 };
+            }
+            WatchDelta::BreadcrumbSegments(_) => {
+                // 面包屑事件由 BreadcrumbManager 独立处理，
+                // 文件列表快照无需处理此变体。
             }
         }
     }
@@ -403,6 +408,9 @@ impl UIService {
 
         let mgr = self.mgr.clone();
 
+        // 启动面包屑管理器（独立任务）
+        let breadcrumb_mgr = BreadcrumbManager::start(window.clone(), mgr.clone());
+
         tokio::spawn(async move {
             let mut tab_targets: HashMap<u64, WatchTarget> = HashMap::new();
             let mut tab_watches: HashMap<u64, TabWatchEntry> = HashMap::new();
@@ -455,6 +463,8 @@ impl UIService {
                                     let _ = window.emit("hf:file-list", &entry.snapshot.to_delta());
                                 }
                             }
+                            // 面包屑：推送该 tab 的缓存面包屑
+                            breadcrumb_mgr.send(BreadcrumbCommand::TabSwitch { tab_id });
                         }
                         WatchCommand::NavUpdate { tab_id, target } => {
                             tab_targets.insert(tab_id, target.clone());
@@ -464,7 +474,7 @@ impl UIService {
                             if let WatchTarget::Filesystem { path, token } = target {
                                 let (handle, id_rx) = spawn_watcher_task(
                                     tab_id,
-                                    path,
+                                    path.clone(),
                                     token.clone(),
                                     event_tx.clone(),
                                     mgr.clone(),
@@ -476,9 +486,15 @@ impl UIService {
                                         snapshot: WatchSnapshot::empty(),
                                         watch_id: 0,
                                         watch_id_rx: Some(id_rx),
-                                        token,
+                                        token: token.clone(),
                                     },
                                 );
+                                // 面包屑：重建该 tab 的面包屑 watcher
+                                breadcrumb_mgr.send(BreadcrumbCommand::NavUpdate {
+                                    tab_id,
+                                    path,
+                                    token,
+                                });
                             }
                         }
                         WatchCommand::TabClosed { tab_id } => {
@@ -489,6 +505,8 @@ impl UIService {
                             if active_tab == Some(tab_id) {
                                 active_tab = None;
                             }
+                            // 面包屑：清理该 tab 的 watcher
+                            breadcrumb_mgr.send(BreadcrumbCommand::TabClosed { tab_id });
                         }
                         WatchCommand::Refresh => {
                             // 对 active tab 发 Refresh RPC
@@ -513,6 +531,7 @@ impl UIService {
                             }
                         }
                         WatchCommand::Shutdown => {
+                            breadcrumb_mgr.send(BreadcrumbCommand::Shutdown);
                             for (_, entry) in tab_watches.drain() {
                                 entry.handle.abort();
                             }

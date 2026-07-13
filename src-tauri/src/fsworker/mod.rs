@@ -178,6 +178,10 @@ pub enum WorkerRequestContent {
     StatVfs {
         path: PathBuf,
     },
+    WatchBreadcrumb {
+        watch_id: u64,
+        path: PathBuf,
+    },
 }
 
 /// WorkerRelay → FsService 的响应。
@@ -801,6 +805,9 @@ impl WorkerRelay {
             }
             WorkerRequestContent::StatVfs { .. } => {
                 unreachable!("handled before match")
+            }
+            WorkerRequestContent::WatchBreadcrumb { watch_id, path } => {
+                client.watch_breadcrumb(ctx, watch_id, path).await
             }
         };
 

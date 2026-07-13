@@ -56,6 +56,7 @@ function AppContent() {
     handleSwitchTab,
     handleSidebarNavigate,
     refreshActiveTab,
+    getBreadcrumbs,
   } = useTabs();
 
   const setDragOverPath = useSetDragOver();
@@ -677,6 +678,7 @@ function AppContent() {
                 onMountDevice={handleDeviceMount}
                 marqueeEnabled={marqueeEnabled}
                 onRefresh={refreshActiveTab}
+                breadcrumbs={getBreadcrumbs(tab.id)}
               />
             </div>
           ))}

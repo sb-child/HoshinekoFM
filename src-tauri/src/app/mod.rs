@@ -160,6 +160,7 @@ pub async fn run_app(opts: RunOpts) {
             commands::copy_files,
             commands::elevate_tab,
             commands::import_files,
+            commands::realpath,
             crate::window_bus::commands::get_window_id,
         ])
         .setup({

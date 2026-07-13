@@ -17,6 +17,25 @@ pub fn resolve_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// 规范化路径（解析 `.` 和 `..`），不跟随符号链接。
+/// 与 `resolve_path` 不同：`/bin -> /usr/bin` 时返回 `/bin` 而非 `/usr/bin`。
+pub fn normalize_path_no_symlink(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                if !matches!(components.last(), Some(Component::RootDir)) {
+                    components.pop();
+                }
+            }
+            Component::CurDir => {}
+            c => components.push(c),
+        }
+    }
+    components.into_iter().collect()
+}
+
 /// 列出目录内容为 `File` 列表（含 mime；缩略图 TODO）。
 pub fn list_dir_files(dir: &Path) -> Vec<File> {
     let mut files = Vec::new();

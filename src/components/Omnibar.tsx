@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
 import { t } from "../i18n";
+import type { BreadcrumbEntry } from "../types/tauriEvents";
 import "./Omnibar.css";
 
 interface OmnibarProps {
   currentPath: string;
+  breadcrumbs: BreadcrumbEntry[];
   onNavigate: (path: string) => void;
   onSearch: (query: string, options?: { type?: 'f' | 'd'; minSize?: string; maxSize?: string }) => void;
 }
@@ -20,23 +23,23 @@ interface OmnibarCtxMenuState {
 
 export const Omnibar: React.FC<OmnibarProps> = ({
   currentPath,
+  breadcrumbs,
   onNavigate,
   onSearch,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(currentPath);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  /** 当前路径中是否存在软链接目录段 */
-  const [hasPathSymlinks, setHasPathSymlinks] = useState(false);
-
-  /** 编辑按钮右键菜单位置 */
   const [omnibarCtxMenu, setOmnibarCtxMenu] = useState<OmnibarCtxMenuState | null>(null);
 
+  /** 当前路径中是否存在软链接目录段（从 breadcrumb 条目判断） */
+  const hasPathSymlinks = useMemo(
+    () => breadcrumbs.some(e => e.is_symlink),
+    [breadcrumbs],
+  );
+
   useEffect(() => {
-    if (!isEditing) {
-      setInputValue(currentPath); // eslint-disable-line react-hooks/set-state-in-effect
-    }
+    if (!isEditing) setInputValue(currentPath);
   }, [currentPath, isEditing]);
 
   useEffect(() => {
@@ -46,28 +49,10 @@ export const Omnibar: React.FC<OmnibarProps> = ({
     }
   }, [isEditing]);
 
-  /** 检测当前路径中是否有任意段是软链接 */
   useEffect(() => {
-    const segments = currentPath.split('/').filter(Boolean)
-      .map((_, i, arr) => '/' + arr.slice(0, i + 1).join('/'));
-
-    let cancelled = false;
-    if (segments.length > 0) {
-      window.electron.checkSymlinks(segments).then((results) => {
-        if (cancelled) return;
-        setHasPathSymlinks(results.some((r) => r.isSymlink));
-      }).catch(() => {
-        if (!cancelled) setHasPathSymlinks(false);
-      });
-    }
-    setOmnibarCtxMenu(null); // eslint-disable-line react-hooks/set-state-in-effect
-    return () => { cancelled = true; };
+    setOmnibarCtxMenu(null);
   }, [currentPath]);
 
-  /**
-   * 编辑按钮右键菜单：仅在当前路径包含软链接时显示"展平软链接"选项。
-   * 点击后通过 `fs:realpath` 解析并跳转到真实路径。
-   */
   const handleEditContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -80,7 +65,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
       icon: "link",
       action: async () => {
         try {
-          const resolved = await window.electron.realpath(currentPath);
+          const resolved: string = await invoke("realpath", { path: currentPath });
           onNavigate(resolved);
         } catch {
           // realpath failed — do nothing
@@ -92,29 +77,17 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   const handleSubmit = () => {
     setIsEditing(false);
     const trimmed = inputValue.trim();
-
     if (!trimmed) return;
 
-    // Logic:
-    // If starts with '/' or contains separator -> Path Navigation
-    // Else -> Search
-
-    if (
-      trimmed.startsWith("/") ||
-      trimmed.startsWith("~") ||
-      trimmed.includes("/")
-    ) {
+    if (trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("/")) {
       onNavigate(trimmed);
     } else {
-      // It's a search!
       onSearch(trimmed);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleSubmit();
-    }
+    if (e.key === "Enter") handleSubmit();
     if (e.key === "Escape") {
       setIsEditing(false);
       setInputValue(currentPath);
@@ -136,20 +109,14 @@ export const Omnibar: React.FC<OmnibarProps> = ({
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            onBlur={() => {
-              // Optional: Cancel on blur?
-              // Or Submit? Usually Cancel or Keep if waiting.
-              // Let's keeps editing unless empty or escape.
-              // Actually better UX: Click outside -> Cancel back to breadcrumbs.
-              setIsEditing(false);
-            }}
+            onBlur={() => setIsEditing(false)}
             placeholder={t("omnibar.placeholder")}
           />
         </div>
       ) : (
         <div className="omnibar-breadcrumbs">
           <Breadcrumbs
-            currentPath={currentPath}
+            entries={breadcrumbs}
             onNavigate={onNavigate}
           />
           <IconButton

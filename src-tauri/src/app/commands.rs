@@ -307,3 +307,15 @@ pub async fn import_files(
         .collect();
     ui.copy_files_by_paths(tab_id, pairs, ctx).await
 }
+
+// ---------------------------------------------------------------------------
+// 工具命令
+// ---------------------------------------------------------------------------
+
+/// 解析路径中的符号链接，返回规范路径。
+#[command]
+pub fn realpath(path: String) -> Result<String, String> {
+    std::fs::canonicalize(&path)
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
