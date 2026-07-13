@@ -44,12 +44,17 @@ pub struct Op {
 pub struct Watcher {
     /// 增量事件流
     pub events: mpsc::UnboundedReceiver<WatchDelta>,
-    watch_id: u64,
+    pub(crate) watch_id: u64,
     /// 保活对应 Worker + 发送请求
     _token: UidToken,
 }
 
 impl Watcher {
+    /// Watcher 的全局唯一 ID。
+    pub fn watch_id(&self) -> u64 {
+        self.watch_id
+    }
+
     /// 立刻触发全量刷新（对应前端刷新键）。
     pub async fn refresh(&self) {
         let _ = self

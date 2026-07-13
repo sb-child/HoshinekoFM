@@ -1,10 +1,19 @@
 //! 导航历史 + tab 管理 + watcher 生命周期。
+//!
+//! ## Watcher 架构
+//!
+//! 每个窗口一个持久 watch 线程（`start_watch`），内部维护所有 tab 的 watcher 任务 +
+//! 文件列表快照。tab 切换时直接推送缓存快照（零 RPC / 零 I/O），然后接增量事件。
 
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use tauri::Emitter;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::app::state::AppStateManager;
 use crate::fsworker::UidToken;
 use crate::ipc::protocol::{
     ContextId, InstanceMessage, NavEntry, NavStatePayload, NavTarget, TabInfo, TabsPayload,
@@ -41,12 +50,262 @@ impl TabNavState {
             .unwrap_or_else(|| "New Tab".to_string())
     }
 
-    fn nav_target(&self) -> NavTarget {
+    pub(super) fn nav_target(&self) -> NavTarget {
         self.nav_history
             .get(self.nav_index)
             .map(|e| e.target.clone())
             .unwrap_or(NavTarget::Filesystem("/".to_string()))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Watch 线程内部类型
+// ---------------------------------------------------------------------------
+
+/// 给 per-window watch 线程的控制命令。
+pub(super) enum WatchCommand {
+    /// 活跃 tab 切换。线程推送该 tab 的快照，然后接增量事件。
+    TabSwitch { tab_id: u64 },
+    /// Tab 导航目标变更。线程更新 tab_targets，必要时重建 watcher。
+    NavUpdate { tab_id: u64, target: WatchTarget },
+    /// Tab 关闭。线程清理 watcher + 快照。
+    TabClosed { tab_id: u64 },
+    /// 用户刷新（F5）。对 active tab 的 watcher 发 Refresh RPC。
+    Refresh,
+    /// 窗口关闭。清理所有 watcher 任务并退出。
+    Shutdown,
+}
+
+/// 导航目标（watch 线程视角）。
+#[derive(Clone)]
+pub(super) enum WatchTarget {
+    Filesystem { path: PathBuf, token: UidToken },
+    Dashboard,
+}
+
+/// Per-watcher 最新状态快照。随 watcher 事件增量更新。
+/// Tab 切换时直接 push 快照避免重新 list_dir。
+enum WatchSnapshot {
+    /// 正常直播中，path → File 映射
+    Live {
+        files: HashMap<PathBuf, crate::ipc::protocol::File>,
+    },
+    /// 目录不可访问（权限拒绝等）
+    Inaccessible {
+        path: PathBuf,
+        ancestor: PathBuf,
+        level: u32,
+        reason: String,
+    },
+    /// 级联恢复中
+    Recovering {
+        path: PathBuf,
+        ancestor: PathBuf,
+        level: u32,
+    },
+    /// Watcher 彻底失效
+    FatalError {
+        path: PathBuf,
+        reason: String,
+    },
+    /// Worker 连接断开
+    ConnectionLost {
+        watch_id: u64,
+        reason: String,
+        reconnecting: bool,
+    },
+}
+
+impl WatchSnapshot {
+    /// 初始空状态（首帧 Reset 到来前）。
+    fn empty() -> Self {
+        WatchSnapshot::Live {
+            files: HashMap::new(),
+        }
+    }
+
+    /// 更新快照以反应一次 WatchDelta 事件。
+    fn apply(&mut self, delta: &WatchDelta) {
+        match delta {
+            WatchDelta::Reset(files) => {
+                let mut map = HashMap::with_capacity(files.len());
+                for f in files {
+                    map.insert(f.path.clone(), f.clone());
+                }
+                *self = WatchSnapshot::Live { files: map };
+            }
+            WatchDelta::Upsert(file) => {
+                if let WatchSnapshot::Live { files } = self {
+                    files.insert(file.path.clone(), file.clone());
+                }
+            }
+            WatchDelta::Remove(path) => {
+                if let WatchSnapshot::Live { files } = self {
+                    files.remove(path);
+                }
+            }
+            WatchDelta::Rename { from, to } => {
+                if let WatchSnapshot::Live { files } = self {
+                    if let Some(mut f) = files.remove(from) {
+                        f.name = to
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        f.path = to.clone();
+                        files.insert(to.clone(), f);
+                    }
+                }
+            }
+            WatchDelta::Inaccessible {
+                path,
+                ancestor,
+                level,
+                reason,
+            } => {
+                *self = WatchSnapshot::Inaccessible {
+                    path: path.clone(),
+                    ancestor: ancestor.clone(),
+                    level: *level,
+                    reason: reason.clone(),
+                };
+            }
+            WatchDelta::Recovering {
+                path,
+                ancestor,
+                level,
+            } => {
+                if matches!(self, WatchSnapshot::Live { .. }) {
+                    // 不覆盖 Live 快照，Recovering 只是临时指示
+                } else {
+                    *self = WatchSnapshot::Recovering {
+                        path: path.clone(),
+                        ancestor: ancestor.clone(),
+                        level: *level,
+                    };
+                }
+            }
+            WatchDelta::FatalError { path, reason } => {
+                *self = WatchSnapshot::FatalError {
+                    path: path.clone(),
+                    reason: reason.clone(),
+                };
+            }
+            WatchDelta::ConnectionLost {
+                watch_id,
+                reason,
+                reconnecting,
+            } => {
+                *self = WatchSnapshot::ConnectionLost {
+                    watch_id: *watch_id,
+                    reason: reason.clone(),
+                    reconnecting: *reconnecting,
+                };
+            }
+        }
+    }
+
+    /// 将快照转为可 emit 的 WatchDelta。
+    fn to_delta(&self) -> WatchDelta {
+        match self {
+            WatchSnapshot::Live { files } => {
+                WatchDelta::Reset(files.values().cloned().collect())
+            }
+            WatchSnapshot::Inaccessible {
+                path,
+                ancestor,
+                level,
+                reason,
+            } => WatchDelta::Inaccessible {
+                path: path.clone(),
+                ancestor: ancestor.clone(),
+                level: *level,
+                reason: reason.clone(),
+            },
+            WatchSnapshot::Recovering {
+                path,
+                ancestor,
+                level,
+            } => WatchDelta::Recovering {
+                path: path.clone(),
+                ancestor: ancestor.clone(),
+                level: *level,
+            },
+            WatchSnapshot::FatalError { path, reason } => WatchDelta::FatalError {
+                path: path.clone(),
+                reason: reason.clone(),
+            },
+            WatchSnapshot::ConnectionLost {
+                watch_id,
+                reason,
+                reconnecting,
+            } => WatchDelta::ConnectionLost {
+                watch_id: *watch_id,
+                reason: reason.clone(),
+                reconnecting: *reconnecting,
+            },
+        }
+    }
+}
+
+/// Watch 线程维护的 per-tab watcher 元数据。
+struct TabWatchEntry {
+    /// Watcher 转发任务句柄（abort = drop Watcher → unwatch）
+    handle: tokio::task::JoinHandle<()>,
+    /// 该 tab 当前文件列表快照
+    snapshot: WatchSnapshot,
+    /// Watch ID（由 watcher task 通过 oneshot 回报，0 表示尚未回报）
+    watch_id: u64,
+    /// 等待 watch_id 的 oneshot receiver（Some 表示尚未收到）
+    watch_id_rx: Option<tokio::sync::oneshot::Receiver<u64>>,
+    /// UID Token（用于 Refresh RPC + 保活 Worker）
+    token: UidToken,
+}
+
+// ---------------------------------------------------------------------------
+// spawn_watcher_task — 为一个 tab 创建 watcher 转发任务
+// ---------------------------------------------------------------------------
+
+/// 创建 watcher 转发任务。任务持有 Watcher（RAII cleanup），
+/// 将事件通过统一 channel 转发给主线程。
+///
+/// 返回 (JoinHandle, watch_id_rx)。
+fn spawn_watcher_task(
+    tab_id: u64,
+    path: PathBuf,
+    token: UidToken,
+    event_tx: mpsc::UnboundedSender<(u64, WatchDelta)>,
+    mgr: Arc<AppStateManager>,
+) -> (tokio::task::JoinHandle<()>, tokio::sync::oneshot::Receiver<u64>) {
+    let (id_tx, id_rx) = tokio::sync::oneshot::channel();
+    let handle = tokio::spawn(async move {
+        let watcher = match mgr.fs_service.watch_dir(&token, &path).await {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("spawn_watcher_task tab={tab_id}: watch_dir failed: {e}");
+                let _ = event_tx.send((
+                    tab_id,
+                    WatchDelta::FatalError {
+                        path: path.clone(),
+                        reason: e,
+                    },
+                ));
+                let _ = id_tx.send(0);
+                return;
+            }
+        };
+        let watch_id = watcher.watch_id();
+        let _ = id_tx.send(watch_id);
+        debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
+
+        let mut watcher = watcher;
+        while let Some(delta) = watcher.events.recv().await {
+            if event_tx.send((tab_id, delta)).is_err() {
+                break;
+            }
+        }
+        debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} ended");
+    });
+    (handle, id_rx)
 }
 
 // ---------------------------------------------------------------------------
@@ -59,13 +318,11 @@ impl UIService {
     // -----------------------------------------------------------------------
 
     /// 切换到指定 tab（前端点击 tab bar）。
+    /// 仅更新状态 + 通知 watch 线程，不再直接管理 watcher。
     pub async fn switch_tab(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
-        let old_label = window.label().to_string();
-        if let Some(old_id) = self.get_active_tab(&old_label) {
-            if old_id == tab_id {
-                return Ok(()); // 已经是活跃 tab
-            }
-            self.stop_watch(old_id);
+        let label = window.label().to_string();
+        if self.get_active_tab(&label) == Some(tab_id) {
+            return Ok(());
         }
 
         if !self.tabs.read().unwrap().contains_key(&tab_id) {
@@ -75,7 +332,11 @@ impl UIService {
         self.set_active_tab(window.label().to_string(), tab_id);
         self.emit_tabs(window);
         self.emit_nav_state(window, tab_id);
-        self.start_watch(window.clone(), tab_id).await;
+
+        if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+            let _ = tx.send(WatchCommand::TabSwitch { tab_id });
+        }
+
         Ok(())
     }
 
@@ -128,114 +389,166 @@ impl UIService {
     }
 
     // -----------------------------------------------------------------------
-    // Watcher 生命周期
+    // Watcher 生命周期 — 每窗口一个持久线程
     // -----------------------------------------------------------------------
 
-    /// 为 tab 启动文件 watcher 后台任务。若是 Dashboard 则 emit dashboard 数据。
-    pub(super) async fn start_watch(&self, window: tauri::Window, tab_id: u64) {
-        let token = match self.get_tab_token(tab_id) {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("start_watch: {e}");
-                return;
-            }
-        };
+    /// 为窗口启动持久 watch 线程（每个窗口调用一次）。
+    ///
+    /// 线程内部维护所有 tab 的 watcher 任务 + 文件列表快照。
+    /// Tab 切换时直接 push 缓存快照，然后接增量事件。
+    pub fn start_watch(&self, window: tauri::Window) {
+        let label = window.label().to_string();
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<WatchCommand>();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<(u64, WatchDelta)>();
 
-        let target = {
-            let tabs = self.tabs.read().unwrap();
-            tabs.get(&tab_id)
-                .and_then(|t| t.nav_history.get(t.nav_index))
-                .map(|e| e.target.clone())
-                .unwrap_or(NavTarget::Filesystem("/".to_string()))
-        };
+        self.watch_txs
+            .write()
+            .unwrap()
+            .insert(label.clone(), cmd_tx);
 
-        match &target {
-            NavTarget::Dashboard => {
-                match self.build_dashboard(&token).await {
-                    Ok(data) => {
-                        let _ = window.emit("hf:dashboard", &data);
-                    }
-                    Err(e) => {
-                        warn!("dashboard build failed: {e}");
-                    }
-                }
-            }
-            NavTarget::Filesystem(path) => {
-                match self
-                    .mgr
-                    .fs_service
-                    .watch_dir(&token, Path::new(path))
-                    .await
-                {
-                    Ok(watcher) => {
-                        let tab_id_pump = tab_id;
-                        let path_pump = path.clone();
-                        let handle = tokio::spawn(async move {
-                            let mut watcher = watcher;
-                            info!(
-                                "start_watch pump started for tab={tab_id_pump} path={path_pump}"
-                            );
-                            while let Some(delta) = watcher.events.recv().await {
-                                match &delta {
-                                    WatchDelta::ConnectionLost {
-                                        reason,
-                                        reconnecting,
-                                        ..
-                                    } => {
-                                        info!("start_watch pump tab={tab_id_pump}: ConnectionLost reason={reason} reconnecting={reconnecting}");
-                                    }
-                                    WatchDelta::Reset(files) => {
-                                        debug!("start_watch pump tab={tab_id_pump}: Reset {} entries", files.len());
-                                    }
-                                    _ => {}
-                                }
-                                let _ = window.emit("hf:file-list", &delta);
+        let mgr = self.mgr.clone();
+
+        tokio::spawn(async move {
+            let mut tab_targets: HashMap<u64, WatchTarget> = HashMap::new();
+            let mut tab_watches: HashMap<u64, TabWatchEntry> = HashMap::new();
+            let mut active_tab: Option<u64> = None;
+
+            loop {
+                // 收取所有已就绪的 watch_id
+                for entry in tab_watches.values_mut() {
+                    if let Some(rx) = entry.watch_id_rx.as_mut() {
+                        match rx.try_recv() {
+                            Ok(wid) => {
+                                entry.watch_id = wid;
+                                entry.watch_id_rx = None;
                             }
-                            info!(
-                                "start_watch pump ended for tab={tab_id_pump} path={path_pump}"
-                            );
-                        });
-                        self.file_watchers
-                            .write()
-                            .unwrap()
-                            .insert(tab_id, handle);
+                            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                                entry.watch_id_rx = None;
+                            }
+                        }
                     }
-                    Err(e) => {
-                        warn!("watch_dir failed for {path}: {e}");
-                        let _ = window.emit(
-                            "hf:file-list",
-                            &WatchDelta::Inaccessible {
-                                path: PathBuf::from(path.clone()),
-                                ancestor: PathBuf::from(path),
-                                level: 0,
-                                reason: e,
-                            },
-                        );
+                }
+
+                enum ThreadEvent {
+                    Command(WatchCommand),
+                    WatcherDelta { tab_id: u64, delta: WatchDelta },
+                }
+
+                let result = {
+                    let cmd_fut = cmd_rx.recv();
+                    tokio::pin!(cmd_fut);
+
+                    tokio::select! {
+                        c = &mut cmd_fut => match c {
+                            Some(cmd) => ThreadEvent::Command(cmd),
+                            None => break,
+                        },
+                        pair = event_rx.recv() => match pair {
+                            Some((tab_id, delta)) => ThreadEvent::WatcherDelta { tab_id, delta },
+                            None => ThreadEvent::Command(WatchCommand::Shutdown),
+                        },
+                    }
+                };
+
+                match result {
+                    ThreadEvent::Command(cmd) => match cmd {
+                        WatchCommand::TabSwitch { tab_id } => {
+                            active_tab = Some(tab_id);
+                            if let Some(entry) = tab_watches.get(&tab_id) {
+                                if entry.watch_id != 0 {
+                                    let _ = window.emit("hf:file-list", &entry.snapshot.to_delta());
+                                }
+                            }
+                        }
+                        WatchCommand::NavUpdate { tab_id, target } => {
+                            tab_targets.insert(tab_id, target.clone());
+                            if let Some(old) = tab_watches.remove(&tab_id) {
+                                old.handle.abort();
+                            }
+                            if let WatchTarget::Filesystem { path, token } = target {
+                                let (handle, id_rx) = spawn_watcher_task(
+                                    tab_id, path, token.clone(), event_tx.clone(), mgr.clone(),
+                                );
+                                tab_watches.insert(
+                                    tab_id,
+                                    TabWatchEntry {
+                                        handle,
+                                        snapshot: WatchSnapshot::empty(),
+                                        watch_id: 0,
+                                        watch_id_rx: Some(id_rx),
+                                        token,
+                                    },
+                                );
+                            }
+                        }
+                        WatchCommand::TabClosed { tab_id } => {
+                            if let Some(entry) = tab_watches.remove(&tab_id) {
+                                entry.handle.abort();
+                            }
+                            tab_targets.remove(&tab_id);
+                            if active_tab == Some(tab_id) {
+                                active_tab = None;
+                            }
+                        }
+                        WatchCommand::Refresh => {
+                            // 对 active tab 发 Refresh RPC
+                            if let Some(id) = active_tab {
+                                if let Some(entry) = tab_watches.get(&id) {
+                                    let token = entry.token.clone();
+                                    let watch_id = entry.watch_id;
+                                    if watch_id != 0 {
+                                        tokio::spawn(async move {
+                                            let _ = token
+                                                .send_request(
+                                                    crate::fsworker::WorkerRequestContent::Refresh {
+                                                        watch_id,
+                                                    },
+                                                )
+                                                .await;
+                                        });
+                                    } else {
+                                        warn!("Refresh: watch_id=0 for active tab {id}, skipping");
+                                    }
+                                }
+                            }
+                        }
+                        WatchCommand::Shutdown => {
+                            for (_, entry) in tab_watches.drain() {
+                                entry.handle.abort();
+                            }
+                            return;
+                        }
+                    },
+                    ThreadEvent::WatcherDelta { tab_id, delta } => {
+                        // 总是更新快照
+                        if let Some(entry) = tab_watches.get_mut(&tab_id) {
+                            entry.snapshot.apply(&delta);
+                        }
+                        // 仅 active tab 转发给前端
+                        if Some(tab_id) == active_tab {
+                            let _ = window.emit("hf:file-list", &delta);
+                        }
                     }
                 }
             }
-        }
-    }
+        });
 
-    /// 停止 tab 的文件 watcher 后台任务。
-    pub(super) fn stop_watch(&self, tab_id: u64) {
-        if let Some(handle) = self.file_watchers.write().unwrap().remove(&tab_id) {
-            handle.abort();
-        }
+        info!("watch thread started for window={label}");
     }
 
     // -----------------------------------------------------------------------
     // 导航
     // -----------------------------------------------------------------------
 
-    /// 导航到指定目标。push 历史 → 启动 watcher → emit 事件。
+    /// 导航到指定目标。更新历史 → 通知 watch 线程。
     pub async fn nav_to(
         &self,
         window: &tauri::Window,
         tab_id: u64,
         target: NavTarget,
     ) -> Result<(), String> {
-        let _token = self.get_tab_token(tab_id)?;
+        let token = self.get_tab_token(tab_id)?;
 
         {
             let mut tabs = self.tabs.write().unwrap();
@@ -250,10 +563,24 @@ impl UIService {
             tab.nav_index = tab.nav_history.len() - 1;
         }
 
-        self.stop_watch(tab_id);
         self.emit_nav_state(window, tab_id);
         self.emit_tabs(window);
-        self.start_watch(window.clone(), tab_id).await;
+
+        let watch_target = match target {
+            NavTarget::Dashboard => WatchTarget::Dashboard,
+            NavTarget::Filesystem(path) => WatchTarget::Filesystem {
+                path: PathBuf::from(&path),
+                token,
+            },
+        };
+
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            let _ = tx.send(WatchCommand::NavUpdate {
+                tab_id,
+                target: watch_target,
+            });
+        }
+
         Ok(())
     }
 
@@ -263,7 +590,7 @@ impl UIService {
         window: &tauri::Window,
         tab_id: u64,
     ) -> Result<(), String> {
-        {
+        let (target, token) = {
             let mut tabs = self.tabs.write().unwrap();
             let tab = tabs
                 .get_mut(&tab_id)
@@ -272,10 +599,29 @@ impl UIService {
                 return Err("already at oldest entry".to_string());
             }
             tab.nav_index -= 1;
-        }
-        self.stop_watch(tab_id);
+            (
+                tab.nav_target(),
+                tab.uid_token.clone(),
+            )
+        };
+
         self.emit_nav_state(window, tab_id);
-        self.start_watch(window.clone(), tab_id).await;
+
+        let watch_target = match target {
+            NavTarget::Dashboard => WatchTarget::Dashboard,
+            NavTarget::Filesystem(path) => WatchTarget::Filesystem {
+                path: PathBuf::from(&path),
+                token,
+            },
+        };
+
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            let _ = tx.send(WatchCommand::NavUpdate {
+                tab_id,
+                target: watch_target,
+            });
+        }
+
         Ok(())
     }
 
@@ -285,7 +631,7 @@ impl UIService {
         window: &tauri::Window,
         tab_id: u64,
     ) -> Result<(), String> {
-        {
+        let (target, token) = {
             let mut tabs = self.tabs.write().unwrap();
             let tab = tabs
                 .get_mut(&tab_id)
@@ -294,14 +640,33 @@ impl UIService {
                 return Err("already at newest entry".to_string());
             }
             tab.nav_index += 1;
-        }
-        self.stop_watch(tab_id);
+            (
+                tab.nav_target(),
+                tab.uid_token.clone(),
+            )
+        };
+
         self.emit_nav_state(window, tab_id);
-        self.start_watch(window.clone(), tab_id).await;
+
+        let watch_target = match target {
+            NavTarget::Dashboard => WatchTarget::Dashboard,
+            NavTarget::Filesystem(path) => WatchTarget::Filesystem {
+                path: PathBuf::from(&path),
+                token,
+            },
+        };
+
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            let _ = tx.send(WatchCommand::NavUpdate {
+                tab_id,
+                target: watch_target,
+            });
+        }
+
         Ok(())
     }
 
-    /// 更新当前 nav 位置的选中文件列表，并 emit hf:selection。
+    /// 更新选中文件，并 emit hf:selection。
     pub fn update_selection(
         &self,
         window: &tauri::Window,
@@ -317,6 +682,13 @@ impl UIService {
             }
         }
         let _ = window.emit("hf:selection", &selected);
+    }
+
+    /// 发送 Refresh 命令到 watch 线程。
+    pub fn refresh_tab(&self, window: &tauri::Window) {
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            let _ = tx.send(WatchCommand::Refresh);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -352,9 +724,12 @@ impl UIService {
         let is_local = target_instance == self.mgr.instance_bus.self_id();
 
         self.tabs.write().unwrap().remove(&tab_id);
-        self.stop_watch(tab_id);
 
-        // 清理此 tab 在各个窗口的 active 记录
+        // 通知所有窗口的 watch 线程此 tab 已关闭
+        for tx in self.watch_txs.read().unwrap().values() {
+            let _ = tx.send(WatchCommand::TabClosed { tab_id });
+        }
+
         {
             let mut active = self.active_tabs.write().unwrap();
             active.retain(|_, v| *v != tab_id);
@@ -394,30 +769,33 @@ impl UIService {
     }
 
     /// 关闭 tab。若关闭的是活跃 tab，自动切换到下一个。
-    pub fn close_tab(self: &std::sync::Arc<Self>, window: &tauri::Window, tab_id: u64) {
+    pub fn close_tab(self: &Arc<Self>, window: &tauri::Window, tab_id: u64) {
+        let label = window.label().to_string();
         let was_active = self
-            .get_active_tab(window.label())
+            .get_active_tab(&label)
             .map_or(false, |id| id == tab_id);
 
         self.tabs.write().unwrap().remove(&tab_id);
-        self.stop_watch(tab_id);
         self.clear_active_tab_any(tab_id);
 
-        let mut tabs = self.mgr.tabs.lock().unwrap();
-        if tabs.remove_tab(tab_id).is_some() {
-            tabs.save_to_disk();
+        {
+            let mut tabs = self.mgr.tabs.lock().unwrap();
+            if tabs.remove_tab(tab_id).is_some() {
+                tabs.save_to_disk();
+            }
         }
-        drop(tabs);
+
+        // 通知 watch 线程
+        if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+            let _ = tx.send(WatchCommand::TabClosed { tab_id });
+        }
 
         if was_active {
-            // 找下一个 tab 作为活跃 tab
             if let Some(next_id) = self.tabs.read().unwrap().keys().next().copied() {
-                self.set_active_tab(window.label().to_string(), next_id);
-                let window_clone = window.clone();
-                let this = self.clone();
-                tokio::spawn(async move {
-                    this.start_watch(window_clone, next_id).await;
-                });
+                self.set_active_tab(label.clone(), next_id);
+                if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+                    let _ = tx.send(WatchCommand::TabSwitch { tab_id: next_id });
+                }
             } else {
                 info!("last tab closed — window may exit");
             }
@@ -435,17 +813,25 @@ impl UIService {
         let token = self.ensure_default_token().await?;
         let p = path.unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
 
-        let tab_id = self.create_tab_internal(&token, p).await;
+        let tab_id = self.create_tab_internal(&token, p.clone()).await;
 
-        // 停止旧活跃 tab 的 watcher
-        if let Some(old_id) = self.get_active_tab(window.label()) {
-            self.stop_watch(old_id);
-        }
         self.set_active_tab(window.label().to_string(), tab_id);
 
         self.emit_tabs(window);
         self.emit_nav_state(window, tab_id);
-        self.start_watch(window.clone(), tab_id).await;
+
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            // 先推送 NavUpdate（带完整路径和 token）
+            let _ = tx.send(WatchCommand::NavUpdate {
+                tab_id,
+                target: WatchTarget::Filesystem {
+                    path: PathBuf::from(&p),
+                    token,
+                },
+            });
+            // 再切到新 tab
+            let _ = tx.send(WatchCommand::TabSwitch { tab_id });
+        }
 
         Ok(tab_id)
     }

@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::ipc::protocol::{
-    AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent, WatchDelta,
+    AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent,
 };
 
 use super::{
@@ -113,13 +113,11 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(4, watch_id);
         debug!("[w{}] refresh {watch_id}", self.fs_worker_id);
         let canonical = self.watch_canonical.lock().await.get(&watch_id).cloned();
-        if canonical.is_none() {
-            return;
+        let Some(canonical) = canonical else { return; };
+        if let Some(shared) = self.pool.get_shared(&canonical).await {
+            let cb = self.cb.clone();
+            shared.push_reset_to(watch_id, &cb).await;
         }
-        let cb = self.cb.clone();
-        tokio::spawn(async move {
-            let _ = cb.watch_delta(context::current(), watch_id, WatchDelta::Reset(Vec::new())).await;
-        });
     }
 
     async fn unwatch(self, _ctx: context::Context, watch_id: u64) {

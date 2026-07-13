@@ -207,6 +207,16 @@ pub fn select_files(
     Ok(())
 }
 
+/// 刷新当前 tab 的文件列表（F5）。
+#[command]
+pub fn refresh_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+) -> Result<(), String> {
+    ui.refresh_tab(&window);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // UIService 文件操作命令
 // ---------------------------------------------------------------------------

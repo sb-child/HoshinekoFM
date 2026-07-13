@@ -106,6 +106,7 @@ pub async fn run_app(opts: RunOpts) {
             commands::nav_back,
             commands::nav_forward,
             commands::select_files,
+            commands::refresh_tab,
             commands::create_entry,
             commands::rename_entry,
             commands::move_files,
@@ -129,12 +130,18 @@ pub async fn run_app(opts: RunOpts) {
             let shutdown_e = shutdown_win.clone();
             move |window, event| {
                 if let tauri::WindowEvent::Destroyed = event {
-                    if let Some(mgr_win) = window
-                        .app_handle()
+                    let app = window.app_handle();
+                    if let Some(mgr_win) = app
                         .try_state::<Arc<AppStateManager>>()
                         .map(|s| s.inner().clone())
                     {
                         handle_window_destroyed(&mgr_win, window.label(), &shutdown_e);
+                    }
+                    if let Some(ui) = app
+                        .try_state::<Arc<ui_service::UIService>>()
+                        .map(|s| s.inner().clone())
+                    {
+                        ui.shutdown_watch(window.label());
                     }
                 }
             }

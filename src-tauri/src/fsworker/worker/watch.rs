@@ -34,6 +34,11 @@ impl WatchPool {
         }
     }
 
+    pub(super) async fn get_shared(&self, canonical: &PathBuf) -> Option<Arc<WatchShared>> {
+        self.entries.lock().await.get(canonical).cloned()
+    }
+
+
     /// 注册一个 watcher。返回已有或新建的 WatchShared。
     /// 若为新条目则 spawn 恢复/事件循环。
     pub async fn register(
@@ -104,7 +109,7 @@ impl WatchShared {
     }
 
     /// 对单个 watch_id 推送 Reset（用于新 subscriber 加入已有 WatchShared）。
-    async fn push_reset_to(&self, watch_id: u64, cb: &AppCallbackServiceClient) {
+    pub(super) async fn push_reset_to(&self, watch_id: u64, cb: &AppCallbackServiceClient) {
         let delta = if self.is_dir {
             let dir = self.target.clone();
             let files = tokio::task::spawn_blocking(move || list_dir_files(&dir))

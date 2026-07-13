@@ -35,13 +35,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tauri::Emitter;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{
+    mpsc,
+    Mutex as TokioMutex,
+};
 use tracing::{error, info};
 
 use crate::app::fs_service::{Canceller, Op};
 use crate::app::state::AppStateManager;
 use crate::fsworker::UidToken;
-use crate::ipc::protocol::EntryKind;
+use crate::ipc::protocol::{EntryKind, NavTarget};
 
 use nav::TabNavState;
 
@@ -74,8 +77,8 @@ pub struct UIService {
     tabs: RwLock<HashMap<u64, TabNavState>>,
     /// window_label → active_tab_id
     active_tabs: RwLock<HashMap<String, u64>>,
-    /// tab_id → watcher 后台任务句柄（abort = drop Watcher → unwatch）
-    file_watchers: RwLock<HashMap<u64, tokio::task::JoinHandle<()>>>,
+    /// window_label → WatchCommand sender（per-window 持久 watch 线程）
+    watch_txs: RwLock<HashMap<String, mpsc::UnboundedSender<nav::WatchCommand>>>,
 
     /// ContextId（tab/window）→ 活跃 op_id 集合
     contexts: Mutex<HashMap<crate::ipc::protocol::ContextId, HashSet<u64>>>,
@@ -92,7 +95,7 @@ impl UIService {
             mgr,
             tabs: RwLock::new(HashMap::new()),
             active_tabs: RwLock::new(HashMap::new()),
-            file_watchers: RwLock::new(HashMap::new()),
+            watch_txs: RwLock::new(HashMap::new()),
             contexts: Mutex::new(HashMap::new()),
             cancels: Mutex::new(HashMap::new()),
             default_token: TokioMutex::new(None),
@@ -175,10 +178,36 @@ impl UIService {
         // emit hf:clipboard
         let _ = window.emit("hf:clipboard", &self.clipboard_state());
 
-        // 为活跃 tab 启动 watcher
+        // 启动 per-window 持久 watch 线程
+        self.start_watch(window.clone());
+
+        // 为所有 tab 发送初始 NavUpdate
+        {
+            let tabs = self.tabs.read().unwrap();
+            for tab in tabs.values() {
+                let target = tab.nav_target();
+                let watch_target = match target {
+                    NavTarget::Dashboard => nav::WatchTarget::Dashboard,
+                    NavTarget::Filesystem(p) => nav::WatchTarget::Filesystem {
+                        path: PathBuf::from(&p),
+                        token: tab.uid_token.clone(),
+                    },
+                };
+                if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+                    let _ = tx.send(nav::WatchCommand::NavUpdate {
+                        tab_id: tab.id,
+                        target: watch_target,
+                    });
+                }
+            }
+        }
+
+        // 切换到活跃 tab
         if let Some(active_id) = self.get_active_tab(window.label()) {
             self.emit_nav_state(window, active_id);
-            self.start_watch(window.clone(), active_id).await;
+            if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+                let _ = tx.send(nav::WatchCommand::TabSwitch { tab_id: active_id });
+            }
         } else {
             return Err("no tabs available".into());
         }
@@ -203,20 +232,43 @@ impl UIService {
             .try_request_uid_token(target_uid)
             .await?;
 
-        self.stop_watch(tab_id);
-
         {
             let mut tabs = self.tabs.write().unwrap();
             match tabs.get_mut(&tab_id) {
                 Some(tab) => {
-                    tab.uid_token = new_token;
+                    tab.uid_token = new_token.clone();
                 }
                 None => return Err(format!("tab {tab_id} not found")),
             }
         }
 
-        self.start_watch(window.clone(), tab_id).await;
+        // 通知 watch 线程：token 已更换
+        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            let target = {
+                let tabs = self.tabs.read().unwrap();
+                tabs.get(&tab_id).map(|t| t.nav_target())
+                    .unwrap_or(NavTarget::Filesystem("/".to_string()))
+            };
+            let watch_target = match target {
+                NavTarget::Dashboard => nav::WatchTarget::Dashboard,
+                NavTarget::Filesystem(p) => nav::WatchTarget::Filesystem {
+                    path: PathBuf::from(&p),
+                    token: new_token,
+                },
+            };
+            let _ = tx.send(nav::WatchCommand::NavUpdate {
+                tab_id,
+                target: watch_target,
+            });
+        }
         Ok(())
+    }
+
+    /// 窗口关闭时通知 watch 线程清理。
+    pub fn shutdown_watch(&self, window_label: &str) {
+        if let Some(tx) = self.watch_txs.write().unwrap().remove(window_label) {
+            let _ = tx.send(nav::WatchCommand::Shutdown);
+        }
     }
 
     // -----------------------------------------------------------------------
