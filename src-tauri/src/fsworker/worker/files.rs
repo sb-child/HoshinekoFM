@@ -202,9 +202,7 @@ pub fn unique_path(dst: &Path) -> PathBuf {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let ext = dst
-        .extension()
-        .map(|s| s.to_string_lossy().into_owned());
+    let ext = dst.extension().map(|s| s.to_string_lossy().into_owned());
 
     for i in 1..10_000 {
         let name = match &ext {
@@ -228,9 +226,9 @@ fn guess_mime(path: &Path) -> String {
         .to_lowercase();
 
     match ext.as_str() {
-        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "xml" | "html" | "css"
-        | "js" | "ts" | "jsx" | "tsx" | "py" | "sh" | "bash" | "env" | "cfg" | "ini"
-        | "log" | "csv" | "lock" => "text/plain".to_string(),
+        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "xml" | "html" | "css" | "js"
+        | "ts" | "jsx" | "tsx" | "py" | "sh" | "bash" | "env" | "cfg" | "ini" | "log" | "csv"
+        | "lock" => "text/plain".to_string(),
         "png" => "image/png".to_string(),
         "jpg" | "jpeg" => "image/jpeg".to_string(),
         "gif" => "image/gif".to_string(),

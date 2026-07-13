@@ -142,7 +142,10 @@ impl InstanceBus {
 
     /// 删除某实例的所有窗口路由（实例断连时调用）。
     pub fn remove_instance_routes(&self, instance_id: u64) {
-        self.routes.write().unwrap().retain(|_, v| *v != instance_id);
+        self.routes
+            .write()
+            .unwrap()
+            .retain(|_, v| *v != instance_id);
     }
 
     pub fn self_id(&self) -> u64 {
@@ -241,11 +244,11 @@ pub async fn watch_instances(bus: Arc<InstanceBus>) {
     std::fs::create_dir_all(&dir).ok();
 
     let self_id = bus.self_id();
-    let mut rx = watcher::watch_dir(dir);
+    let rx = watcher::watch_dir(dir);
 
     info!("watching instances dir via notify (inotify)");
 
-    while let Some(event) = rx.recv().await {
+    while let Ok(event) = rx.recv().await {
         match event {
             watcher::WatchEvent::Init(sockets) => {
                 for (id, path) in sockets {

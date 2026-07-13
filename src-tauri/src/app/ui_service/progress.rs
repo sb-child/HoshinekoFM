@@ -26,9 +26,9 @@ impl UIService {
 
         let ctx_ids: Vec<ContextId> = context_ids.to_vec();
         let this = self.clone();
-        let mut progress = progress;
+        let progress = progress;
         tokio::spawn(async move {
-            while let Some(ev) = progress.events.recv().await {
+            while let Ok(ev) = progress.events.recv().await {
                 match ev {
                     ProgressEvent::Conflict { conflict_id, .. } => {
                         progress.resolve(
@@ -38,7 +38,8 @@ impl UIService {
                     }
                     ProgressEvent::Done { .. }
                     | ProgressEvent::ConnectionLost {
-                        reconnecting: false, ..
+                        reconnecting: false,
+                        ..
                     } => {
                         break;
                     }

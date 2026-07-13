@@ -10,8 +10,8 @@ use std::{
     io,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -19,13 +19,11 @@ use tarpc::context;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use crate::ipc::protocol::{
-    AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent,
-};
+use crate::ipc::protocol::{AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent};
 
 use super::{
     files::ProceedStrategy,
-    ops::{decide_dst, finish_op, run_batch, BatchKind},
+    ops::{BatchKind, decide_dst, finish_op, run_batch},
     watch::WatchPool,
 };
 
@@ -39,7 +37,6 @@ macro_rules! set_last_op {
         LAST_WATCH_ID.store($wid, std::sync::atomic::Ordering::Relaxed);
     };
 }
-
 
 /// FS Worker 服务实现。
 #[derive(Clone)]
@@ -88,8 +85,14 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(1, watch_id);
         debug!("[w{}] watch_dir {watch_id} {path:?}", self.fs_worker_id);
 
-        let shared = self.pool.register(watch_id, path.clone(), true, self.cb.clone()).await;
-        self.watch_canonical.lock().await.insert(watch_id, shared.target.clone());
+        let shared = self
+            .pool
+            .register(watch_id, path.clone(), true, self.cb.clone())
+            .await;
+        self.watch_canonical
+            .lock()
+            .await
+            .insert(watch_id, shared.target.clone());
 
         Ok(())
     }
@@ -103,8 +106,14 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(3, watch_id);
         debug!("[w{}] watch_stat {watch_id} {path:?}", self.fs_worker_id);
 
-        let shared = self.pool.register(watch_id, path.clone(), false, self.cb.clone()).await;
-        self.watch_canonical.lock().await.insert(watch_id, shared.target.clone());
+        let shared = self
+            .pool
+            .register(watch_id, path.clone(), false, self.cb.clone())
+            .await;
+        self.watch_canonical
+            .lock()
+            .await
+            .insert(watch_id, shared.target.clone());
 
         Ok(())
     }
@@ -113,7 +122,9 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(4, watch_id);
         debug!("[w{}] refresh {watch_id}", self.fs_worker_id);
         let canonical = self.watch_canonical.lock().await.get(&watch_id).cloned();
-        let Some(canonical) = canonical else { return; };
+        let Some(canonical) = canonical else {
+            return;
+        };
         if let Some(shared) = self.pool.get_shared(&canonical).await {
             let cb = self.cb.clone();
             shared.push_reset_to(watch_id, &cb).await;
@@ -147,7 +158,11 @@ impl FsWorkerService for FsWorkerServer {
         let ops = self.ops.clone();
         tokio::spawn(async move {
             let _ = cb
-                .progress(context::current(), op_id, ProgressEvent::Started { total: 1 })
+                .progress(
+                    context::current(),
+                    op_id,
+                    ProgressEvent::Started { total: 1 },
+                )
                 .await;
             let mut succeeded = 0u64;
             let mut failed = 0u64;
@@ -170,11 +185,9 @@ impl FsWorkerService for FsWorkerServer {
                 }
                 Decision::Proceed { dst, .. } => {
                     let res =
-                        tokio::task::spawn_blocking(move || {
-                            super::files::create_entry(&dst, kind)
-                        })
-                        .await
-                        .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
+                        tokio::task::spawn_blocking(move || super::files::create_entry(&dst, kind))
+                            .await
+                            .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
                     let status = match res {
                         Ok(()) => {
                             succeeded += 1;
@@ -217,7 +230,11 @@ impl FsWorkerService for FsWorkerServer {
         let ops = self.ops.clone();
         tokio::spawn(async move {
             let _ = cb
-                .progress(context::current(), op_id, ProgressEvent::Started { total: 1 })
+                .progress(
+                    context::current(),
+                    op_id,
+                    ProgressEvent::Started { total: 1 },
+                )
                 .await;
             let parent = path
                 .parent()
@@ -262,8 +279,7 @@ impl FsWorkerService for FsWorkerServer {
                         }
                         Err(e)
                             if strategy != ProceedStrategy::Overwrite
-                                && e.raw_os_error()
-                                    == Some(nix::errno::Errno::EEXIST as i32) =>
+                                && e.raw_os_error() == Some(nix::errno::Errno::EEXIST as i32) =>
                         {
                             let s2 = s.clone();
                             let d2 = final_dst.clone();
@@ -271,24 +287,20 @@ impl FsWorkerService for FsWorkerServer {
                                 Decision::Proceed {
                                     dst: fd,
                                     strategy: st2,
-                                } => {
-                                    match super::files::rename_with_strategy(&s2, &fd, st2) {
-                                        Ok(()) => {
-                                            succeeded += 1;
-                                            if fd != d2 {
-                                                crate::ipc::protocol::ItemStatus::Renamed(fd)
-                                            } else {
-                                                crate::ipc::protocol::ItemStatus::Ok
-                                            }
-                                        }
-                                        Err(e2) => {
-                                            failed += 1;
-                                            crate::ipc::protocol::ItemStatus::Failed(
-                                                e2.to_string(),
-                                            )
+                                } => match super::files::rename_with_strategy(&s2, &fd, st2) {
+                                    Ok(()) => {
+                                        succeeded += 1;
+                                        if fd != d2 {
+                                            crate::ipc::protocol::ItemStatus::Renamed(fd)
+                                        } else {
+                                            crate::ipc::protocol::ItemStatus::Ok
                                         }
                                     }
-                                }
+                                    Err(e2) => {
+                                        failed += 1;
+                                        crate::ipc::protocol::ItemStatus::Failed(e2.to_string())
+                                    }
+                                },
                                 Decision::Skip => crate::ipc::protocol::ItemStatus::Skipped,
                                 Decision::Cancel => {
                                     cancelled = true;
@@ -331,7 +343,16 @@ impl FsWorkerService for FsWorkerServer {
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
         tokio::spawn(async move {
-            run_batch(&cb, &ops, op_id, cancel, &conflict_seq, items, BatchKind::Move).await;
+            run_batch(
+                &cb,
+                &ops,
+                op_id,
+                cancel,
+                &conflict_seq,
+                items,
+                BatchKind::Move,
+            )
+            .await;
         });
         Ok(())
     }
@@ -348,7 +369,16 @@ impl FsWorkerService for FsWorkerServer {
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
         tokio::spawn(async move {
-            run_batch(&cb, &ops, op_id, cancel, &conflict_seq, items, BatchKind::Copy).await;
+            run_batch(
+                &cb,
+                &ops,
+                op_id,
+                cancel,
+                &conflict_seq,
+                items,
+                BatchKind::Copy,
+            )
+            .await;
         });
         Ok(())
     }

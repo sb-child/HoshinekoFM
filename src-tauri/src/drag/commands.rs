@@ -3,10 +3,10 @@
 // Source: https://crates.io/crates/tauri-plugin-drag (CrabNebula Ltd., Apache-2.0 OR MIT)
 //   - src/commands.rs
 
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf};
 
-use serde::{ser::Serializer, Deserialize, Deserializer, Serialize};
-use tauri::{command, ipc::Channel, AppHandle, Runtime, Window};
+use serde::{Deserialize, Deserializer, Serialize, ser::Serializer};
+use tauri::{AppHandle, Runtime, Window, command, ipc::Channel};
 
 #[cfg(target_os = "linux")]
 use super::linux::{self, DragMode as NativeDragMode};
@@ -132,7 +132,7 @@ pub async fn start_drag<R: Runtime>(
 
     #[cfg(target_os = "linux")]
     {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::channel::oneshot::oneshot();
 
         let image = image.map(|img| match img {
             Image::Raw(path) => linux::Image::File(PathBuf::from(path)),

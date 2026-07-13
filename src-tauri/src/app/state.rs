@@ -82,7 +82,9 @@ impl AppStateManager {
 
     /// 获取已注入的 Tauri AppHandle（在 `setup` 之后可用）。
     pub fn app_handle(&self) -> &tauri::AppHandle {
-        self.app_handle.get().expect("AppHandle not yet set; call set_app_handle first")
+        self.app_handle
+            .get()
+            .expect("AppHandle not yet set; call set_app_handle first")
     }
 
     /// 当前窗口数量（按 label 注册表计）。
@@ -97,11 +99,7 @@ impl AppStateManager {
 
     /// 根据 window label 获取 window_id。
     pub fn window_id_by_label(&self, label: &str) -> Option<u64> {
-        self.windows
-            .lock()
-            .unwrap()
-            .get(label)
-            .map(|s| s.window_id)
+        self.windows.lock().unwrap().get(label).map(|s| s.window_id)
     }
 
     /// 抢占全局唯一 window_id（冲突检测）。
@@ -150,13 +148,13 @@ impl AppStateManager {
     ) -> WindowBus {
         let bus = WindowBus::init(instance_bus, window, self.clone()).await;
         let window_id = bus.window_id();
-        self.windows
-            .lock()
-            .unwrap()
-            .insert(label, WindowState {
+        self.windows.lock().unwrap().insert(
+            label,
+            WindowState {
                 window_id,
                 window_bus: bus.clone(),
-            });
+            },
+        );
         bus
     }
 

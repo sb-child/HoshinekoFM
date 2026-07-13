@@ -5,8 +5,10 @@
 
 use std::path::PathBuf;
 
+use crossfire::BlockingTxTrait;
 use notify::{EventKind, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
+
+use crate::channel;
 
 /// 实例目录事件。
 pub enum WatchEvent {
@@ -23,8 +25,8 @@ pub enum WatchEvent {
 /// 线程内部：
 /// 1. 扫描目录 → 发送 `WatchEvent::Init`
 /// 2. 注册 notify watch → 事件循环发送 `New` / `Gone`
-pub fn watch_dir(dir: PathBuf) -> mpsc::UnboundedReceiver<WatchEvent> {
-    let (tx, rx) = mpsc::unbounded_channel();
+pub fn watch_dir(dir: PathBuf) -> channel::RxAsync<WatchEvent> {
+    let (tx, rx) = channel::unbounded::<WatchEvent>();
     let dir_c = dir.clone();
 
     std::thread::spawn(move || {
@@ -46,28 +48,29 @@ pub fn watch_dir(dir: PathBuf) -> mpsc::UnboundedReceiver<WatchEvent> {
         }
 
         // 2. 注册 notify
-        let (raw_tx, raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, raw_rx) = channel::unbounded_blocking();
         let mut watcher =
             notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 let _ = raw_tx.send(res);
             })
             .expect("notify watcher");
 
-        if watcher
-            .watch(&dir_c, RecursiveMode::NonRecursive)
-            .is_err()
-        {
+        if watcher.watch(&dir_c, RecursiveMode::NonRecursive).is_err() {
             return;
         }
 
-        // 3. 事件循环：std channel → tokio channel
+        // 3. 事件循环：blocking channel → async channel
         loop {
             let event = match raw_rx.recv() {
                 Ok(Ok(e)) => e,
                 _ => break,
             };
-            let Some(path) = event.paths.first() else { continue };
-            let Some(id) = parse_sock_pid(path) else { continue };
+            let Some(path) = event.paths.first() else {
+                continue;
+            };
+            let Some(id) = parse_sock_pid(path) else {
+                continue;
+            };
 
             match event.kind {
                 EventKind::Create(_) => {

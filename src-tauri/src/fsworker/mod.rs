@@ -58,8 +58,11 @@ use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     unistd,
 };
-use tokio::{net::UnixStream, sync::mpsc, sync::oneshot};
+use tokio::{net::UnixStream, sync::Mutex as TokioMutex};
 use tracing::{debug, info, warn};
+
+use crate::channel;
+use crate::channel::oneshot;
 
 use crate::ipc::protocol::{
     AppCallbackService, ConflictItem, ConflictResolution, EntryKind, FsWorkerServiceClient,
@@ -131,7 +134,7 @@ pub struct WorkerRequest {
     /// 请求内容
     pub content: WorkerRequestContent,
     /// 响应通道
-    pub response_tx: oneshot::Sender<WorkerResponse>,
+    pub response_tx: oneshot::TxOneshot<WorkerResponse>,
 }
 
 /// 请求内容。
@@ -199,11 +202,11 @@ pub enum WorkerResponse {
 /// `watch_id` / `op_id` 全局分配（由 FsService）。
 pub struct CallbackRegistry {
     /// watch_id → watcher 增量 sender
-    watches: Mutex<HashMap<u64, mpsc::UnboundedSender<WatchDelta>>>,
+    watches: Mutex<HashMap<u64, channel::Tx<WatchDelta>>>,
     /// op_id → 进度 sender
-    ops: Mutex<HashMap<u64, mpsc::UnboundedSender<ProgressEvent>>>,
+    ops: Mutex<HashMap<u64, channel::Tx<ProgressEvent>>>,
     /// (op_id, conflict_id) → 冲突决策应答
-    conflicts: Mutex<HashMap<(u64, u64), oneshot::Sender<ConflictResolution>>>,
+    conflicts: Mutex<HashMap<(u64, u64), oneshot::TxOneshot<ConflictResolution>>>,
 }
 
 impl CallbackRegistry {
@@ -216,8 +219,8 @@ impl CallbackRegistry {
     }
 
     /// 注册一个 watcher，返回增量接收端。
-    pub fn register_watch(&self, watch_id: u64) -> mpsc::UnboundedReceiver<WatchDelta> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn register_watch(&self, watch_id: u64) -> channel::RxAsync<WatchDelta> {
+        let (tx, rx) = channel::unbounded();
         self.watches.lock().unwrap().insert(watch_id, tx);
         rx
     }
@@ -228,8 +231,8 @@ impl CallbackRegistry {
     }
 
     /// 注册一个批处理操作，返回进度接收端。
-    pub fn register_op(&self, op_id: u64) -> mpsc::UnboundedReceiver<ProgressEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn register_op(&self, op_id: u64) -> channel::RxAsync<ProgressEvent> {
+        let (tx, rx) = channel::unbounded();
         self.ops.lock().unwrap().insert(op_id, tx);
         rx
     }
@@ -303,7 +306,7 @@ impl CallbackRegistry {
         item: ConflictItem,
     ) -> ConflictResolution {
         self.push_progress(op_id, ProgressEvent::Conflict { conflict_id, item });
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::oneshot();
         self.conflicts
             .lock()
             .unwrap()
@@ -319,7 +322,7 @@ impl CallbackRegistry {
 /// token 的引用计数哨兵。最后一个 token drop 时通知 reaper。
 pub struct LeaseSentinel {
     uid: u32,
-    reaper_tx: mpsc::UnboundedSender<u32>,
+    reaper_tx: channel::Tx<u32>,
 }
 
 impl Drop for LeaseSentinel {
@@ -335,7 +338,7 @@ impl Drop for LeaseSentinel {
 #[derive(Clone)]
 pub struct UidToken {
     uid: u32,
-    request_tx: mpsc::UnboundedSender<WorkerRequest>,
+    request_tx: channel::Tx<WorkerRequest>,
     /// 共享的 CallbackRegistry，用于注册 watcher/op 回调
     pub registry: Arc<CallbackRegistry>,
     _sentinel: Arc<LeaseSentinel>,
@@ -355,7 +358,7 @@ impl UidToken {
         content: WorkerRequestContent,
     ) -> Result<WorkerResponse, String> {
         loop {
-            let (response_tx, response_rx) = oneshot::channel();
+            let (response_tx, response_rx) = oneshot::oneshot();
             let request = WorkerRequest {
                 content: content.clone(),
                 response_tx,
@@ -382,7 +385,7 @@ impl UidToken {
 
 struct RelaySlot {
     /// FsService → Relay 请求通道
-    request_tx: mpsc::UnboundedSender<WorkerRequest>,
+    request_tx: channel::Tx<WorkerRequest>,
     /// 共享回调路由
     registry: Arc<CallbackRegistry>,
     /// 存活 token 的弱引用；`strong_count() == 0` 表示无 token
@@ -400,22 +403,22 @@ struct RelaySlot {
 /// Worker 进程池，按目标 UID 索引。
 pub struct FsWorkerPool {
     slots: Arc<Mutex<HashMap<u32, RelaySlot>>>,
-    status_tx: mpsc::UnboundedSender<WorkerStatus>,
-    status_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<WorkerStatus>>>,
-    reaper_tx: mpsc::UnboundedSender<u32>,
+    status_tx: channel::Tx<WorkerStatus>,
+    status_rx: Arc<TokioMutex<channel::RxAsync<WorkerStatus>>>,
+    reaper_tx: channel::Tx<u32>,
 }
 
 impl FsWorkerPool {
     /// 创建进程池（必须在 tokio 运行时内调用）。
     pub fn new() -> Self {
         let slots: Arc<Mutex<HashMap<u32, RelaySlot>>> = Arc::new(Mutex::new(HashMap::new()));
-        let (status_tx, status_rx) = mpsc::unbounded_channel();
+        let (status_tx, status_rx) = channel::unbounded();
         let reaper_tx = start_reaper(slots.clone(), status_tx.clone());
 
         Self {
             slots,
             status_tx,
-            status_rx: Arc::new(tokio::sync::Mutex::new(status_rx)),
+            status_rx: Arc::new(TokioMutex::new(status_rx)),
             reaper_tx,
         }
     }
@@ -441,7 +444,7 @@ impl FsWorkerPool {
 
         // 慢路径：创建新 WorkerRelay（不持锁 await）
         let registry = Arc::new(CallbackRegistry::new());
-        let (request_tx, request_rx) = mpsc::unbounded_channel::<WorkerRequest>();
+        let (request_tx, request_rx) = channel::unbounded::<WorkerRequest>();
         let pid = Arc::new(AtomicU32::new(0));
 
         let sentinel = Arc::new(LeaseSentinel {
@@ -492,9 +495,7 @@ impl FsWorkerPool {
     }
 
     /// 获取状态接收端（供上层监听 Worker 连接状态）。
-    pub fn status_receiver(
-        &self,
-    ) -> Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<WorkerStatus>>> {
+    pub fn status_receiver(&self) -> Arc<TokioMutex<channel::RxAsync<WorkerStatus>>> {
         self.status_rx.clone()
     }
 }
@@ -523,8 +524,8 @@ impl WorkerRelay {
         uid: u32,
         pid: Arc<AtomicU32>,
         registry: Arc<CallbackRegistry>,
-        request_rx: mpsc::UnboundedReceiver<WorkerRequest>,
-        status_tx: mpsc::UnboundedSender<WorkerStatus>,
+        request_rx: channel::RxAsync<WorkerRequest>,
+        status_tx: channel::Tx<WorkerStatus>,
         sentinel: Arc<LeaseSentinel>,
     ) -> tokio::task::AbortHandle {
         tokio::spawn(async move {
@@ -537,8 +538,8 @@ impl WorkerRelay {
         uid: u32,
         pid: Arc<AtomicU32>,
         registry: Arc<CallbackRegistry>,
-        mut request_rx: mpsc::UnboundedReceiver<WorkerRequest>,
-        status_tx: mpsc::UnboundedSender<WorkerStatus>,
+        mut request_rx: channel::RxAsync<WorkerRequest>,
+        status_tx: channel::Tx<WorkerStatus>,
         sentinel: Arc<LeaseSentinel>,
     ) {
         info!("WorkerRelay started for uid={uid}");
@@ -607,8 +608,8 @@ impl WorkerRelay {
         uid: u32,
         child_pid: u32,
         client: &FsWorkerServiceClient,
-        request_rx: &mut mpsc::UnboundedReceiver<WorkerRequest>,
-        status_tx: &mpsc::UnboundedSender<WorkerStatus>,
+        request_rx: &mut channel::RxAsync<WorkerRequest>,
+        status_tx: &channel::Tx<WorkerStatus>,
     ) -> DisconnectReason {
         info!("WorkerRelay run_relay started for uid={uid} child_pid={child_pid}");
         let mut connected = false;
@@ -620,7 +621,7 @@ impl WorkerRelay {
             tokio::select! {
                 maybe_req = request_rx.recv() => {
                     match maybe_req {
-                        Some(request) => {
+                        Ok(request) => {
                             if connected {
                                 let client = client.clone();
                                 tokio::spawn(async move {
@@ -632,7 +633,7 @@ impl WorkerRelay {
                                 let _ = request.response_tx.send(WorkerResponse::Connecting);
                             }
                         }
-                        None => {
+                        Err(_) => {
                             warn!("WorkerRelay uid={uid}: request channel closed");
                             return DisconnectReason::Other {
                                 message: "request channel closed".into(),
@@ -980,11 +981,11 @@ fn serve_callback(stream: UnixStream, registry: Arc<CallbackRegistry>) {
 /// 收到 uid（某 token drop）→ 若该 uid 已无存活 token，立即清理 slot。
 fn start_reaper(
     slots: Arc<Mutex<HashMap<u32, RelaySlot>>>,
-    status_tx: mpsc::UnboundedSender<WorkerStatus>,
-) -> mpsc::UnboundedSender<u32> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<u32>();
+    status_tx: channel::Tx<WorkerStatus>,
+) -> channel::Tx<u32> {
+    let (tx, rx) = channel::unbounded::<u32>();
     tokio::spawn(async move {
-        while let Some(uid) = rx.recv().await {
+        while let Ok(uid) = rx.recv().await {
             let to_remove = {
                 let g = slots.lock().unwrap();
                 match g.get(&uid) {

@@ -59,7 +59,11 @@ impl WindowBus {
 
         tracing::info!("window_bus: claimed window_id={window_id}");
 
-        Self { window_id, bus, mgr }
+        Self {
+            window_id,
+            bus,
+            mgr,
+        }
     }
 
     /// 本窗口的全局唯一 ID。

@@ -11,9 +11,9 @@ use tokio::net::UnixListener;
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    app::ui_service,
     instance_bus::InstanceBus,
     ipc::protocol::{ClipboardState, InstanceService, TabState, WindowMessage},
-    app::ui_service,
 };
 
 /// 后台接受实例间连接并派发到 MeshServer。
@@ -96,21 +96,12 @@ impl InstanceService for MeshServer {
         self.ui.receive_transfer_tab(tab).await;
     }
 
-    async fn clipboard_sync(
-        self,
-        _ctx: tarpc::context::Context,
-        state: ClipboardState,
-    ) {
+    async fn clipboard_sync(self, _ctx: tarpc::context::Context, state: ClipboardState) {
         debug!("clipboard_sync: {:?}", state.operation);
         self.ui.clipboard_sync(state);
     }
 
-    async fn forward(
-        self,
-        _ctx: tarpc::context::Context,
-        window_id: u64,
-        msg: WindowMessage,
-    ) {
+    async fn forward(self, _ctx: tarpc::context::Context, window_id: u64, msg: WindowMessage) {
         debug!("forward: window {window_id}, msg {msg:?}");
         let event = crate::window_bus::msg_to_event(&msg);
         let reg = self.ui.mgr.window_registry.lock().unwrap();

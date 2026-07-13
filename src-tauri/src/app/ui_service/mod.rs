@@ -35,14 +35,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tauri::Emitter;
-use tokio::sync::{
-    mpsc,
-    Mutex as TokioMutex,
-};
+use tokio::sync::Mutex as TokioMutex;
 use tracing::{error, info};
 
 use crate::app::fs_service::{Canceller, Op};
 use crate::app::state::AppStateManager;
+use crate::channel;
 use crate::fsworker::UidToken;
 use crate::ipc::protocol::{EntryKind, NavTarget};
 
@@ -78,7 +76,7 @@ pub struct UIService {
     /// window_label → active_tab_id
     active_tabs: RwLock<HashMap<String, u64>>,
     /// window_label → WatchCommand sender（per-window 持久 watch 线程）
-    watch_txs: RwLock<HashMap<String, mpsc::UnboundedSender<nav::WatchCommand>>>,
+    watch_txs: RwLock<HashMap<String, channel::Tx<nav::WatchCommand>>>,
 
     /// ContextId（tab/window）→ 活跃 op_id 集合
     contexts: Mutex<HashMap<crate::ipc::protocol::ContextId, HashSet<u64>>>,
@@ -130,7 +128,10 @@ impl UIService {
     }
 
     fn set_active_tab(&self, window_label: String, tab_id: u64) {
-        self.active_tabs.write().unwrap().insert(window_label, tab_id);
+        self.active_tabs
+            .write()
+            .unwrap()
+            .insert(window_label, tab_id);
     }
 
     // -----------------------------------------------------------------------
@@ -165,10 +166,7 @@ impl UIService {
         } else {
             // 无持久化 tab → 自动创建一个
             let tab_id = self
-                .create_tab_internal(
-                    &token,
-                    std::env::var("HOME").unwrap_or_else(|_| "/".into()),
-                )
+                .create_tab_internal(&token, std::env::var("HOME").unwrap_or_else(|_| "/".into()))
                 .await;
             self.set_active_tab(window.label().to_string(), tab_id);
         }
@@ -246,7 +244,8 @@ impl UIService {
         if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
             let target = {
                 let tabs = self.tabs.read().unwrap();
-                tabs.get(&tab_id).map(|t| t.nav_target())
+                tabs.get(&tab_id)
+                    .map(|t| t.nav_target())
                     .unwrap_or(NavTarget::Filesystem("/".to_string()))
             };
             let watch_target = match target {

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{command, State, Window};
+use tauri::{State, Window, command};
 
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
@@ -65,10 +65,7 @@ pub async fn new_window(
 
 /// 前端 mount 后调用。后端重建运行时状态 + 推送初始事件。
 #[command]
-pub async fn ready(
-    window: Window,
-    ui: State<'_, Arc<UIService>>,
-) -> Result<(), String> {
+pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), String> {
     ui.ready(&window).await
 }
 
@@ -107,11 +104,7 @@ pub async fn new_tab(
 
 /// 关闭 tab。
 #[command]
-pub fn close_tab(
-    window: Window,
-    ui: State<'_, Arc<UIService>>,
-    tab_id: u64,
-) -> Result<(), String> {
+pub fn close_tab(window: Window, ui: State<'_, Arc<UIService>>, tab_id: u64) -> Result<(), String> {
     ui.close_tab(&window, tab_id);
     Ok(())
 }
@@ -209,10 +202,7 @@ pub fn select_files(
 
 /// 刷新当前 tab 的文件列表（F5）。
 #[command]
-pub fn refresh_tab(
-    window: Window,
-    ui: State<'_, Arc<UIService>>,
-) -> Result<(), String> {
+pub fn refresh_tab(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), String> {
     ui.refresh_tab(&window);
     Ok(())
 }

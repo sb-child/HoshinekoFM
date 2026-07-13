@@ -1,5 +1,6 @@
 pub mod app;
 pub mod appreuse;
+pub mod channel;
 pub mod cli;
 pub mod drag;
 pub mod fsworker;

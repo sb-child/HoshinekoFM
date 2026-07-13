@@ -11,9 +11,10 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use notify::{RecursiveMode, Watcher};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
+use crate::channel;
 use crate::ipc::protocol::{AppCallbackServiceClient, WatchDelta};
 
 use super::files::{build_file, list_dir_files, resolve_path};
@@ -37,7 +38,6 @@ impl WatchPool {
     pub(super) async fn get_shared(&self, canonical: &PathBuf) -> Option<Arc<WatchShared>> {
         self.entries.lock().await.get(canonical).cloned()
     }
-
 
     /// 注册一个 watcher。返回已有或新建的 WatchShared。
     /// 若为新条目则 spawn 恢复/事件循环。
@@ -125,7 +125,9 @@ impl WatchShared {
             let files = file.map(|f| vec![f]).unwrap_or_default();
             WatchDelta::Reset(files)
         };
-        let _ = cb.watch_delta(tarpc::context::current(), watch_id, delta).await;
+        let _ = cb
+            .watch_delta(tarpc::context::current(), watch_id, delta)
+            .await;
     }
 
     async fn has_subscribers(&self) -> bool {
@@ -204,7 +206,7 @@ impl WatchShared {
             let ancestor = self.ancestor_at(level);
 
             // 1. 挂 inotify
-            let (watcher, mut evt_rx) = match self.setup_inotify(&ancestor) {
+            let (watcher, evt_rx) = match self.setup_inotify(&ancestor) {
                 Ok(p) => p,
                 Err(e) => {
                     if ancestor.as_os_str() == "/" {
@@ -242,9 +244,10 @@ impl WatchShared {
                 }
                 AccessResult::Other(_) => {
                     // 无法访问（非权限原因），在当前级等待恢复
-                    debug!("watch: target not accessible from {ancestor:?} level={level}, entering recovery");
-                    self.recovery_loop(level, &ancestor, watcher, evt_rx)
-                        .await;
+                    debug!(
+                        "watch: target not accessible from {ancestor:?} level={level}, entering recovery"
+                    );
+                    self.recovery_loop(level, &ancestor, watcher, evt_rx).await;
                     return;
                 }
             }
@@ -266,7 +269,7 @@ impl WatchShared {
         level: usize,
         ancestor: &PathBuf,
         watcher: notify::RecommendedWatcher,
-        mut evt_rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+        evt_rx: channel::RxAsync<Vec<PathBuf>>,
     ) {
         let ancestor = ancestor.clone();
         let report_interval = Duration::from_secs(10);
@@ -298,11 +301,11 @@ impl WatchShared {
                         last_report = tokio::time::Instant::now();
                     }
                 }
-                Ok(None) => {
+                Ok(Err(_)) => {
                     // 通道关闭 → 掉出此循环，由外层 run 从当前 level 重入
                     return;
                 }
-                Ok(Some(_paths)) => {
+                Ok(Ok(_paths)) => {
                     // inotify 事件 → 检查 target
                     match self.try_access() {
                         AccessResult::Ok => {
@@ -347,7 +350,7 @@ impl WatchShared {
     /// 尝试在 target 上建立 watcher 并进入 Live 事件泵。
     async fn try_live_pump(&self) {
         match self.setup_inotify(&self.target) {
-            Ok((watcher, mut evt_rx)) => {
+            Ok((watcher, evt_rx)) => {
                 while let Ok(_) = evt_rx.try_recv() {}
                 self.run_event_pump(watcher, evt_rx).await;
             }
@@ -365,11 +368,11 @@ impl WatchShared {
     async fn run_event_pump(
         &self,
         _watcher: notify::RecommendedWatcher,
-        mut evt_rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+        evt_rx: channel::RxAsync<Vec<PathBuf>>,
     ) {
         debug!("event_pump started for {:?}", self.target);
 
-        while let Some(paths) = evt_rx.recv().await {
+        while let Ok(paths) = evt_rx.recv().await {
             if !self.has_subscribers().await {
                 return;
             }
@@ -418,16 +421,17 @@ impl WatchShared {
     fn setup_inotify(
         &self,
         path: &PathBuf,
-    ) -> Result<(notify::RecommendedWatcher, mpsc::UnboundedReceiver<Vec<PathBuf>>), String> {
-        let (tx, rx) = mpsc::unbounded_channel::<Vec<PathBuf>>();
+    ) -> Result<(notify::RecommendedWatcher, channel::RxAsync<Vec<PathBuf>>), String> {
+        let (tx, rx) = channel::unbounded::<Vec<PathBuf>>();
         let p = path.clone();
 
-        let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let _ = tx.send(event.paths);
-            }
-        })
-        .map_err(|e| format!("create watcher: {e}"))?;
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    let _ = tx.send(event.paths);
+                }
+            })
+            .map_err(|e| format!("create watcher: {e}"))?;
 
         watcher
             .watch(&p, RecursiveMode::NonRecursive)

@@ -18,9 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tracing::{error, info};
 
-use crate::{
-    instance_bus::{self, InstanceBus},
-};
+use crate::instance_bus::{self, InstanceBus};
 
 use self::{state::AppStateManager, tabs::TabManager};
 
@@ -158,16 +156,12 @@ pub async fn run_app(opts: RunOpts) {
 // ---------------------------------------------------------------------------
 
 /// `.setup()` 闭包的实际逻辑：注入 AppHandle + 创建首窗口。
-fn setup_first_window(
-    handle: &tauri::AppHandle,
-    mgr: &Arc<AppStateManager>,
-    paths: &[String],
-) {
+fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, paths: &[String]) {
     let ib = handle.state::<Arc<InstanceBus>>().inner().clone();
     let label = mgr.next_label();
     match commands::create_window(handle, &label, paths) {
         Ok(window) => {
-            let (tx, rx) = std::sync::mpsc::channel();
+            let (tx, rx) = crate::channel::oneshot::oneshot();
             let mgr_c = mgr.clone();
             tokio::spawn(async move {
                 let bus = mgr_c.register_window(ib, window, label).await;
@@ -198,11 +192,7 @@ fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
 }
 
 /// `.on_window_event()` 闭包中 Destroyed 事件的实际处理。
-fn handle_window_destroyed(
-    mgr: &Arc<AppStateManager>,
-    label: &str,
-    shutdown: &Arc<AtomicBool>,
-) {
+fn handle_window_destroyed(mgr: &Arc<AppStateManager>, label: &str, shutdown: &Arc<AtomicBool>) {
     let label = label.to_string();
     let window_bus = {
         let windows = mgr.windows.lock().unwrap();

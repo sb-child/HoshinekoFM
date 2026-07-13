@@ -10,10 +10,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::Emitter;
-use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::app::state::AppStateManager;
+use crate::channel;
+use crate::channel::oneshot;
 use crate::fsworker::UidToken;
 use crate::ipc::protocol::{
     ContextId, InstanceMessage, NavEntry, NavStatePayload, NavTarget, TabInfo, TabsPayload,
@@ -104,10 +105,7 @@ enum WatchSnapshot {
         level: u32,
     },
     /// Watcher 彻底失效
-    FatalError {
-        path: PathBuf,
-        reason: String,
-    },
+    FatalError { path: PathBuf, reason: String },
     /// Worker 连接断开
     ConnectionLost {
         watch_id: u64,
@@ -207,9 +205,7 @@ impl WatchSnapshot {
     /// 将快照转为可 emit 的 WatchDelta。
     fn to_delta(&self) -> WatchDelta {
         match self {
-            WatchSnapshot::Live { files } => {
-                WatchDelta::Reset(files.values().cloned().collect())
-            }
+            WatchSnapshot::Live { files } => WatchDelta::Reset(files.values().cloned().collect()),
             WatchSnapshot::Inaccessible {
                 path,
                 ancestor,
@@ -256,7 +252,7 @@ struct TabWatchEntry {
     /// Watch ID（由 watcher task 通过 oneshot 回报，0 表示尚未回报）
     watch_id: u64,
     /// 等待 watch_id 的 oneshot receiver（Some 表示尚未收到）
-    watch_id_rx: Option<tokio::sync::oneshot::Receiver<u64>>,
+    watch_id_rx: Option<oneshot::RxOneshot<u64>>,
     /// UID Token（用于 Refresh RPC + 保活 Worker）
     token: UidToken,
 }
@@ -273,10 +269,10 @@ fn spawn_watcher_task(
     tab_id: u64,
     path: PathBuf,
     token: UidToken,
-    event_tx: mpsc::UnboundedSender<(u64, WatchDelta)>,
+    event_tx: channel::Tx<(u64, WatchDelta)>,
     mgr: Arc<AppStateManager>,
-) -> (tokio::task::JoinHandle<()>, tokio::sync::oneshot::Receiver<u64>) {
-    let (id_tx, id_rx) = tokio::sync::oneshot::channel();
+) -> (tokio::task::JoinHandle<()>, oneshot::RxOneshot<u64>) {
+    let (id_tx, id_rx) = oneshot::oneshot();
     let handle = tokio::spawn(async move {
         let watcher = match mgr.fs_service.watch_dir(&token, &path).await {
             Ok(w) => w,
@@ -297,8 +293,7 @@ fn spawn_watcher_task(
         let _ = id_tx.send(watch_id);
         debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
 
-        let mut watcher = watcher;
-        while let Some(delta) = watcher.events.recv().await {
+        while let Ok(delta) = watcher.events.recv().await {
             if event_tx.send((tab_id, delta)).is_err() {
                 break;
             }
@@ -398,8 +393,8 @@ impl UIService {
     /// Tab 切换时直接 push 缓存快照，然后接增量事件。
     pub fn start_watch(&self, window: tauri::Window) {
         let label = window.label().to_string();
-        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<WatchCommand>();
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<(u64, WatchDelta)>();
+        let (cmd_tx, cmd_rx) = channel::unbounded::<WatchCommand>();
+        let (event_tx, event_rx) = channel::unbounded::<(u64, WatchDelta)>();
 
         self.watch_txs
             .write()
@@ -422,8 +417,8 @@ impl UIService {
                                 entry.watch_id = wid;
                                 entry.watch_id_rx = None;
                             }
-                            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
-                            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                            Err(crossfire::TryRecvError::Empty) => {}
+                            Err(crossfire::TryRecvError::Disconnected) => {
                                 entry.watch_id_rx = None;
                             }
                         }
@@ -441,12 +436,12 @@ impl UIService {
 
                     tokio::select! {
                         c = &mut cmd_fut => match c {
-                            Some(cmd) => ThreadEvent::Command(cmd),
-                            None => break,
+                            Ok(cmd) => ThreadEvent::Command(cmd),
+                            Err(_) => break,
                         },
                         pair = event_rx.recv() => match pair {
-                            Some((tab_id, delta)) => ThreadEvent::WatcherDelta { tab_id, delta },
-                            None => ThreadEvent::Command(WatchCommand::Shutdown),
+                            Ok((tab_id, delta)) => ThreadEvent::WatcherDelta { tab_id, delta },
+                            Err(_) => ThreadEvent::Command(WatchCommand::Shutdown),
                         },
                     }
                 };
@@ -468,7 +463,11 @@ impl UIService {
                             }
                             if let WatchTarget::Filesystem { path, token } = target {
                                 let (handle, id_rx) = spawn_watcher_task(
-                                    tab_id, path, token.clone(), event_tx.clone(), mgr.clone(),
+                                    tab_id,
+                                    path,
+                                    token.clone(),
+                                    event_tx.clone(),
+                                    mgr.clone(),
                                 );
                                 tab_watches.insert(
                                     tab_id,
@@ -585,11 +584,7 @@ impl UIService {
     }
 
     /// 后退。
-    pub async fn nav_back(
-        &self,
-        window: &tauri::Window,
-        tab_id: u64,
-    ) -> Result<(), String> {
+    pub async fn nav_back(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
         let (target, token) = {
             let mut tabs = self.tabs.write().unwrap();
             let tab = tabs
@@ -599,10 +594,7 @@ impl UIService {
                 return Err("already at oldest entry".to_string());
             }
             tab.nav_index -= 1;
-            (
-                tab.nav_target(),
-                tab.uid_token.clone(),
-            )
+            (tab.nav_target(), tab.uid_token.clone())
         };
 
         self.emit_nav_state(window, tab_id);
@@ -626,11 +618,7 @@ impl UIService {
     }
 
     /// 前进。
-    pub async fn nav_forward(
-        &self,
-        window: &tauri::Window,
-        tab_id: u64,
-    ) -> Result<(), String> {
+    pub async fn nav_forward(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
         let (target, token) = {
             let mut tabs = self.tabs.write().unwrap();
             let tab = tabs
@@ -640,10 +628,7 @@ impl UIService {
                 return Err("already at newest entry".to_string());
             }
             tab.nav_index += 1;
-            (
-                tab.nav_target(),
-                tab.uid_token.clone(),
-            )
+            (tab.nav_target(), tab.uid_token.clone())
         };
 
         self.emit_nav_state(window, tab_id);
@@ -667,12 +652,7 @@ impl UIService {
     }
 
     /// 更新选中文件，并 emit hf:selection。
-    pub fn update_selection(
-        &self,
-        window: &tauri::Window,
-        tab_id: u64,
-        selected: Vec<String>,
-    ) {
+    pub fn update_selection(&self, window: &tauri::Window, tab_id: u64, selected: Vec<String>) {
         {
             let mut tabs = self.tabs.write().unwrap();
             if let Some(tab) = tabs.get_mut(&tab_id) {
@@ -771,9 +751,7 @@ impl UIService {
     /// 关闭 tab。若关闭的是活跃 tab，自动切换到下一个。
     pub fn close_tab(self: &Arc<Self>, window: &tauri::Window, tab_id: u64) {
         let label = window.label().to_string();
-        let was_active = self
-            .get_active_tab(&label)
-            .map_or(false, |id| id == tab_id);
+        let was_active = self.get_active_tab(&label).map_or(false, |id| id == tab_id);
 
         self.tabs.write().unwrap().remove(&tab_id);
         self.clear_active_tab_any(tab_id);

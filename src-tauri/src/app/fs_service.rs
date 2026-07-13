@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tokio::sync::mpsc;
+use crate::channel;
 
 use crate::fsworker::{FsWorkerPool, UidToken, WorkerRequestContent};
 use crate::ipc::protocol::{ConflictResolution, EntryKind, ProgressEvent, WatchDelta};
@@ -43,7 +43,7 @@ pub struct Op {
 /// - drop 时自动 `unwatch`，并释放对应 Worker 引用。
 pub struct Watcher {
     /// 增量事件流
-    pub events: mpsc::UnboundedReceiver<WatchDelta>,
+    pub events: channel::RxAsync<WatchDelta>,
     pub(crate) watch_id: u64,
     /// 保活对应 Worker + 发送请求
     _token: UidToken,
@@ -91,7 +91,7 @@ impl Drop for Watcher {
 /// - 持有相关 [`UidToken`]，操作期间保活 Worker。
 pub struct Progress {
     /// 进度事件流
-    pub events: mpsc::UnboundedReceiver<ProgressEvent>,
+    pub events: channel::RxAsync<ProgressEvent>,
     op_id: u64,
     /// 保活相关 Worker + 发送请求
     _token: UidToken,
@@ -223,7 +223,11 @@ impl FsService {
     }
 
     /// 监视单个文件/目录的属性（面包屑用）。
-    pub(crate) async fn watch_stat(&self, token: &UidToken, file: &Path) -> Result<Watcher, String> {
+    pub(crate) async fn watch_stat(
+        &self,
+        token: &UidToken,
+        file: &Path,
+    ) -> Result<Watcher, String> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -335,7 +339,7 @@ impl FsService {
     fn finish_dispatch(
         rpc: Result<crate::fsworker::WorkerResponse, String>,
         token: &UidToken,
-        rx: mpsc::UnboundedReceiver<ProgressEvent>,
+        rx: channel::RxAsync<ProgressEvent>,
         op_id: u64,
     ) -> Result<Progress, String> {
         match rpc {

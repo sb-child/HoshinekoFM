@@ -14,10 +14,7 @@ use crate::app::state::AppStateManager;
 ///
 /// 查询 AppStateManager.windows[label] → WindowState.window_id。
 #[tauri::command]
-pub fn get_window_id(
-    window: Window,
-    mgr: State<'_, Arc<AppStateManager>>,
-) -> Result<u64, String> {
+pub fn get_window_id(window: Window, mgr: State<'_, Arc<AppStateManager>>) -> Result<u64, String> {
     mgr.window_id_by_label(window.label())
         .ok_or_else(|| format!("window '{}' not registered", window.label()))
 }

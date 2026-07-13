@@ -236,9 +236,5 @@ pub trait AppCallbackService {
     /// 推送批处理进度。
     async fn progress(op_id: u64, ev: ProgressEvent);
     /// 询问冲突如何解决（阻塞式，直到上层给出决策）。
-    async fn ask_conflict(
-        op_id: u64,
-        conflict_id: u64,
-        item: ConflictItem,
-    ) -> ConflictResolution;
+    async fn ask_conflict(op_id: u64, conflict_id: u64, item: ConflictItem) -> ConflictResolution;
 }

@@ -7,8 +7,8 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -20,9 +20,7 @@ use crate::ipc::protocol::{
     AppCallbackServiceClient, ConflictItem, ConflictResolution, ItemStatus, ProgressEvent,
 };
 
-use super::files::{
-    copy_path, move_path, move_path_noreplace, unique_path, ProceedStrategy,
-};
+use super::files::{ProceedStrategy, copy_path, move_path, move_path_noreplace, unique_path};
 
 // ---------------------------------------------------------------------------
 // 批处理执行
@@ -99,8 +97,7 @@ pub async fn run_batch(
                     Err(e)
                         if strategy != ProceedStrategy::Overwrite
                             && matches!(kind, BatchKind::Move)
-                            && e.raw_os_error()
-                                == Some(nix::errno::Errno::EEXIST as i32) =>
+                            && e.raw_os_error() == Some(nix::errno::Errno::EEXIST as i32) =>
                     {
                         // TOCTOU: 重问
                         let d2 = final_dst.clone();
