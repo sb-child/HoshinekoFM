@@ -138,18 +138,15 @@ impl WatchScheduler {
     }
 
     fn on_track(&mut self, path: PathBuf) {
-        self.paths.entry(path.clone()).or_insert_with(|| {
-            let is_dir = path.metadata().map(|m| m.is_dir()).unwrap_or(false);
-            PathState {
-                last_flush: Instant::now(),
-                affected: Vec::new(),
-                is_dir,
-                is_virtual: false,
-                cascade_level: None,
-                cascade_next: None,
-                dirty: false,
-                pending_reset: false,
-            }
+        self.paths.entry(path.clone()).or_insert_with(|| PathState {
+            last_flush: Instant::now(),
+            affected: Vec::new(),
+            is_dir: false,
+            is_virtual: false,
+            cascade_level: None,
+            cascade_next: None,
+            dirty: false,
+            pending_reset: false,
         });
     }
 

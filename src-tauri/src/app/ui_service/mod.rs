@@ -327,14 +327,26 @@ impl UIService {
             ("sidebar.videos", format!("{home}/Videos")),
         ];
 
-        let common_locations: Vec<CommonLocation> = locations
-            .into_iter()
-            .map(|(name, path)| CommonLocation {
-                name: name.to_string(),
-                exists: std::path::Path::new(&path).exists(),
-                path,
+        let common_locations: Vec<CommonLocation> = {
+            let paths: Vec<String> = locations.iter().map(|(_, p)| p.clone()).collect();
+            let exists_flags = tokio::task::spawn_blocking(move || {
+                paths
+                    .iter()
+                    .map(|p| std::path::Path::new(p).exists())
+                    .collect::<Vec<bool>>()
             })
-            .collect();
+            .await
+            .unwrap_or_else(|_| vec![false; locations.len()]);
+            locations
+                .into_iter()
+                .zip(exists_flags.into_iter())
+                .map(|((name, path), exists)| CommonLocation {
+                    name: name.to_string(),
+                    exists,
+                    path,
+                })
+                .collect()
+        };
 
         Ok(DashboardData {
             storage,

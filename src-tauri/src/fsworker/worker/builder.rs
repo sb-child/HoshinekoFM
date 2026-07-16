@@ -163,7 +163,7 @@ impl DeltaBuilder {
         tokio::spawn(async move {
             let _permit = sem.acquire_owned().await;
 
-            tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 let read = match std::fs::read_dir(&path) {
                     Ok(r) => r,
                     Err(e) => {
@@ -211,12 +211,13 @@ async fn build_upserts_impl(
     affected: Vec<PathBuf>,
 ) {
     for file_path in affected {
-        let _permit = sem.clone().acquire_owned().await;
         let dt = delta_tx.clone();
         let fp = file_path;
         let p = path.clone();
+        let sem = sem.clone();
 
         tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await;
             let delta = tokio::task::spawn_blocking(move || {
                 if fp.exists() {
                     build_file(&fp).map(WatchDelta::Upsert)

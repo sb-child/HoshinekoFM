@@ -172,9 +172,15 @@ impl WorkerRelay {
             Some(request) => {
                 if connected {
                     let client = client.clone();
-                    tokio::spawn(async move {
+                    let h = tokio::spawn(async move {
                         let response = Self::forward_request(&client, request.content).await;
                         let _ = request.response_tx.send(response);
+                    });
+                    // 后台监控 panic，至少记录日志
+                    tokio::spawn(async move {
+                        if let Err(e) = h.await {
+                            tracing::error!(uid, "forward_request task panicked: {e}");
+                        }
                     });
                 } else {
                     debug!("run_relay uid={uid}: request while connecting, replying Connecting");
@@ -410,8 +416,13 @@ impl WorkerRelay {
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn()?;
-        let pid = child.id();
+        let (mut child, pid) = tokio::task::spawn_blocking(move || {
+            let child = cmd.spawn()?;
+            let pid = child.id();
+            Ok::<(std::process::Child, u32), io::Error>((child, pid))
+        })
+        .await
+        .unwrap_or_else(|e| Err(io::Error::other(e.to_string())))?;
         info!("spawned fs-worker pid={pid} fs_worker_id={fs_worker_id} target_uid={target_uid}");
 
         drop(child_req);
@@ -420,15 +431,20 @@ impl WorkerRelay {
         let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let stderr_snapshot = stderr_buf.clone();
         if let Some(mut stderr_reader) = child.stderr.take() {
-            tokio::task::spawn_blocking(move || {
+            let h = tokio::task::spawn_blocking(move || {
                 use std::io::Read;
                 let mut buf = String::new();
                 let _ = stderr_reader.read_to_string(&mut buf);
                 *stderr_snapshot.lock().unwrap() = buf;
             });
+            tokio::spawn(async move {
+                if let Err(e) = h.await {
+                    tracing::error!("stderr_reader task panicked: {e}");
+                }
+            });
         }
 
-        tokio::task::spawn_blocking(move || {
+        let cb = tokio::task::spawn_blocking(move || {
             let exit_status = child.wait();
             let stderr_text = stderr_buf.lock().unwrap().clone();
 
@@ -452,6 +468,11 @@ impl WorkerRelay {
                     };
                     warn!("fs-worker pid={pid} wait error: {e}{extra}");
                 }
+            }
+        });
+        tokio::spawn(async move {
+            if let Err(e) = cb.await {
+                tracing::error!(pid, fs_worker_id, "child_waiter task panicked: {e}");
             }
         });
 
@@ -482,8 +503,14 @@ pub(crate) fn kill_fs_worker(uid: u32, pid: u32) {
     let p = Pid::from_raw(pid as i32);
     debug!("killing fs-worker uid={uid} pid={pid}");
     let _ = signal::kill(p, signal::Signal::SIGTERM);
-    tokio::spawn(async move {
+    let h = tokio::spawn(async move {
         tokio::time::sleep(SIGKILL_DELAY).await;
         let _ = signal::kill(p, signal::Signal::SIGKILL);
+    });
+    // 后台监控 panic（极低概率，但 AGENTS.md 要求所有 spawn 处理错误）
+    tokio::spawn(async move {
+        if let Err(e) = h.await {
+            tracing::error!(uid, pid, "kill_fs_worker SIGKILL task panicked: {e}");
+        }
     });
 }

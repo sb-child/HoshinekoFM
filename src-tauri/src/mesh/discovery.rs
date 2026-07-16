@@ -17,7 +17,10 @@ use tracing::{info, warn};
 /// `~/.cache/hnfm/instances/` 目录。
 pub fn instances_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    PathBuf::from(format!("{home}/.cache/hnfm/instances"))
+    PathBuf::from(home)
+        .join(".cache")
+        .join("hnfm")
+        .join("instances")
 }
 
 /// 实例的 lock 文件路径。

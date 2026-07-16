@@ -146,8 +146,13 @@ impl Mesh {
                 window_id: target_id,
                 msg,
             };
-            tokio::spawn(async move {
+            let h = tokio::spawn(async move {
                 let _ = instance_bus.send_to(remote_instance, &instance_msg).await;
+            });
+            tokio::spawn(async move {
+                if let Err(e) = h.await {
+                    tracing::error!(target_id, "send_to_window task panicked: {e}");
+                }
             });
         }
     }
@@ -184,8 +189,13 @@ impl Mesh {
     /// 向远程实例发送 InstanceMsg。
     pub fn send_to_instance(&self, instance_id: u64, msg: InstanceMsg) {
         let instance_bus = self.inner.instance_bus.clone();
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let _ = instance_bus.send_to(instance_id, &msg).await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!(instance_id, "send_to_instance task panicked: {e}");
+            }
         });
     }
 

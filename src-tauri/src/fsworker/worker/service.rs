@@ -141,7 +141,7 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _ = cb
                 .progress(
                     context::current(),
@@ -198,6 +198,11 @@ impl FsWorkerService for FsWorkerServer {
             }
             finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
         });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!(op_id, "run_create task panicked: {e}");
+            }
+        });
         Ok(())
     }
 
@@ -213,7 +218,7 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _ = cb
                 .progress(
                     context::current(),
@@ -315,6 +320,11 @@ impl FsWorkerService for FsWorkerServer {
             }
             finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
         });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!(op_id, "run_rename task panicked: {e}");
+            }
+        });
         Ok(())
     }
 
@@ -329,7 +339,7 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             run_batch(
                 &cb,
                 &ops,
@@ -340,6 +350,11 @@ impl FsWorkerService for FsWorkerServer {
                 BatchKind::Move,
             )
             .await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!(op_id, "run_move task panicked: {e}");
+            }
         });
         Ok(())
     }
@@ -355,7 +370,7 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             run_batch(
                 &cb,
                 &ops,
@@ -366,6 +381,11 @@ impl FsWorkerService for FsWorkerServer {
                 BatchKind::Copy,
             )
             .await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!(op_id, "run_copy task panicked: {e}");
+            }
         });
         Ok(())
     }
@@ -380,7 +400,10 @@ impl FsWorkerService for FsWorkerServer {
 
     async fn stat_vfs(self, _ctx: context::Context, path: PathBuf) -> Result<(u64, u64), String> {
         set_last_op!(10, 0);
-        let vfs = nix::sys::statvfs::statvfs(&path)
+        let p = path.clone();
+        let vfs = tokio::task::spawn_blocking(move || nix::sys::statvfs::statvfs(&p))
+            .await
+            .map_err(|e| format!("spawn_blocking: {e}"))?
             .map_err(|e| format!("statvfs {}: {e}", path.display()))?;
         let block_size = vfs.block_size() as u64;
         Ok((vfs.blocks() * block_size, vfs.blocks_free() * block_size))

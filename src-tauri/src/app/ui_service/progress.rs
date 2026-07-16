@@ -28,7 +28,8 @@ impl UIService {
         let ctx_ids: Vec<ContextId> = context_ids.to_vec();
         let this = self.clone();
         let progress = progress;
-        tokio::spawn(async move {
+        let ids_for_monitor = ctx_ids.clone();
+        let h = tokio::spawn(async move {
             while let Ok(ev) = progress.events.recv().await {
                 match ev {
                     ProgressEvent::Conflict { conflict_id, .. } => {
@@ -48,6 +49,12 @@ impl UIService {
                 }
             }
             this.forget_op(&ctx_ids, op_id);
+        });
+        // 后台监控 panic：panic 会导致 forget_op 不调用，造成 contexts/cancels 泄漏
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!(op_id, ?ids_for_monitor, "track_op task panicked: {e}");
+            }
         });
     }
 

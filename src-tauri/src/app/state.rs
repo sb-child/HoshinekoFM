@@ -105,7 +105,11 @@ impl AppStateManager {
     /// 抢占全局唯一 window_id（冲突检测）。
     ///
     /// window_id = `(instance_id << 32) | local_counter`。
-    pub async fn claim_window_id(&self) -> u64 {
+    ///
+    /// 注意：此函数在 `register_window` 的 async 上下文中调用，
+    /// 但内部 `Mutex::lock` 临界区为微秒级（单次 HashMap 查找），
+    /// 对 tokio worker 阻塞风险可忽略不计。
+    pub fn claim_window_id(&self) -> u64 {
         let instance_bus = self.mesh.instance_bus();
         loop {
             let local = self.window_id_counter.fetch_add(1, Ordering::Relaxed);
@@ -140,11 +144,12 @@ impl AppStateManager {
         window: tauri::WebviewWindow,
         label: String,
     ) -> WindowProxy {
-        let window_id = self.claim_window_id().await;
+        let window_id = self.claim_window_id();
 
         let handler: Arc<dyn crate::mesh::WindowHandler> = Arc::new(NoopWindowHandler);
         let proxy = self.mesh.create_window(handler);
 
+        // Mutex 临界区为微秒级 HashMap insert，对 async runtime 阻塞风险可忽略
         self.window_registry
             .lock()
             .unwrap()

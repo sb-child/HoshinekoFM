@@ -423,7 +423,7 @@ impl UIService {
         // 启动面包屑管理器（独立任务）
         let breadcrumb_mgr = BreadcrumbManager::start(window.clone(), mgr.clone());
 
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let mut tab_targets: HashMap<u64, WatchTarget> = HashMap::new();
             let mut tab_watches: HashMap<u64, TabWatchEntry> = HashMap::new();
             let mut tab_generations: HashMap<u64, u64> = HashMap::new();
@@ -582,6 +582,13 @@ impl UIService {
                         }
                     }
                 }
+            }
+        });
+        // 后台监控 panic：watch 线程是整个窗口的文件系统事件入口，panic 必须可见
+        let l = label.clone();
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!(window = %l, "watch thread panicked: {e}");
             }
         });
 

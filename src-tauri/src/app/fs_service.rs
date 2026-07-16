@@ -85,10 +85,16 @@ impl Drop for Watcher {
         self._token.registry.unregister_watch(self.watch_id);
         let token = self._token.clone();
         let id = self.watch_id;
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let _ = token
                 .send_request(WorkerRequestContent::Unwatch { watch_id: id })
                 .await;
+        });
+        // 后台监控 panic（极低概率，但 AGENTS.md 要求所有 spawn 处理错误）
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!(watch_id = id, "Watcher::drop unwatch task panicked: {e}");
+            }
         });
     }
 }
