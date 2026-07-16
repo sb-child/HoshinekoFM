@@ -17,10 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tracing::{error, info};
 
-use crate::instance_bus::server::InstanceBusHandler;
 use crate::instance_bus::{self, InstanceBus};
-use crate::ipc::protocol::{ClipboardState, TabState, WindowMessage};
 use crate::mesh::Mesh;
+use crate::mesh::callback::UiMeshHandler;
 
 use self::{state::AppStateManager, tabs::TabManager};
 
@@ -34,48 +33,6 @@ pub struct RunOpts {
 }
 
 // ---------------------------------------------------------------------------
-// AppMeshHandler — InstanceBusHandler 实现
-// ---------------------------------------------------------------------------
-
-/// App 层 `InstanceBusHandler` 实现。
-///
-/// 将 InstanceBus 收到的跨实例消息分发到 UIService 和 Mesh。
-struct AppMeshHandler {
-    ui: Arc<ui_service::UIService>,
-    mesh: Arc<Mesh>,
-}
-
-impl InstanceBusHandler for AppMeshHandler {
-    fn on_open_window(
-        &self,
-        paths: Vec<String>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        let ui = self.ui.clone();
-        Box::pin(async move {
-            ui.open_window(paths).await;
-        })
-    }
-
-    fn on_transfer_tab(
-        &self,
-        tab: TabState,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        let ui = self.ui.clone();
-        Box::pin(async move {
-            ui.receive_transfer_tab(tab).await;
-        })
-    }
-
-    fn on_clipboard_sync(&self, state: ClipboardState) {
-        self.ui.clipboard_sync(state);
-    }
-
-    fn on_forward(&self, window_id: u64, msg: WindowMessage) {
-        self.mesh.dispatch_to(window_id, &msg);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // run_app
 // ---------------------------------------------------------------------------
 
@@ -84,7 +41,7 @@ pub async fn run_app(opts: RunOpts) {
     let instance_id = opts.instance_id;
 
     // 1. 绑定本地 socket
-    let listener = match instance_bus::bind_socket(instance_id) {
+    let listener = match crate::mesh::discovery::bind_socket(instance_id) {
         Ok(l) => l,
         Err(e) => {
             error!("failed to bind socket: {e}");
@@ -118,15 +75,17 @@ pub async fn run_app(opts: RunOpts) {
     let mgr = Arc::new(AppStateManager::new(tab_manager, mesh.clone()));
     let ui = Arc::new(ui_service::UIService::new(mgr.clone()));
 
-    // 6. 注册 InstanceBus handler + 启动 listen
-    let handler = Arc::new(AppMeshHandler {
+    // 6. 注册 Mesh handler + 启动 InstanceBus listen
+    let ui_handler = Arc::new(UiMeshHandler {
         ui: ui.clone(),
         mesh: mesh.clone(),
     });
-    instance_bus.set_handler(handler);
+    mesh.register_instance_handler(ui_handler);
+
     let ib_listen = instance_bus.clone();
+    let mesh_listen = mesh.clone();
     tokio::spawn(async move {
-        ib_listen.listen(listener).await;
+        ib_listen.listen(listener, mesh_listen).await;
     });
 
     // 7. 告知 Tauri 共用当前 tokio runtime
@@ -235,7 +194,7 @@ fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
         info!("saving tabs before exit (ctrl+c)");
         mgr.tabs.lock().unwrap().save_to_disk();
         let instance_id = mgr.mesh.instance_bus().self_id();
-        instance_bus::cleanup_socket(instance_id);
+        crate::mesh::discovery::cleanup_socket(instance_id);
         std::process::exit(0);
     });
 }
@@ -257,7 +216,7 @@ fn handle_window_destroyed(mgr: &Arc<AppStateManager>, label: &str, shutdown: &A
             if remaining == 0 && !shutdown.swap(true, Ordering::Relaxed) {
                 info!("last window destroyed, exiting");
                 let instance_id = mgr.mesh.instance_bus().self_id();
-                instance_bus::cleanup_socket(instance_id);
+                crate::mesh::discovery::cleanup_socket(instance_id);
                 std::process::exit(0);
             }
         });

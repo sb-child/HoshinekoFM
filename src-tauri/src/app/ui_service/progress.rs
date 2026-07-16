@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use crate::app::fs_service::{Canceller, Progress};
-use crate::ipc::protocol::{ContextId, ProgressEvent};
+use crate::fsworker::protocol::ProgressEvent;
+use crate::mesh::types::ui::ContextId;
 
 use super::UIService;
 
@@ -33,7 +34,7 @@ impl UIService {
                     ProgressEvent::Conflict { conflict_id, .. } => {
                         progress.resolve(
                             conflict_id,
-                            crate::ipc::protocol::ConflictResolution::AutoRename,
+                            crate::fsworker::protocol::ConflictResolution::AutoRename,
                         );
                     }
                     ProgressEvent::Done { .. }

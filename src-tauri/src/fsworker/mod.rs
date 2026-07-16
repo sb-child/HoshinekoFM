@@ -45,12 +45,13 @@ use std::{
 };
 
 use crate::channel::oneshot;
-use crate::ipc::protocol::EntryKind;
+use crate::mesh::types::ui::EntryKind;
 
 // 子模块
 pub mod callback;
 pub mod platform;
 pub mod pool;
+pub mod protocol;
 pub mod relay;
 pub mod worker;
 

@@ -5,5 +5,4 @@ pub mod cli;
 pub mod drag;
 pub mod fsworker;
 pub mod instance_bus;
-pub mod ipc;
 pub mod mesh;

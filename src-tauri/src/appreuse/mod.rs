@@ -9,7 +9,7 @@ use tokio::net::UnixStream;
 use tracing::{error, info};
 
 use crate::instance_bus;
-use crate::ipc::protocol::InstanceServiceClient;
+use crate::mesh::types::instance::InstanceServiceClient;
 
 /// 尝试请求已有实例打开新窗口。
 ///
@@ -61,7 +61,7 @@ async fn send_open_window(
     let stream = UnixStream::connect(path).await?;
 
     let transport = tarpc::serde_transport::new(
-        crate::ipc::frame_stream(stream),
+        crate::mesh::transport::frame_stream(stream),
         tarpc::tokio_serde::formats::Bincode::default(),
     );
     let client = InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn();

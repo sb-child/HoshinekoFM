@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::channel;
 use crate::channel::oneshot;
-use crate::ipc::protocol::{
+use crate::fsworker::protocol::{
     AppCallbackService, ConflictItem, ConflictResolution, ProgressEvent, WatchDelta,
 };
 
@@ -171,7 +171,7 @@ pub(crate) fn serve_callback(stream: UnixStream, registry: Arc<CallbackRegistry>
     use tarpc::server::Channel;
 
     let transport = tarpc::serde_transport::new(
-        crate::ipc::frame_stream(stream),
+        crate::mesh::transport::frame_stream(stream),
         tarpc::tokio_serde::formats::Bincode::default(),
     );
     let server = CallbackServer { registry };

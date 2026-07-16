@@ -10,7 +10,7 @@ use tauri::{State, Window, command};
 
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
-use crate::ipc::protocol::{ContextId, EntryKind, NavTarget};
+use crate::mesh::types::ui::{ContextId, EntryKind, NavTarget};
 
 // ---------------------------------------------------------------------------
 // 多窗口命令
@@ -50,10 +50,7 @@ pub async fn new_window(
     let label = mgr.next_label();
     let window = create_window(&app, &label, &paths)?;
 
-    let proxy = mgr
-        .inner()
-        .register_window(window, label)
-        .await;
+    let proxy = mgr.inner().register_window(window, label).await;
     let window_id = proxy.window_id();
 
     Ok(window_id)
@@ -77,7 +74,7 @@ pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), 
 #[command]
 pub fn list_tabs(
     mgr: State<'_, Arc<AppStateManager>>,
-) -> Result<Vec<crate::ipc::protocol::TabState>, String> {
+) -> Result<Vec<crate::mesh::types::ui::TabState>, String> {
     let tabs = mgr.tabs.lock().unwrap();
     Ok(tabs.get_all().to_vec())
 }
@@ -320,10 +317,7 @@ pub fn realpath(path: String) -> Result<String, String> {
 
 /// 获取当前窗口的全局唯一 window_id。
 #[command]
-pub fn get_window_id(
-    window: Window,
-    mgr: State<'_, Arc<AppStateManager>>,
-) -> Result<u64, String> {
+pub fn get_window_id(window: Window, mgr: State<'_, Arc<AppStateManager>>) -> Result<u64, String> {
     let label = window.label();
     mgr.window_id_by_label(&label)
         .ok_or_else(|| format!("window not registered: {label}"))

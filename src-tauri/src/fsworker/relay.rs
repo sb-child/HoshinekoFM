@@ -16,7 +16,7 @@ use tokio::{net::UnixStream, select};
 use tracing::{debug, info, warn};
 
 use crate::channel;
-use crate::ipc::protocol::FsWorkerServiceClient;
+use crate::fsworker::protocol::FsWorkerServiceClient;
 
 use super::callback::{CallbackRegistry, serve_callback};
 use super::platform::{ORPHAN_EXIT_CODE, clear_cloexec, get_exe_path, is_appimage};
@@ -458,7 +458,7 @@ impl WorkerRelay {
         parent_req.set_nonblocking(true)?;
         let req_stream = UnixStream::from_std(parent_req)?;
         let req_transport = tarpc::serde_transport::new(
-            crate::ipc::frame_stream(req_stream),
+            crate::mesh::transport::frame_stream(req_stream),
             tarpc::tokio_serde::formats::Bincode::default(),
         );
         let client =

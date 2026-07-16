@@ -1,7 +1,5 @@
-//! FS Worker RPC 服务实现。
-//!
 //! [`FsWorkerServer`] 实现 [`FsWorkerService`] trait，
-//! 通过 [`WatchPool`] 管理目录/文件监视，通过回调通道推送增量/进度/冲突。
+//! 通过 [`WatchRegistry`] 管理目录/文件监视，通过回调通道推送增量/进度/冲突。
 //!
 //! 所有方法立刻返回（仅表示派发是否被接受），真正的结果／增量经反向的 `AppCallbackService` 推送。
 
@@ -19,14 +17,14 @@ use tarpc::context;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use crate::ipc::protocol::{
+use crate::fsworker::protocol::{
     AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent, WatchDelta,
 };
 
 use super::{
     files::ProceedStrategy,
     ops::{BatchKind, decide_dst, finish_op, run_batch},
-    watch::WatchPool,
+    registry::WatchRegistry,
 };
 
 /// 崩溃诊断用：最后一个 watch_id / 最后一个操作名
@@ -45,9 +43,8 @@ macro_rules! set_last_op {
 pub struct FsWorkerServer {
     pub fs_worker_id: u64,
     cb: AppCallbackServiceClient,
-    pool: Arc<WatchPool>,
-    /// watch_id → canonical PathBuf（用于 unwatch 时从 pool 注销）
-    watch_canonical: Arc<Mutex<HashMap<u64, PathBuf>>>,
+    registry: Arc<WatchRegistry>,
+    watch_paths: Arc<Mutex<HashMap<u64, PathBuf>>>,
     /// op_id → 取消标志
     ops: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
     /// 冲突 ID 分配
@@ -55,14 +52,18 @@ pub struct FsWorkerServer {
 }
 
 impl FsWorkerServer {
-    pub fn new(fs_worker_id: u64, cb: AppCallbackServiceClient) -> Self {
+    pub fn new(
+        fs_worker_id: u64,
+        cb: AppCallbackServiceClient,
+        registry: Arc<WatchRegistry>,
+    ) -> Self {
         let uid = nix::unistd::getuid().as_raw();
         info!("fs worker {} starting, uid={}", fs_worker_id, uid);
         Self {
             fs_worker_id,
             cb,
-            pool: Arc::new(WatchPool::new()),
-            watch_canonical: Arc::new(Mutex::new(HashMap::new())),
+            registry,
+            watch_paths: Arc::new(Mutex::new(HashMap::new())),
             ops: Arc::new(Mutex::new(HashMap::new())),
             conflict_seq: Arc::new(AtomicU64::new(1)),
         }
@@ -86,16 +87,10 @@ impl FsWorkerService for FsWorkerServer {
     ) -> Result<(), String> {
         set_last_op!(1, watch_id);
         debug!("[w{}] watch_dir {watch_id} {path:?}", self.fs_worker_id);
-
-        let shared = self
-            .pool
-            .register(watch_id, path.clone(), true, self.cb.clone())
+        self.registry
+            .subscribe(watch_id, path.clone(), true, self.cb.clone())
             .await;
-        self.watch_canonical
-            .lock()
-            .await
-            .insert(watch_id, shared.target.clone());
-
+        self.watch_paths.lock().await.insert(watch_id, path);
         Ok(())
     }
 
@@ -107,38 +102,26 @@ impl FsWorkerService for FsWorkerServer {
     ) -> Result<(), String> {
         set_last_op!(3, watch_id);
         debug!("[w{}] watch_stat {watch_id} {path:?}", self.fs_worker_id);
-
-        let shared = self
-            .pool
-            .register(watch_id, path.clone(), false, self.cb.clone())
+        self.registry
+            .subscribe(watch_id, path.clone(), false, self.cb.clone())
             .await;
-        self.watch_canonical
-            .lock()
-            .await
-            .insert(watch_id, shared.target.clone());
-
+        self.watch_paths.lock().await.insert(watch_id, path);
         Ok(())
     }
 
     async fn refresh(self, _ctx: context::Context, watch_id: u64) {
         set_last_op!(4, watch_id);
         debug!("[w{}] refresh {watch_id}", self.fs_worker_id);
-        let canonical = self.watch_canonical.lock().await.get(&watch_id).cloned();
-        let Some(canonical) = canonical else {
-            return;
-        };
-        if let Some(shared) = self.pool.get_shared(&canonical).await {
-            let cb = self.cb.clone();
-            shared.push_reset_to(watch_id, &cb).await;
+        if let Some(path) = self.watch_paths.lock().await.get(&watch_id).cloned() {
+            self.registry.request_reset(watch_id, &path).await;
         }
     }
 
     async fn unwatch(self, _ctx: context::Context, watch_id: u64) {
         set_last_op!(2, watch_id);
         debug!("[w{}] unwatch {watch_id}", self.fs_worker_id);
-        let canonical = self.watch_canonical.lock().await.remove(&watch_id);
-        if let Some(c) = canonical {
-            self.pool.unregister(watch_id, &c).await;
+        if let Some(path) = self.watch_paths.lock().await.remove(&watch_id) {
+            self.registry.unsubscribe(watch_id, &path).await;
         }
     }
 
@@ -180,7 +163,7 @@ impl FsWorkerService for FsWorkerServer {
                             ProgressEvent::Item {
                                 src: path.clone(),
                                 dst: path.clone(),
-                                status: crate::ipc::protocol::ItemStatus::Skipped,
+                                status: crate::fsworker::protocol::ItemStatus::Skipped,
                             },
                         )
                         .await;
@@ -193,11 +176,11 @@ impl FsWorkerService for FsWorkerServer {
                     let status = match res {
                         Ok(()) => {
                             succeeded += 1;
-                            crate::ipc::protocol::ItemStatus::Ok
+                            crate::fsworker::protocol::ItemStatus::Ok
                         }
                         Err(e) => {
                             failed += 1;
-                            crate::ipc::protocol::ItemStatus::Failed(e.to_string())
+                            crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
                         }
                     };
                     let _ = cb
@@ -257,7 +240,7 @@ impl FsWorkerService for FsWorkerServer {
                             ProgressEvent::Item {
                                 src: path.clone(),
                                 dst: dst.clone(),
-                                status: crate::ipc::protocol::ItemStatus::Skipped,
+                                status: crate::fsworker::protocol::ItemStatus::Skipped,
                             },
                         )
                         .await;
@@ -274,9 +257,9 @@ impl FsWorkerService for FsWorkerServer {
                         Ok(()) => {
                             succeeded += 1;
                             if renamed {
-                                crate::ipc::protocol::ItemStatus::Renamed(final_dst.clone())
+                                crate::fsworker::protocol::ItemStatus::Renamed(final_dst.clone())
                             } else {
-                                crate::ipc::protocol::ItemStatus::Ok
+                                crate::fsworker::protocol::ItemStatus::Ok
                             }
                         }
                         Err(e)
@@ -293,26 +276,28 @@ impl FsWorkerService for FsWorkerServer {
                                     Ok(()) => {
                                         succeeded += 1;
                                         if fd != d2 {
-                                            crate::ipc::protocol::ItemStatus::Renamed(fd)
+                                            crate::fsworker::protocol::ItemStatus::Renamed(fd)
                                         } else {
-                                            crate::ipc::protocol::ItemStatus::Ok
+                                            crate::fsworker::protocol::ItemStatus::Ok
                                         }
                                     }
                                     Err(e2) => {
                                         failed += 1;
-                                        crate::ipc::protocol::ItemStatus::Failed(e2.to_string())
+                                        crate::fsworker::protocol::ItemStatus::Failed(
+                                            e2.to_string(),
+                                        )
                                     }
                                 },
-                                Decision::Skip => crate::ipc::protocol::ItemStatus::Skipped,
+                                Decision::Skip => crate::fsworker::protocol::ItemStatus::Skipped,
                                 Decision::Cancel => {
                                     cancelled = true;
-                                    crate::ipc::protocol::ItemStatus::Skipped
+                                    crate::fsworker::protocol::ItemStatus::Skipped
                                 }
                             }
                         }
                         Err(e) => {
                             failed += 1;
-                            crate::ipc::protocol::ItemStatus::Failed(e.to_string())
+                            crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
                         }
                     };
                     let _ = cb
@@ -434,17 +419,13 @@ impl FsWorkerService for FsWorkerServer {
             )
             .await;
 
-        // 复用 WatchPool 监听 /proc/mounts 变化
-        // WatchPool 按 canonical path 去重，多个 watch_breadcrumb 共享同一个 watcher
+        // 复用 WatchRegistry 监听 /proc/mounts 变化
+        // 多个 watch_breadcrumb 共享同一个 /proc/mounts 监视
         let mount_path = PathBuf::from("/proc/mounts");
-        let shared = self
-            .pool
-            .register(watch_id, mount_path.clone(), false, self.cb.clone())
+        self.registry
+            .subscribe(watch_id, mount_path.clone(), false, self.cb.clone())
             .await;
-        self.watch_canonical
-            .lock()
-            .await
-            .insert(watch_id, shared.target.clone());
+        self.watch_paths.lock().await.insert(watch_id, mount_path);
 
         Ok(())
     }
@@ -548,7 +529,7 @@ fn build_breadcrumb_segments(
     path: &std::path::Path,
     home_map: &HashMap<String, (String, u32)>,
     mount_map: &HashMap<String, (String, String)>,
-) -> Vec<crate::ipc::protocol::BreadcrumbSegment> {
+) -> Vec<crate::fsworker::protocol::BreadcrumbSegment> {
     let seg_paths = split_path_segments(path);
     seg_paths
         .iter()
@@ -569,7 +550,7 @@ fn build_breadcrumb_segments(
                 None => (false, None),
             };
 
-            crate::ipc::protocol::BreadcrumbSegment {
+            crate::fsworker::protocol::BreadcrumbSegment {
                 name,
                 path: path_str,
                 is_home,

@@ -36,6 +36,7 @@ export interface NavStatePayload {
 export type WatchDelta =
   | { Reset: FileEntry[] }
   | { Upsert: FileEntry }
+  | { UpsertBatch: FileEntry[] }
   | { Remove: string }
   | { Rename: { from: string; to: string } }
   | { Inaccessible: { path: string; ancestor: string; level: number; reason: string } }

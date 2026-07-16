@@ -1,10 +1,17 @@
-//! 文件系统相关类型和 RPC 接口定义。
+//! FsWorker RPC 服务与共享数据类型。
 //!
 //! 包括：文件条目、Watcher 增量事件、批处理进度/冲突、FsWorker RPC 接口。
+//!
+//! ## 传输层
+//!
+//! - 实例→Worker：匿名 socketpair + tarpc（主进程=client, Worker=server）
+//! - Worker→实例回调：匿名 socketpair + tarpc（Worker=client, 主进程=server）
 
 use std::{path::PathBuf, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
+
+pub use crate::mesh::types::ui::EntryKind;
 
 // ---------------------------------------------------------------------------
 // 文件系统条目
@@ -38,15 +45,6 @@ pub struct File {
     pub mime: Option<String>,
     /// 缩略图 PNG 字节（渐进式，初次为 None；仅图片类）
     pub thumbnail: Option<Vec<u8>>,
-}
-
-/// 创建条目的类型。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum EntryKind {
-    /// 空文件
-    File,
-    /// 目录
-    Dir,
 }
 
 // ---------------------------------------------------------------------------

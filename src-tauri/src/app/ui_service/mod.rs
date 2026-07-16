@@ -43,7 +43,7 @@ use crate::app::fs_service::{Canceller, Op};
 use crate::app::state::AppStateManager;
 use crate::channel;
 use crate::fsworker::UidToken;
-use crate::ipc::protocol::{EntryKind, NavTarget};
+use crate::mesh::types::ui::{ContextId, EntryKind, NavTarget};
 
 use nav::TabNavState;
 
@@ -80,7 +80,7 @@ pub struct UIService {
     watch_txs: RwLock<HashMap<String, channel::Tx<nav::WatchCommand>>>,
 
     /// ContextId（tab/window）→ 活跃 op_id 集合
-    contexts: Mutex<HashMap<crate::ipc::protocol::ContextId, HashSet<u64>>>,
+    contexts: Mutex<HashMap<ContextId, HashSet<u64>>>,
     /// op_id → 取消句柄
     cancels: Mutex<HashMap<u64, Canceller>>,
 
@@ -143,7 +143,7 @@ impl UIService {
     pub async fn ready(&self, window: &tauri::Window) -> Result<(), String> {
         let token = self.ensure_default_token().await?;
 
-        let persis_tabs: Vec<crate::ipc::protocol::TabState> = {
+        let persis_tabs: Vec<crate::mesh::types::ui::TabState> = {
             let tabs = self.mgr.tabs.lock().unwrap();
             tabs.get_all().to_vec()
         };
@@ -278,8 +278,8 @@ impl UIService {
     async fn build_dashboard(
         &self,
         token: &UidToken,
-    ) -> Result<crate::ipc::protocol::DashboardData, String> {
-        use crate::ipc::protocol::{CommonLocation, DashboardData, StorageSummary};
+    ) -> Result<crate::mesh::types::ui::DashboardData, String> {
+        use crate::mesh::types::ui::{CommonLocation, DashboardData, StorageSummary};
 
         let (total, free) = {
             let resp = token
@@ -351,7 +351,7 @@ impl UIService {
         tab_id: u64,
         path: &Path,
         kind: EntryKind,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.create(&token, path, kind).await?;
@@ -364,7 +364,7 @@ impl UIService {
         tab_id: u64,
         path: &Path,
         new_name: &str,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.rename(&token, path, new_name).await?;
@@ -376,7 +376,7 @@ impl UIService {
         self: &Arc<Self>,
         tab_id: u64,
         ops: Vec<Op>,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let _token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.move_(ops).await?;
@@ -388,7 +388,7 @@ impl UIService {
         self: &Arc<Self>,
         tab_id: u64,
         ops: Vec<Op>,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let _token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.copy(ops).await?;
@@ -402,7 +402,7 @@ impl UIService {
         self: &Arc<Self>,
         tab_id: u64,
         pairs: Vec<(PathBuf, PathBuf)>,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let token = self.get_tab_token(tab_id)?;
         let ops: Vec<Op> = pairs
@@ -422,7 +422,7 @@ impl UIService {
         self: &Arc<Self>,
         tab_id: u64,
         pairs: Vec<(PathBuf, PathBuf)>,
-        ctx_id: crate::ipc::protocol::ContextId,
+        ctx_id: crate::mesh::types::ui::ContextId,
     ) -> Result<(), String> {
         let token = self.get_tab_token(tab_id)?;
         let ops: Vec<Op> = pairs
@@ -454,7 +454,7 @@ impl UIService {
     }
 
     /// 接收来自其他实例的 tab 转移。
-    pub async fn receive_transfer_tab(&self, tab_state: crate::ipc::protocol::TabState) {
+    pub async fn receive_transfer_tab(&self, tab_state: crate::mesh::types::ui::TabState) {
         let token = self.ensure_default_token().await;
         let tab_id;
         {

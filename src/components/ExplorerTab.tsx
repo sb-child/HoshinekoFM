@@ -177,6 +177,20 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
           setFiles(mapped);
           setInaccessible(null);
           setCurrentPath(initialPathRef.current);
+        } else if ("UpsertBatch" in delta) {
+          setFiles((prev) => {
+            const next = [...prev];
+            for (const entry of delta.UpsertBatch) {
+              const mapped = mapBackendFile(entry);
+              const idx = next.findIndex((f) => f.path === mapped.path);
+              if (idx >= 0) {
+                next[idx] = mapped;
+              } else {
+                next.push(mapped);
+              }
+            }
+            return next;
+          });
         } else if ("Upsert" in delta) {
           setInaccessible(null);
           const entry = mapBackendFile(delta.Upsert);

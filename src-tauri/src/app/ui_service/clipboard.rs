@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::Emitter;
 use tracing::debug;
 
-use crate::ipc::protocol::{ClipOp, ClipboardState};
+use crate::mesh::types::ui::{ClipOp, ClipboardState};
 
 use super::UIService;
 

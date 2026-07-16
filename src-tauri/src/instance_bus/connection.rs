@@ -8,7 +8,7 @@ use tarpc::context;
 use tokio::net::UnixStream;
 use tracing::{debug, error};
 
-use crate::ipc::protocol::{InstanceMessage, InstanceServiceClient};
+use crate::mesh::types::instance::{InstanceMsg, InstanceServiceClient};
 
 /// 到另一个 HoshinekoFM 实例的单条直连。
 pub struct PeerConnection {
@@ -32,10 +32,8 @@ impl PeerConnection {
         self.instance_id
     }
 
-    /// 发送 InstanceMessage（按变体路由到对应 RPC）。
-    ///
-    /// 失败时自动重连一次。
-    pub async fn send(&mut self, msg: &InstanceMessage) -> io::Result<()> {
+    /// 发送 InstanceMsg（按变体路由到对应 RPC）。
+    pub async fn send(&mut self, msg: &InstanceMsg) -> io::Result<()> {
         match self.send_inner(msg).await {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -45,35 +43,43 @@ impl PeerConnection {
         }
     }
 
-    async fn send_inner(&mut self, msg: &InstanceMessage) -> io::Result<()> {
-        use InstanceMessage::*;
+    async fn send_inner(&mut self, msg: &InstanceMsg) -> io::Result<()> {
         let ctx = context::current();
-
         match msg {
-            WindowRegistered {
-                window_id,
-                instance_id,
-            } => {
-                self.client
-                    .window_register(ctx, *window_id, *instance_id)
-                    .await
+            InstanceMsg::OpenWindow { paths } => self.client.open_window(ctx, paths.clone()).await,
+            InstanceMsg::TransferTab { tab } => self.client.transfer_tab(ctx, tab.clone()).await,
+            InstanceMsg::ClipboardSync { state } => {
+                self.client.clipboard_sync(ctx, state.clone()).await
             }
-            WindowUnregistered { window_id } => {
-                self.client.window_unregister(ctx, *window_id).await
-            }
-            ClipboardSync { state } => self.client.clipboard_sync(ctx, state.clone()).await,
-            TransferTab { tab, .. } => self.client.transfer_tab(ctx, tab.clone()).await,
-            ForwardToWindow { window_id, msg } => {
+            InstanceMsg::ForwardWindowMsg { window_id, msg } => {
                 self.client.forward(ctx, *window_id, msg.clone()).await
             }
         }
         .map_err(into_io)
     }
+
+    /// 窗口注册广播（内部路由表同步）。
+    pub async fn window_register(&mut self, window_id: u64, instance_id: u64) -> io::Result<()> {
+        let ctx = context::current();
+        self.client
+            .window_register(ctx, window_id, instance_id)
+            .await
+            .map_err(into_io)
+    }
+
+    /// 窗口注销广播（内部路由表同步）。
+    pub async fn window_unregister(&mut self, window_id: u64) -> io::Result<()> {
+        let ctx = context::current();
+        self.client
+            .window_unregister(ctx, window_id)
+            .await
+            .map_err(into_io)
+    }
 }
 
 fn make_client(stream: UnixStream) -> InstanceServiceClient {
     let transport = tarpc::serde_transport::new(
-        crate::ipc::frame_stream(stream),
+        crate::mesh::transport::frame_stream(stream),
         tarpc::tokio_serde::formats::Bincode::default(),
     );
     InstanceServiceClient::new(tarpc::client::Config::default(), transport).spawn()

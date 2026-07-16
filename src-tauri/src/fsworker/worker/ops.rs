@@ -16,7 +16,7 @@ use std::{
 use tarpc::context;
 use tokio::sync::Mutex;
 
-use crate::ipc::protocol::{
+use crate::fsworker::protocol::{
     AppCallbackServiceClient, ConflictItem, ConflictResolution, ItemStatus, ProgressEvent,
 };
 

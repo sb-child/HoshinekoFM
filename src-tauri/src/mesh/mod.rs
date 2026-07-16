@@ -1,43 +1,63 @@
-//! Mesh 统一通信层。
+//! Mesh 统一通信层 — 端点导向路由。
 //!
 //! ## 架构
 //!
 //! ```text
-//! WindowProxy_0 ──┐
-//! WindowProxy_1 ──┤── Mesh (路由表) ── InstanceBus ──► 其他实例
-//! WindowProxy_2 ──┘
+//! Window_0 ──┐
+//! Window_1 ──┤── Mesh (路由表) ── InstanceBus ──► 其他实例
+//! FsService ─┘           │
+//!                        ├─ 同进程: trait 直调，零序列化
+//!                        └─ 跨实例: InstanceMsg::ForwardWindowMsg → tarpc
 //! ```
 //!
-//! - 同进程内：通过内存 dispatch 直投到目标 window handler，零序列化
-//! - 跨实例：通过 InstanceBus 的 InstanceService tarpc 转发
+//! ## 端点类型
+//!
+//! 每种端点（Window / Instance / FsService）有独立的:
+//! - 消息枚举（`XxxMsg`）
+//! - Handler trait（`XxxHandler`）
+//! - dispatch 函数（由 `endpoint_dispatch!` 宏生成）
+//!
+//! 新增端点只需: 建 `types/new_endpoint.rs` → 在 `MeshInner` 加一个 `HashMap`
+//! → 加 `send_to_xxx`/`register_xxx` 方法。不需要改已有端点文件。
+//!
+//! ## 跨实例 WindowMsg 透明路由
+//!
+//! ```text
+//! mesh.send_to_window(id, msg)
+//!   ├─ 本地 → dispatch_window_msg(handler, &msg)
+//!   └─ 远程 → InstanceMsg::ForwardWindowMsg { window_id: id, msg }
+//!              → instance_bus.send_to(remote) → tarpc
+//!                → mesh/server.rs → handler.on_forward_window_msg(id, msg)
+//!                  → mesh.send_to_window(id, msg)  # 最终本地投递
+//! ```
 
+pub mod callback;
+pub mod discovery;
 mod envelope;
 mod id;
 pub mod proxy;
 pub mod server;
+pub mod transport;
+pub mod types;
+
+#[macro_use]
+mod endpoint_dispatch;
 
 pub use envelope::Envelope;
 pub use id::{MeshId, ServiceId, WindowId};
-pub use proxy::{WindowProxy, dispatch_message};
+pub use proxy::WindowProxy;
+pub use types::{
+    FsServiceHandler, FsServiceMsg, InstanceHandler, InstanceMsg, WindowHandler, WindowMsg,
+    dispatch_fs_msg, dispatch_instance_msg, dispatch_window_msg,
+};
 
+use std::collections::HashMap;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicU64, Ordering},
 };
 
 use crate::instance_bus::InstanceBus;
-use crate::ipc::protocol::{DragOp, TabState, WindowMessage};
-
-// ---------------------------------------------------------------------------
-// WindowMessageHandler
-// ---------------------------------------------------------------------------
-
-/// 每个窗口的消息处理器。
-pub trait WindowMessageHandler: Send + Sync + 'static {
-    fn on_dnd_session_active(&self, session_id: u64, files: Vec<String>, operation: DragOp);
-    fn on_dnd_session_completed(&self, session_id: u64);
-    fn on_tab_attached(&self, tab: TabState);
-}
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -45,7 +65,7 @@ pub trait WindowMessageHandler: Send + Sync + 'static {
 
 /// 实例级 Mesh 路由器。
 ///
-/// 管理窗口中继表和跨实例转发。
+/// 管理端点注册表和跨实例转发。每个端点类型有独立的 handler HashMap。
 #[derive(Clone)]
 pub struct Mesh {
     inner: Arc<MeshInner>,
@@ -54,7 +74,12 @@ pub struct Mesh {
 struct MeshInner {
     instance_id: u64,
     window_counter: AtomicU64,
-    windows: RwLock<std::collections::HashMap<u64, Arc<dyn WindowMessageHandler>>>,
+
+    /// window_id → handler（窗口端点）
+    window_handlers: RwLock<HashMap<u64, Arc<dyn WindowHandler>>>,
+    /// 全局实例级 handler（app 层注册，唯一）
+    instance_handler: RwLock<Option<Arc<dyn InstanceHandler>>>,
+
     instance_bus: Arc<InstanceBus>,
 }
 
@@ -64,85 +89,110 @@ impl Mesh {
             inner: Arc::new(MeshInner {
                 instance_id,
                 window_counter: AtomicU64::new(0),
-                windows: RwLock::new(std::collections::HashMap::new()),
+                window_handlers: RwLock::new(HashMap::new()),
+                instance_handler: RwLock::new(None),
                 instance_bus,
             }),
         }
     }
 
-    /// 本实例 ID。
+    // ── Identity ──────────────────────────────────────────────────────────
+
     pub fn instance_id(&self) -> u64 {
         self.inner.instance_id
     }
 
-    /// 注册新窗口，返回其通信句柄。
-    pub fn create_window(
-        &self,
-        handler: Arc<dyn WindowMessageHandler>,
-    ) -> WindowProxy {
+    /// InstanceBus 的引用（向后兼容）。
+    pub fn instance_bus(&self) -> &Arc<InstanceBus> {
+        &self.inner.instance_bus
+    }
+
+    // ── Window 端点 ───────────────────────────────────────────────────────
+
+    /// 注册新窗口端点，返回其通信句柄。
+    pub fn create_window(&self, handler: Arc<dyn WindowHandler>) -> WindowProxy {
         let window_id = self.inner.window_counter.fetch_add(1, Ordering::Relaxed);
-        self.inner.windows.write().unwrap().insert(window_id, handler.clone());
+        self.inner
+            .window_handlers
+            .write()
+            .unwrap()
+            .insert(window_id, handler);
         proxy::new_proxy(self.clone(), window_id)
     }
 
-    /// 移除窗口。
+    /// 移除窗口端点。
     pub(super) fn remove_window(&self, window_id: u64) {
-        self.inner.windows.write().unwrap().remove(&window_id);
+        self.inner
+            .window_handlers
+            .write()
+            .unwrap()
+            .remove(&window_id);
     }
 
-    /// 向指定窗口发送消息。
-    pub fn send_to(&self, target_id: u64, msg: WindowMessage) {
-        let windows = self.inner.windows.read().unwrap();
+    /// 向指定窗口发送消息（自动判断本地/远程）。
+    pub fn send_to_window(&self, target_id: u64, msg: WindowMsg) {
         let target_instance = self.inner.instance_bus.window_instance(target_id);
 
         if target_instance == Some(self.inner.instance_id) {
-            if let Some(handler) = windows.get(&target_id) {
+            // 本地直投
+            if let Some(handler) = self.inner.window_handlers.read().unwrap().get(&target_id) {
                 let handler = handler.clone();
-                drop(windows);
-                dispatch_message(handler.as_ref(), &msg);
+                dispatch_window_msg(&msg, handler.as_ref());
             }
         } else if let Some(remote_instance) = target_instance {
-            drop(windows);
+            // 跨实例：包装成 InstanceMsg::ForwardWindowMsg
             let instance_bus = self.inner.instance_bus.clone();
+            let instance_msg = InstanceMsg::ForwardWindowMsg {
+                window_id: target_id,
+                msg,
+            };
             tokio::spawn(async move {
-                use crate::ipc::protocol::InstanceMessage;
-                let _ = instance_bus
-                    .send_to(
-                        remote_instance,
-                        &InstanceMessage::ForwardToWindow {
-                            window_id: target_id,
-                            msg,
-                        },
-                    )
-                    .await;
+                let _ = instance_bus.send_to(remote_instance, &instance_msg).await;
             });
         }
     }
 
     /// 向所有本地窗口广播。
-    pub fn broadcast_local(&self, msg: WindowMessage) {
+    pub fn broadcast_windows(&self, msg: WindowMsg) {
         let handlers: Vec<_> = self
             .inner
-            .windows
+            .window_handlers
             .read()
             .unwrap()
             .values()
             .cloned()
             .collect();
         for handler in handlers {
-            dispatch_message(handler.as_ref(), &msg);
+            dispatch_window_msg(&msg, handler.as_ref());
         }
     }
 
-    /// InstanceBus 的引用（用于向后兼容）。
-    pub fn instance_bus(&self) -> &Arc<InstanceBus> {
-        &self.inner.instance_bus
+    /// 分发消息到指定本地窗口（供跨实例转发使用）。
+    pub fn dispatch_window_local(&self, window_id: u64, msg: &WindowMsg) {
+        if let Some(handler) = self.inner.window_handlers.read().unwrap().get(&window_id) {
+            dispatch_window_msg(msg, handler.as_ref());
+        }
     }
 
-    /// 分发消息到指定窗口（公开给 InstanceBusHandler 回调使用）。
-    pub fn dispatch_to(&self, window_id: u64, msg: &WindowMessage) {
-        if let Some(handler) = self.inner.windows.read().unwrap().get(&window_id) {
-            dispatch_message(handler.as_ref(), msg);
+    // ── Instance 端点 ─────────────────────────────────────────────────────
+
+    /// 注册全局 Instance handler（app 层调用，唯一）。
+    pub fn register_instance_handler(&self, handler: Arc<dyn InstanceHandler>) {
+        *self.inner.instance_handler.write().unwrap() = Some(handler);
+    }
+
+    /// 向远程实例发送 InstanceMsg。
+    pub fn send_to_instance(&self, instance_id: u64, msg: InstanceMsg) {
+        let instance_bus = self.inner.instance_bus.clone();
+        tokio::spawn(async move {
+            let _ = instance_bus.send_to(instance_id, &msg).await;
+        });
+    }
+
+    /// 分发 InstanceMsg 到已注册的 InstanceHandler（供 mesh/server.rs 回调）。
+    pub fn dispatch_instance(&self, msg: &InstanceMsg) {
+        if let Some(handler) = self.inner.instance_handler.read().unwrap().as_ref() {
+            dispatch_instance_msg(msg, handler.as_ref());
         }
     }
 }

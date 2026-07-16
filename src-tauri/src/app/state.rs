@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::WebviewWindow;
 use tracing::warn;
 
-use crate::ipc::protocol::DragOp;
+use crate::mesh::types::ui::DragOp;
 use crate::mesh::{Mesh, WindowProxy};
 
 use super::fs_service::FsService;
@@ -142,8 +142,7 @@ impl AppStateManager {
     ) -> WindowProxy {
         let window_id = self.claim_window_id().await;
 
-        let handler: Arc<dyn crate::mesh::WindowMessageHandler> =
-            Arc::new(NoopWindowMessageHandler);
+        let handler: Arc<dyn crate::mesh::WindowHandler> = Arc::new(NoopWindowHandler);
         let proxy = self.mesh.create_window(handler);
 
         self.window_registry
@@ -167,11 +166,11 @@ impl AppStateManager {
     }
 }
 
-/// No-op `WindowMessageHandler`（`WindowMessage` 变体目前从未被构造）。
-struct NoopWindowMessageHandler;
+/// No-op `WindowHandler`。
+struct NoopWindowHandler;
 
-impl crate::mesh::WindowMessageHandler for NoopWindowMessageHandler {
-    fn on_dnd_session_active(&self, _session_id: u64, _files: Vec<String>, _operation: DragOp) {}
-    fn on_dnd_session_completed(&self, _session_id: u64) {}
-    fn on_tab_attached(&self, _tab: crate::ipc::protocol::TabState) {}
+impl crate::mesh::WindowHandler for NoopWindowHandler {
+    fn on_dnd_active(&self, _session_id: u64, _files: Vec<String>, _op: DragOp) {}
+    fn on_dnd_completed(&self, _session_id: u64) {}
+    fn on_tab_attached(&self, _tab: crate::mesh::types::ui::TabState) {}
 }

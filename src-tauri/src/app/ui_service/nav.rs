@@ -16,9 +16,10 @@ use crate::app::state::AppStateManager;
 use crate::channel;
 use crate::channel::oneshot;
 use crate::fsworker::UidToken;
-use crate::ipc::protocol::{
-    ContextId, InstanceMessage, NavEntry, NavStatePayload, NavTarget, TabInfo, TabsPayload,
-    WatchDelta,
+use crate::fsworker::protocol::WatchDelta;
+use crate::mesh::types::instance::InstanceMsg;
+use crate::mesh::types::ui::{
+    ContextId, NavEntry, NavStatePayload, NavTarget, TabInfo, TabsPayload,
 };
 
 use super::UIService;
@@ -90,7 +91,7 @@ pub(super) enum WatchTarget {
 enum WatchSnapshot {
     /// 正常直播中，path → File 映射
     Live {
-        files: HashMap<PathBuf, crate::ipc::protocol::File>,
+        files: HashMap<PathBuf, crate::fsworker::protocol::File>,
     },
     /// 目录不可访问（权限拒绝等）
     Inaccessible {
@@ -136,6 +137,13 @@ impl WatchSnapshot {
             WatchDelta::Upsert(file) => {
                 if let WatchSnapshot::Live { files } = self {
                     files.insert(file.path.clone(), file.clone());
+                }
+            }
+            WatchDelta::UpsertBatch(batch) => {
+                if let WatchSnapshot::Live { files } = self {
+                    for f in batch {
+                        files.insert(f.path.clone(), f.clone());
+                    }
                 }
             }
             WatchDelta::Remove(path) => {
@@ -260,6 +268,8 @@ struct TabWatchEntry {
     watch_id_rx: Option<oneshot::RxOneshot<u64>>,
     /// UID Token（用于 Refresh RPC + 保活 Worker）
     token: UidToken,
+    /// 代际计数器：每次 NavUpdate 递增，校验事件是否来自当前 watcher
+    generation: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -272,9 +282,10 @@ struct TabWatchEntry {
 /// 返回 (JoinHandle, watch_id_rx)。
 fn spawn_watcher_task(
     tab_id: u64,
+    generation: u64,
     path: PathBuf,
     token: UidToken,
-    event_tx: channel::Tx<(u64, WatchDelta)>,
+    event_tx: channel::Tx<(u64, u64, WatchDelta)>,
     mgr: Arc<AppStateManager>,
 ) -> (tokio::task::JoinHandle<()>, oneshot::RxOneshot<u64>) {
     let (id_tx, id_rx) = oneshot::oneshot();
@@ -285,6 +296,7 @@ fn spawn_watcher_task(
                 warn!("spawn_watcher_task tab={tab_id}: watch_dir failed: {e}");
                 let _ = event_tx.send((
                     tab_id,
+                    generation,
                     WatchDelta::FatalError {
                         path: path.clone(),
                         reason: e,
@@ -299,11 +311,11 @@ fn spawn_watcher_task(
         debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
 
         while let Ok(delta) = watcher.events.recv().await {
-            if event_tx.send((tab_id, delta)).is_err() {
+            if event_tx.send((tab_id, generation, delta)).is_err() {
                 break;
             }
         }
-        debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} ended");
+        debug!("spawn_watcher_task tab={tab_id} gen={generation} watch_id={watch_id} ended");
     });
     (handle, id_rx)
 }
@@ -399,7 +411,7 @@ impl UIService {
     pub fn start_watch(&self, window: tauri::Window) {
         let label = window.label().to_string();
         let (cmd_tx, cmd_rx) = channel::unbounded::<WatchCommand>();
-        let (event_tx, event_rx) = channel::unbounded::<(u64, WatchDelta)>();
+        let (event_tx, event_rx) = channel::unbounded::<(u64, u64, WatchDelta)>();
 
         self.watch_txs
             .write()
@@ -414,6 +426,7 @@ impl UIService {
         tokio::spawn(async move {
             let mut tab_targets: HashMap<u64, WatchTarget> = HashMap::new();
             let mut tab_watches: HashMap<u64, TabWatchEntry> = HashMap::new();
+            let mut tab_generations: HashMap<u64, u64> = HashMap::new();
             let mut active_tab: Option<u64> = None;
 
             loop {
@@ -435,7 +448,11 @@ impl UIService {
 
                 enum ThreadEvent {
                     Command(WatchCommand),
-                    WatcherDelta { tab_id: u64, delta: WatchDelta },
+                    WatcherDelta {
+                        tab_id: u64,
+                        generation: u64,
+                        delta: WatchDelta,
+                    },
                 }
 
                 let result = {
@@ -448,7 +465,7 @@ impl UIService {
                             Err(_) => break,
                         },
                         pair = event_rx.recv() => match pair {
-                            Ok((tab_id, delta)) => ThreadEvent::WatcherDelta { tab_id, delta },
+                            Ok((tab_id, generation, delta)) => ThreadEvent::WatcherDelta { tab_id, generation, delta },
                             Err(_) => ThreadEvent::Command(WatchCommand::Shutdown),
                         },
                     }
@@ -471,9 +488,15 @@ impl UIService {
                             if let Some(old) = tab_watches.remove(&tab_id) {
                                 old.handle.abort();
                             }
+                            let generation = tab_generations
+                                .entry(tab_id)
+                                .and_modify(|c| *c += 1)
+                                .or_insert(1);
+                            let generation = *generation;
                             if let WatchTarget::Filesystem { path, token } = target {
                                 let (handle, id_rx) = spawn_watcher_task(
                                     tab_id,
+                                    generation,
                                     path.clone(),
                                     token.clone(),
                                     event_tx.clone(),
@@ -487,6 +510,7 @@ impl UIService {
                                         watch_id: 0,
                                         watch_id_rx: Some(id_rx),
                                         token: token.clone(),
+                                        generation,
                                     },
                                 );
                                 // 面包屑：重建该 tab 的面包屑 watcher
@@ -502,6 +526,7 @@ impl UIService {
                                 entry.handle.abort();
                             }
                             tab_targets.remove(&tab_id);
+                            tab_generations.remove(&tab_id);
                             if active_tab == Some(tab_id) {
                                 active_tab = None;
                             }
@@ -538,11 +563,19 @@ impl UIService {
                             return;
                         }
                     },
-                    ThreadEvent::WatcherDelta { tab_id, delta } => {
-                        // 总是更新快照
-                        if let Some(entry) = tab_watches.get_mut(&tab_id) {
-                            entry.snapshot.apply(&delta);
+                    ThreadEvent::WatcherDelta {
+                        tab_id,
+                        generation,
+                        delta,
+                    } => {
+                        // 校验代际：忽略旧 watcher 的残留事件
+                        let Some(entry) = tab_watches.get_mut(&tab_id) else {
+                            continue;
+                        };
+                        if entry.generation != generation {
+                            continue;
                         }
+                        entry.snapshot.apply(&delta);
                         // 仅 active tab 转发给前端
                         if Some(tab_id) == active_tab {
                             let _ = window.emit("hf:file-list", &delta);
@@ -756,10 +789,7 @@ impl UIService {
             };
 
             let instance_bus = self.mgr.mesh.instance_bus().clone();
-            let msg = InstanceMessage::TransferTab {
-                tab: tab_state,
-                to_instance: target_instance,
-            };
+            let msg = InstanceMsg::TransferTab { tab: tab_state };
             tokio::spawn(async move {
                 instance_bus.send_to(target_instance, &msg).await;
             });

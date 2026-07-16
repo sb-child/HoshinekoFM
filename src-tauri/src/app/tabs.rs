@@ -15,7 +15,7 @@ use std::{fs, io, path::PathBuf};
 use tracing::{debug, error, info, warn};
 
 /// Re-export 以便统一引用。
-pub use crate::ipc::protocol::TabState;
+pub use crate::mesh::types::ui::TabState;
 
 /// 持久化文件路径：`~/.local/share/hnfm/tabs.json`
 fn tabs_file_path() -> PathBuf {
@@ -28,8 +28,8 @@ fn tabs_file_path() -> PathBuf {
     base.join("hnfm/tabs.json")
 }
 
-use crate::ipc::protocol::NavEntry;
-use crate::ipc::protocol::NavTarget;
+use crate::mesh::types::ui::NavEntry;
+use crate::mesh::types::ui::NavTarget;
 
 /// Tab 管理器。
 pub struct TabManager {

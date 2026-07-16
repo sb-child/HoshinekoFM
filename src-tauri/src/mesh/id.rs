@@ -22,6 +22,8 @@ pub enum MeshId {
     Window(WindowId),
     /// 本地服务（如 FsService）
     Service(ServiceId),
+    /// FsService（按 instance 寻址）
+    FsService(u64),
 }
 
 impl MeshId {
@@ -29,6 +31,7 @@ impl MeshId {
         match self {
             MeshId::Window(w) => w.instance,
             MeshId::Service(s) => s.instance,
+            MeshId::FsService(i) => *i,
         }
     }
 }

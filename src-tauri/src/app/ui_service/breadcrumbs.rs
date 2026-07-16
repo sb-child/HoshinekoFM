@@ -18,8 +18,9 @@ use tracing::{debug, warn};
 
 use crate::app::state::AppStateManager;
 use crate::channel;
+use crate::fsworker::protocol::WatchDelta;
 use crate::fsworker::{UidToken, WorkerRequestContent};
-use crate::ipc::protocol::{BreadcrumbEntry, BreadcrumbsPayload, WatchDelta};
+use crate::mesh::types::ui::{BreadcrumbEntry, BreadcrumbsPayload};
 
 // ---------------------------------------------------------------------------
 // BreadcrumbCommand — watch 线程 → BreadcrumbManager 的命令
@@ -343,6 +344,7 @@ fn apply_file_delta(entry: &mut BreadcrumbEntry, delta: &WatchDelta) {
             entry.is_symlink = file.is_symlink;
             entry.symlink_target = None;
         }
+        WatchDelta::UpsertBatch(_) => {}
         WatchDelta::Inaccessible { .. }
         | WatchDelta::Recovering { .. }
         | WatchDelta::FatalError { .. } => {

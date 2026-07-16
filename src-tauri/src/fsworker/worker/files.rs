@@ -3,14 +3,15 @@
 use std::{
     ffi::CString,
     io,
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt},
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
 use tracing::warn;
 
-use crate::ipc::protocol::{EntryKind, File};
+use crate::fsworker::protocol::File;
+use crate::mesh::types::ui::EntryKind;
 
 /// 解析符号链接到规范路径（失败则原样返回）。
 pub fn resolve_path(path: &Path) -> PathBuf {
@@ -269,4 +270,24 @@ fn guess_mime(path: &Path) -> String {
         "pdf" => "application/pdf".to_string(),
         _ => "application/octet-stream".to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 虚拟文件系统 & poll 支持
+// ---------------------------------------------------------------------------
+
+/// 检测路径是否在虚拟文件系统上（/proc、/sys）。
+/// 这些文件系统不产生 inotify 事件，必须用 kernel poll (POLLPRI) 监听。
+pub fn is_virtual_fs(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("/proc/") || s.starts_with("/sys/")
+}
+
+/// 以 O_RDONLY | O_NONBLOCK 打开文件，用于 AsyncFd 包装。
+pub fn open_nonblock(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
 }

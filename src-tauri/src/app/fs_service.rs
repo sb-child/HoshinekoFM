@@ -17,8 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::channel;
 
+use crate::fsworker::protocol::{ConflictResolution, ProgressEvent, WatchDelta};
 use crate::fsworker::{FsWorkerPool, UidToken, WorkerRequestContent};
-use crate::ipc::protocol::{ConflictResolution, EntryKind, ProgressEvent, WatchDelta};
+use crate::mesh::types::ui::EntryKind;
 
 // ---------------------------------------------------------------------------
 // Op — copy/move 的单项（逐项携带 src/dst token，可表达跨 UID）
