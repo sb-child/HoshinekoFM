@@ -5,7 +5,7 @@
 //! - `AppStateManager` — 通过 Tauri `.manage()` 注入的全局管理器
 //!   - `windows: Mutex<HashMap<label, WindowState>>` — 每个窗口的 per-window 状态
 //!   - `window_registry: Mutex<HashMap<window_id, WebviewWindow>>` — 本地 emit 查询
-//!   - `tabs` / `fs_service` / `instance_bus` — 全局共享
+//!   - `tabs` / `fs_service` / `mesh` — 全局共享
 //!
 //! ## 使用
 //!
@@ -19,10 +19,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::WebviewWindow;
 use tracing::warn;
 
-use crate::instance_bus::InstanceBus;
 use crate::ipc::protocol::DragOp;
-use crate::window_bus::WindowBus;
-use crate::window_bus::bus_master::BusMaster;
+use crate::mesh::{Mesh, WindowProxy};
 
 use super::fs_service::FsService;
 use super::tabs::TabManager;
@@ -37,8 +35,8 @@ pub struct AppStateManager {
     pub tabs: Arc<Mutex<TabManager>>,
     /// 文件系统调度服务（内部含 Worker 进程池 + reaper）
     pub fs_service: FsService,
-    /// 实例间通信总线
-    pub instance_bus: Arc<InstanceBus>,
+    /// Mesh 通信层
+    pub mesh: Arc<Mesh>,
 
     /// Tauri AppHandle（setup 阶段注入，用于跨服务创建窗口）
     app_handle: OnceLock<tauri::AppHandle>,
@@ -52,18 +50,18 @@ pub struct AppStateManager {
 /// 每个窗口的私有状态。
 pub struct WindowState {
     pub window_id: u64,
-    pub window_bus: WindowBus,
+    pub window_proxy: WindowProxy,
 }
 
 impl AppStateManager {
     /// 创建全局状态管理器。
-    pub fn new(tab_manager: TabManager, instance_bus: Arc<InstanceBus>) -> Self {
+    pub fn new(tab_manager: TabManager, mesh: Arc<Mesh>) -> Self {
         Self {
             windows: Mutex::new(HashMap::new()),
             window_registry: Mutex::new(HashMap::new()),
             tabs: Arc::new(Mutex::new(tab_manager)),
             fs_service: FsService::new(),
-            instance_bus,
+            mesh,
             app_handle: OnceLock::new(),
             label_counter: AtomicU64::new(0),
             window_id_counter: AtomicU64::new(0),
@@ -107,15 +105,13 @@ impl AppStateManager {
     /// 抢占全局唯一 window_id（冲突检测）。
     ///
     /// window_id = `(instance_id << 32) | local_counter`。
-    /// 确定性编码在数学上保证全局唯一（instance_id 全局唯一），
-    /// 此方法额外检查路由表和本地 registry 以防万一。
-    pub async fn claim_window_id(&self, bus: &InstanceBus) -> u64 {
+    pub async fn claim_window_id(&self) -> u64 {
+        let instance_bus = self.mesh.instance_bus();
         loop {
             let local = self.window_id_counter.fetch_add(1, Ordering::Relaxed);
-            let candidate = (bus.self_id() << 32) | local;
+            let candidate = (instance_bus.self_id() << 32) | local;
 
-            // 冲突检测：全局路由表
-            if bus.window_instance(candidate).is_some() {
+            if instance_bus.window_instance(candidate).is_some() {
                 tracing::warn!(
                     "window_id {} conflict in global route table, retrying",
                     candidate
@@ -123,7 +119,6 @@ impl AppStateManager {
                 continue;
             }
 
-            // 冲突检测：本地 registry（新创建、尚未 broadcast 的窗口）
             {
                 let reg = self.window_registry.lock().unwrap();
                 if reg.contains_key(&candidate) {
@@ -139,22 +134,18 @@ impl AppStateManager {
         }
     }
 
-    /// 统一窗口注册入口：抢占 window_id + 通过 BusMaster 创建 WindowBus。
+    /// 统一窗口注册入口：抢占 window_id + 通过 Mesh 创建 WindowProxy。
     pub async fn register_window(
         self: &Arc<Self>,
-        bus_master: &Arc<BusMaster>,
         window: tauri::WebviewWindow,
         label: String,
-    ) -> WindowBus {
-        let instance_bus = bus_master.instance_bus();
-        let window_id = self.claim_window_id(instance_bus).await;
+    ) -> WindowProxy {
+        let window_id = self.claim_window_id().await;
 
-        // 通过 BusMaster 创建 WindowBus（含 tarpc 连接）
-        let handler: Arc<dyn crate::window_bus::WindowMessageHandler> =
+        let handler: Arc<dyn crate::mesh::WindowMessageHandler> =
             Arc::new(NoopWindowMessageHandler);
-        let bus = bus_master.spawn_window(window_id, handler).await;
+        let proxy = self.mesh.create_window(handler);
 
-        // 注册到本地 window_registry（供 InstanceBusHandler::on_forward 使用）
         self.window_registry
             .lock()
             .unwrap()
@@ -164,10 +155,10 @@ impl AppStateManager {
             label,
             WindowState {
                 window_id,
-                window_bus: bus.clone(),
+                window_proxy: proxy.clone(),
             },
         );
-        bus
+        proxy
     }
 
     /// 注销窗口。
@@ -177,11 +168,9 @@ impl AppStateManager {
 }
 
 /// No-op `WindowMessageHandler`（`WindowMessage` 变体目前从未被构造）。
-///
-/// 当需要实际处理窗口间消息时，替换为真实实现。
 struct NoopWindowMessageHandler;
 
-impl crate::window_bus::WindowMessageHandler for NoopWindowMessageHandler {
+impl crate::mesh::WindowMessageHandler for NoopWindowMessageHandler {
     fn on_dnd_session_active(&self, _session_id: u64, _files: Vec<String>, _operation: DragOp) {}
     fn on_dnd_session_completed(&self, _session_id: u64) {}
     fn on_tab_attached(&self, _tab: crate::ipc::protocol::TabState) {}

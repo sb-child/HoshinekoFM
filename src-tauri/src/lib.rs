@@ -6,4 +6,4 @@ pub mod drag;
 pub mod fsworker;
 pub mod instance_bus;
 pub mod ipc;
-pub mod window_bus;
+pub mod mesh;

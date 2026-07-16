@@ -36,7 +36,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tauri::Emitter;
-use tauri::Manager;
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{error, info};
 
@@ -446,13 +445,7 @@ impl UIService {
         let label = self.mgr.next_label();
         match crate::app::commands::create_window(self.mgr.app_handle(), &label, &paths) {
             Ok(window) => {
-                let bus_master = self
-                    .mgr
-                    .app_handle()
-                    .state::<Arc<crate::window_bus::bus_master::BusMaster>>()
-                    .inner()
-                    .clone();
-                self.mgr.register_window(&bus_master, window, label).await;
+                self.mgr.register_window(window, label).await;
             }
             Err(e) => {
                 error!("open_window: failed to create window: {e}");

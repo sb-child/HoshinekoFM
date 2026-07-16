@@ -20,7 +20,7 @@ use tracing::{error, info};
 use crate::instance_bus::server::InstanceBusHandler;
 use crate::instance_bus::{self, InstanceBus};
 use crate::ipc::protocol::{ClipboardState, TabState, WindowMessage};
-use crate::window_bus::bus_master::BusMaster;
+use crate::mesh::Mesh;
 
 use self::{state::AppStateManager, tabs::TabManager};
 
@@ -39,10 +39,10 @@ pub struct RunOpts {
 
 /// App 层 `InstanceBusHandler` 实现。
 ///
-/// 将 InstanceBus 收到的跨实例消息分发到 UIService 和 BusMaster。
+/// 将 InstanceBus 收到的跨实例消息分发到 UIService 和 Mesh。
 struct AppMeshHandler {
     ui: Arc<ui_service::UIService>,
-    bus_master: Arc<BusMaster>,
+    mesh: Arc<Mesh>,
 }
 
 impl InstanceBusHandler for AppMeshHandler {
@@ -71,7 +71,7 @@ impl InstanceBusHandler for AppMeshHandler {
     }
 
     fn on_forward(&self, window_id: u64, msg: WindowMessage) {
-        self.bus_master.dispatch_to(window_id, &msg);
+        self.mesh.dispatch_to(window_id, &msg);
     }
 }
 
@@ -103,7 +103,10 @@ pub async fn run_app(opts: RunOpts) {
         instance_bus::watch_instances(instance_bus_watch).await;
     });
 
-    // 3. 初始化 TabManager
+    // 3. 创建 Mesh（包装 InstanceBus）
+    let mesh = Arc::new(Mesh::new(instance_id, instance_bus.clone()));
+
+    // 4. 初始化 TabManager
     let mut tab_manager = TabManager::load_from_disk();
     if !opts.paths.is_empty() {
         for path in &opts.paths {
@@ -111,15 +114,14 @@ pub async fn run_app(opts: RunOpts) {
         }
     }
 
-    // 4. 创建 AppStateManager / UIService
-    let mgr = Arc::new(AppStateManager::new(tab_manager, instance_bus.clone()));
+    // 5. 创建 AppStateManager / UIService
+    let mgr = Arc::new(AppStateManager::new(tab_manager, mesh.clone()));
     let ui = Arc::new(ui_service::UIService::new(mgr.clone()));
 
-    // 5. 创建 BusMaster + 注册 InstanceBus handler + 启动 listen
-    let bus_master = BusMaster::new(instance_bus.clone(), mgr.clone());
+    // 6. 注册 InstanceBus handler + 启动 listen
     let handler = Arc::new(AppMeshHandler {
         ui: ui.clone(),
-        bus_master: bus_master.clone(),
+        mesh: mesh.clone(),
     });
     instance_bus.set_handler(handler);
     let ib_listen = instance_bus.clone();
@@ -127,18 +129,17 @@ pub async fn run_app(opts: RunOpts) {
         ib_listen.listen(listener).await;
     });
 
-    // 6. 告知 Tauri 共用当前 tokio runtime
+    // 7. 告知 Tauri 共用当前 tokio runtime
     tauri::async_runtime::set(tokio::runtime::Handle::current());
 
-    // 7. 构建 Tauri
+    // 8. 构建 Tauri
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_win = shutdown.clone();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(mgr.clone())
         .manage(ui.clone())
-        .manage(instance_bus.clone())
-        .manage(bus_master.clone())
+        .manage(mesh.clone())
         .invoke_handler(tauri::generate_handler![
             crate::drag::commands::start_drag,
             commands::ready,
@@ -161,7 +162,7 @@ pub async fn run_app(opts: RunOpts) {
             commands::elevate_tab,
             commands::import_files,
             commands::realpath,
-            crate::window_bus::commands::get_window_id,
+            commands::get_window_id,
         ])
         .setup({
             let mgr_s = mgr.clone();
@@ -208,17 +209,13 @@ pub async fn run_app(opts: RunOpts) {
 
 /// `.setup()` 闭包的实际逻辑：注入 AppHandle + 创建首窗口。
 fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, paths: &[String]) {
-    let bus_master = handle.state::<Arc<BusMaster>>().inner().clone();
     let label = mgr.next_label();
     match commands::create_window(handle, &label, paths) {
         Ok(window) => {
-            let (tx, rx) = crate::channel::oneshot::oneshot();
             let mgr_c = mgr.clone();
             tokio::spawn(async move {
-                let bus = mgr_c.register_window(&bus_master, window, label).await;
-                let _ = tx.send(bus);
+                mgr_c.register_window(window, label).await;
             });
-            rx.recv().expect("register_window dropped sender");
         }
         Err(e) => {
             error!("failed to create initial window: {e}");
@@ -237,7 +234,8 @@ fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
         }
         info!("saving tabs before exit (ctrl+c)");
         mgr.tabs.lock().unwrap().save_to_disk();
-        instance_bus::cleanup_socket(mgr.instance_bus.self_id());
+        let instance_id = mgr.mesh.instance_bus().self_id();
+        instance_bus::cleanup_socket(instance_id);
         std::process::exit(0);
     });
 }
@@ -245,20 +243,21 @@ fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
 /// `.on_window_event()` 闭包中 Destroyed 事件的实际处理。
 fn handle_window_destroyed(mgr: &Arc<AppStateManager>, label: &str, shutdown: &Arc<AtomicBool>) {
     let label = label.to_string();
-    let window_bus = {
+    let window_proxy = {
         let windows = mgr.windows.lock().unwrap();
-        windows.get(&label).map(|s| s.window_bus.clone())
+        windows.get(&label).map(|s| s.window_proxy.clone())
     };
-    if let Some(bus) = window_bus {
+    if let Some(proxy) = window_proxy {
         mgr.unregister(&label);
         let mgr = mgr.clone();
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            bus.unregister().await;
+            proxy.unregister();
             let remaining = mgr.registry_count();
             if remaining == 0 && !shutdown.swap(true, Ordering::Relaxed) {
                 info!("last window destroyed, exiting");
-                instance_bus::cleanup_socket(mgr.instance_bus.self_id());
+                let instance_id = mgr.mesh.instance_bus().self_id();
+                instance_bus::cleanup_socket(instance_id);
                 std::process::exit(0);
             }
         });

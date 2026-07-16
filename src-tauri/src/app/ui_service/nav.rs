@@ -720,7 +720,7 @@ impl UIService {
 
     fn execute_move_tab(&self, tab_id: u64, target: u64) {
         let target_instance = target >> 32;
-        let is_local = target_instance == self.mgr.instance_bus.self_id();
+        let is_local = target_instance == self.mgr.mesh.instance_bus().self_id();
 
         self.tabs.write().unwrap().remove(&tab_id);
 
@@ -755,7 +755,7 @@ impl UIService {
                 }
             };
 
-            let instance_bus = self.mgr.instance_bus.clone();
+            let instance_bus = self.mgr.mesh.instance_bus().clone();
             let msg = InstanceMessage::TransferTab {
                 tab: tab_state,
                 to_instance: target_instance,
