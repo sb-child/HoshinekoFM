@@ -14,9 +14,9 @@ use crate::fsworker::protocol::{AppCallbackServiceClient, WatchDelta};
 use super::files::build_file;
 use super::scheduler::SchedulerEvent;
 
-// ---------------------------------------------------------------------------
+// --
 // 输入
-// ---------------------------------------------------------------------------
+// --
 
 /// Registry 或 Scheduler 发给 DeltaBuilder 的控制命令。
 pub enum BuilderCmd {
@@ -31,9 +31,9 @@ pub enum BuilderCmd {
     Shutdown,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // DeltaBuilder
-// ---------------------------------------------------------------------------
+// --
 
 /// 文件增量构建器。
 ///
@@ -160,7 +160,7 @@ impl DeltaBuilder {
         let batch_size = self.config.reset_batch_size;
         let delta_tx = self.delta_tx.clone();
 
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let _permit = sem.acquire_owned().await;
 
             let _ = tokio::task::spawn_blocking(move || {
@@ -201,6 +201,11 @@ impl DeltaBuilder {
             })
             .await;
         });
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!("DeltaBuilder handle_reset task panicked: {e}");
+            }
+        });
     }
 }
 
@@ -226,7 +231,10 @@ async fn build_upserts_impl(
                 }
             })
             .await
-            .unwrap_or(None);
+            .unwrap_or_else(|e| {
+                tracing::error!("build_upserts spawn_blocking panicked: {e}");
+                None
+            });
 
             if let Some(d) = delta {
                 let _ = dt.send((p, d));

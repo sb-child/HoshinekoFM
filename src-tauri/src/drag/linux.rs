@@ -4,6 +4,7 @@
 //   - src/platform_impl/gtk/mod.rs
 //   - src/lib.rs (public types)
 
+use crate::lock::LockSafe;
 use std::{
     rc::Rc,
     sync::{Arc, Mutex},
@@ -193,7 +194,7 @@ fn cleanup_signal_handlers(
     window: &gtk::ApplicationWindow,
 ) {
     tracing::debug!("Cleaning up signal handlers");
-    let handler_ids = &mut handler_ids.lock().unwrap();
+    let handler_ids = &mut handler_ids.lock_safe();
     clear_signal_handlers(window, handler_ids);
     window.drag_source_unset();
     tracing::debug!("Signal handlers cleaned up");

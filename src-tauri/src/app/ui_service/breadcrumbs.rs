@@ -1,4 +1,4 @@
-//! 面包屑管理器 — per-window 独立任务，watch 每个路径段的属性变化。
+//! 面包屑管理器 -- per-window 独立任务，watch 每个路径段的属性变化。
 //!
 //! ## 数据来源
 //!
@@ -22,9 +22,9 @@ use crate::fsworker::protocol::WatchDelta;
 use crate::fsworker::{UidToken, WorkerRequestContent};
 use crate::mesh::types::ui::{BreadcrumbEntry, BreadcrumbsPayload};
 
-// ---------------------------------------------------------------------------
-// BreadcrumbCommand — watch 线程 → BreadcrumbManager 的命令
-// ---------------------------------------------------------------------------
+// --
+// BreadcrumbCommand -- watch 线程 -> BreadcrumbManager 的命令
+// --
 
 #[derive(Clone)]
 pub(super) enum BreadcrumbCommand {
@@ -42,9 +42,9 @@ pub(super) enum BreadcrumbCommand {
     Shutdown,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 内部事件类型
-// ---------------------------------------------------------------------------
+// --
 
 enum BreadcrumbEvent {
     /// 来自 watch_breadcrumb：home/mount 上下文更新
@@ -57,9 +57,9 @@ enum BreadcrumbEvent {
     },
 }
 
-// ---------------------------------------------------------------------------
+// --
 // BreadcrumbManager
-// ---------------------------------------------------------------------------
+// --
 
 pub(super) struct BreadcrumbManager {
     cmd_tx: channel::Tx<BreadcrumbCommand>,
@@ -75,7 +75,9 @@ impl BreadcrumbManager {
     }
 
     pub fn send(&self, cmd: BreadcrumbCommand) {
-        let _ = self.cmd_tx.send(cmd);
+        if self.cmd_tx.send(cmd).is_err() {
+            debug!("BreadcrumbManager channel closed, dropping command");
+        }
     }
 
     async fn run_loop(
@@ -178,9 +180,9 @@ impl BreadcrumbManager {
     }
 }
 
-// ---------------------------------------------------------------------------
-// BreadcrumbTabState — per-tab 面包屑状态
-// ---------------------------------------------------------------------------
+// --
+// BreadcrumbTabState -- per-tab 面包屑状态
+// --
 
 struct BreadcrumbTabState {
     entries: Vec<BreadcrumbEntry>,
@@ -199,10 +201,15 @@ impl Drop for WatcherGuard {
         self.token.registry.unregister_watch(self.watch_id);
         let token = self.token.clone();
         let id = self.watch_id;
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let _ = token
                 .send_request(WorkerRequestContent::Unwatch { watch_id: id })
                 .await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = h.await {
+                tracing::error!("WatcherGuard drop unwatch panicked: {e}");
+            }
         });
     }
 }
@@ -326,9 +333,9 @@ impl BreadcrumbTabState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 文件元数据 delta → BreadcrumbEntry 字段更新
-// ---------------------------------------------------------------------------
+// --
+// 文件元数据 delta -> BreadcrumbEntry 字段更新
+// --
 
 fn apply_file_delta(entry: &mut BreadcrumbEntry, delta: &WatchDelta) {
     match delta {
@@ -365,19 +372,8 @@ fn apply_file_delta(entry: &mut BreadcrumbEntry, delta: &WatchDelta) {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 路径工具
-// ---------------------------------------------------------------------------
+// --
 
-fn split_path_segments(path: &Path) -> Vec<PathBuf> {
-    let mut segments = Vec::new();
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        if current == Path::new("/") {
-            continue;
-        }
-        segments.push(current.clone());
-    }
-    segments
-}
+use crate::fsworker::worker::files::split_path_segments;

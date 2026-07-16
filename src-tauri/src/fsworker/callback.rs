@@ -1,5 +1,6 @@
 //! 反向回调路由（CallbackRegistry + CallbackServer）。
 
+use crate::lock::LockSafe;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -21,11 +22,11 @@ use super::DisconnectReason;
 ///
 /// `watch_id` / `op_id` 全局分配（由 FsService）。
 pub struct CallbackRegistry {
-    /// watch_id → watcher 增量 sender
+    /// watch_id -> watcher 增量 sender
     watches: Mutex<HashMap<u64, channel::Tx<WatchDelta>>>,
-    /// op_id → 进度 sender
+    /// op_id -> 进度 sender
     ops: Mutex<HashMap<u64, channel::Tx<ProgressEvent>>>,
-    /// (op_id, conflict_id) → 冲突决策应答
+    /// (op_id, conflict_id) -> 冲突决策应答
     conflicts: Mutex<HashMap<(u64, u64), oneshot::TxOneshot<ConflictResolution>>>,
 }
 
@@ -41,25 +42,25 @@ impl CallbackRegistry {
     /// 注册一个 watcher，返回增量接收端。
     pub fn register_watch(&self, watch_id: u64) -> channel::RxAsync<WatchDelta> {
         let (tx, rx) = channel::unbounded();
-        self.watches.lock().unwrap().insert(watch_id, tx);
+        self.watches.lock_safe().insert(watch_id, tx);
         rx
     }
 
     /// 注销 watcher。
     pub fn unregister_watch(&self, watch_id: u64) {
-        self.watches.lock().unwrap().remove(&watch_id);
+        self.watches.lock_safe().remove(&watch_id);
     }
 
     /// 注册一个批处理操作，返回进度接收端。
     pub fn register_op(&self, op_id: u64) -> channel::RxAsync<ProgressEvent> {
         let (tx, rx) = channel::unbounded();
-        self.ops.lock().unwrap().insert(op_id, tx);
+        self.ops.lock_safe().insert(op_id, tx);
         rx
     }
 
     /// 注销操作及其残留冲突。
     pub fn unregister_op(&self, op_id: u64) {
-        self.ops.lock().unwrap().remove(&op_id);
+        self.ops.lock_safe().remove(&op_id);
         self.conflicts
             .lock()
             .unwrap()
@@ -68,7 +69,7 @@ impl CallbackRegistry {
 
     /// 上层给出冲突决策，唤醒等待中的 `ask_conflict`。
     pub fn resolve_conflict(&self, op_id: u64, conflict_id: u64, res: ConflictResolution) {
-        if let Some(tx) = self.conflicts.lock().unwrap().remove(&(op_id, conflict_id)) {
+        if let Some(tx) = self.conflicts.lock_safe().remove(&(op_id, conflict_id)) {
             let _ = tx.send(res);
         }
     }
@@ -79,7 +80,7 @@ impl CallbackRegistry {
         let watch_count: usize;
         let op_count: usize;
         {
-            let watches = self.watches.lock().unwrap();
+            let watches = self.watches.lock_safe();
             watch_count = watches.len();
             for (watch_id, tx) in watches.iter() {
                 let _ = tx.send(WatchDelta::ConnectionLost {
@@ -90,7 +91,7 @@ impl CallbackRegistry {
             }
         }
         {
-            let ops = self.ops.lock().unwrap();
+            let ops = self.ops.lock_safe();
             op_count = ops.len();
             for (op_id, tx) in ops.iter() {
                 let _ = tx.send(ProgressEvent::ConnectionLost {
@@ -108,13 +109,13 @@ impl CallbackRegistry {
     // --- 由回调 server 调用 ---
 
     pub(crate) fn push_watch_delta(&self, watch_id: u64, delta: WatchDelta) {
-        if let Some(tx) = self.watches.lock().unwrap().get(&watch_id) {
+        if let Some(tx) = self.watches.lock_safe().get(&watch_id) {
             let _ = tx.send(delta);
         }
     }
 
     pub(crate) fn push_progress(&self, op_id: u64, ev: ProgressEvent) {
-        if let Some(tx) = self.ops.lock().unwrap().get(&op_id) {
+        if let Some(tx) = self.ops.lock_safe().get(&op_id) {
             let _ = tx.send(ev);
         }
     }
@@ -135,9 +136,9 @@ impl CallbackRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 反向回调 server（app 侧实现 AppCallbackService）
-// ---------------------------------------------------------------------------
+// --
 
 /// app 侧的 [`AppCallbackService`] 实现，把回调路由进 [`CallbackRegistry`]。
 #[derive(Clone)]

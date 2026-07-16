@@ -1,4 +1,4 @@
-//! Mesh 进程边界：唯一 `#[tarpc::service]` — InstanceService。
+//! Mesh 进程边界：唯一 `#[tarpc::service]` -- InstanceService。
 //!
 //! `InstanceBusServer` 实现 tarpc `InstanceService` trait，
 //! 将 RPC 调用转换为 `InstanceMsg` 后通过 `Mesh` 分发。
@@ -37,7 +37,7 @@ impl InstanceService for InstanceBusServer {
         window_id: u64,
         instance_id: u64,
     ) {
-        debug!("window_register: {window_id} → instance {instance_id}");
+        debug!("window_register: {window_id} -> instance {instance_id}");
         self.mesh
             .instance_bus()
             .upsert_route(window_id, instance_id);

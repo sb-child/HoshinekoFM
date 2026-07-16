@@ -11,11 +11,12 @@ pub mod state;
 pub mod tabs;
 pub mod ui_service;
 
+use crate::lock::LockSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::Manager;
-use tracing::{error, info};
+use tracing::{error, info, Instrument};
 
 use crate::instance_bus::{self, InstanceBus};
 use crate::mesh::Mesh;
@@ -23,18 +24,18 @@ use crate::mesh::callback::UiMeshHandler;
 
 use self::{state::AppStateManager, tabs::TabManager};
 
-// ---------------------------------------------------------------------------
+// --
 // RunOpts
-// ---------------------------------------------------------------------------
+// --
 
 pub struct RunOpts {
     pub instance_id: u64,
     pub paths: Vec<String>,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // run_app
-// ---------------------------------------------------------------------------
+// --
 
 /// 启动 Tauri 应用（必须在 tokio runtime 内调用）。
 pub async fn run_app(opts: RunOpts) {
@@ -50,15 +51,22 @@ pub async fn run_app(opts: RunOpts) {
     };
 
     // 2. 启动 InstanceBus
-    let instance_bus = InstanceBus::start(instance_id)
-        .await
-        .expect("failed to start InstanceBus");
+    let instance_bus = match InstanceBus::start(instance_id).await {
+        Ok(ib) => ib,
+        Err(e) => {
+            error!("failed to start InstanceBus: {e}");
+            return;
+        }
+    };
 
     // 2b. 后台监听实例目录变化（双向拓扑）
     let instance_bus_watch = instance_bus.clone();
-    tokio::spawn(async move {
-        instance_bus::watch_instances(instance_bus_watch).await;
-    });
+    tokio::spawn(
+        async move {
+            instance_bus::watch_instances(instance_bus_watch).await;
+        }
+        .instrument(tracing::info_span!("watch_instances"))
+    );
 
     // 3. 创建 Mesh（包装 InstanceBus）
     let mesh = Arc::new(Mesh::new(instance_id, instance_bus.clone()));
@@ -84,9 +92,12 @@ pub async fn run_app(opts: RunOpts) {
 
     let ib_listen = instance_bus.clone();
     let mesh_listen = mesh.clone();
-    tokio::spawn(async move {
-        ib_listen.listen(listener, mesh_listen).await;
-    });
+    tokio::spawn(
+        async move {
+            ib_listen.listen(listener, mesh_listen).await;
+        }
+        .instrument(tracing::info_span!("instance_bus_listen"))
+    );
 
     // 7. 告知 Tauri 共用当前 tokio runtime
     tauri::async_runtime::set(tokio::runtime::Handle::current());
@@ -157,14 +168,14 @@ pub async fn run_app(opts: RunOpts) {
         });
 
     // 9. 运行（同步阻塞，共用我们的 tokio runtime）
-    builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    if let Err(e) = builder.run(tauri::generate_context!()) {
+        error!("error while running tauri application: {e}");
+    }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // run_app 辅助函数
-// ---------------------------------------------------------------------------
+// --
 
 /// `.setup()` 闭包的实际逻辑：注入 AppHandle + 创建首窗口。
 fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, paths: &[String]) {
@@ -172,9 +183,12 @@ fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, pat
     match commands::create_window(handle, &label, paths) {
         Ok(window) => {
             let mgr_c = mgr.clone();
-            tokio::spawn(async move {
-                mgr_c.register_window(window, label).await;
-            });
+            tokio::spawn(
+                async move {
+                    mgr_c.register_window(window, label).await;
+                }
+                .instrument(tracing::info_span!("register_window"))
+            );
         }
         Err(e) => {
             error!("failed to create initial window: {e}");
@@ -186,39 +200,45 @@ fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, pat
 fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
     let mgr = mgr.clone();
     let shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        if shutdown.swap(true, Ordering::Relaxed) {
-            return;
+    tokio::spawn(
+        async move {
+            tokio::signal::ctrl_c().await.ok();
+            if shutdown.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            info!("saving tabs before exit (ctrl+c)");
+            mgr.tabs.lock_safe().save_to_disk();
+            let instance_id = mgr.mesh.instance_bus().self_id();
+            crate::mesh::discovery::cleanup_socket(instance_id);
+            std::process::exit(0);
         }
-        info!("saving tabs before exit (ctrl+c)");
-        mgr.tabs.lock().unwrap().save_to_disk();
-        let instance_id = mgr.mesh.instance_bus().self_id();
-        crate::mesh::discovery::cleanup_socket(instance_id);
-        std::process::exit(0);
-    });
+        .instrument(tracing::info_span!("ctrl_c_handler"))
+    );
 }
 
 /// `.on_window_event()` 闭包中 Destroyed 事件的实际处理。
 fn handle_window_destroyed(mgr: &Arc<AppStateManager>, label: &str, shutdown: &Arc<AtomicBool>) {
     let label = label.to_string();
     let window_proxy = {
-        let windows = mgr.windows.lock().unwrap();
+        let windows = mgr.windows.lock_safe();
         windows.get(&label).map(|s| s.window_proxy.clone())
     };
     if let Some(proxy) = window_proxy {
         mgr.unregister(&label);
         let mgr = mgr.clone();
         let shutdown = shutdown.clone();
-        tokio::spawn(async move {
-            proxy.unregister();
-            let remaining = mgr.registry_count();
-            if remaining == 0 && !shutdown.swap(true, Ordering::Relaxed) {
-                info!("last window destroyed, exiting");
-                let instance_id = mgr.mesh.instance_bus().self_id();
-                crate::mesh::discovery::cleanup_socket(instance_id);
-                std::process::exit(0);
+        tokio::spawn(
+            async move {
+                proxy.unregister();
+                let remaining = mgr.registry_count();
+                if remaining == 0 && !shutdown.swap(true, Ordering::Relaxed) {
+                    info!("last window destroyed, exiting");
+                    let instance_id = mgr.mesh.instance_bus().self_id();
+                    crate::mesh::discovery::cleanup_socket(instance_id);
+                    std::process::exit(0);
+                }
             }
-        });
+            .instrument(tracing::info_span!("window_destroyed"))
+        );
     }
 }

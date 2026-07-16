@@ -13,17 +13,17 @@ use super::inotify::InotifyCmd;
 use super::router::RouterCmd;
 use super::scheduler::SchedulerCmd;
 
-// ---------------------------------------------------------------------------
+// --
 // WatchRegistry
-// ---------------------------------------------------------------------------
+// --
 
 /// Watch 订阅注册中心。
 ///
-/// 维护 path → subscriber 映射。subscriber 数从 0→1 时启动 watch，
-/// 从 1→0 时停止 watch。所有写操作由 FsWorkerServer tarpc 线程独占调用，
+/// 维护 path -> subscriber 映射。subscriber 数从 0->1 时启动 watch，
+/// 从 1->0 时停止 watch。所有写操作由 FsWorkerServer tarpc 线程独占调用，
 /// 因此内部 Mutex 仅用于读取碰撞保护，实际几乎无锁竞争。
 pub struct WatchRegistry {
-    /// path → subscriber 列表。
+    /// path -> subscriber 列表。
     paths: Mutex<HashMap<PathBuf, Vec<Subscriber>>>,
     /// InotifyManager 命令通道。
     inotify_tx: Tx<InotifyCmd>,

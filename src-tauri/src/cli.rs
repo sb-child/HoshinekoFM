@@ -3,9 +3,9 @@
 //! 支持两种入口模式：
 //!
 //! ```text
-//! hnfm [options] [paths..]          → 默认 Launch，复用或变 primary
+//! hnfm [options] [paths..]          -> 默认 Launch，复用或变 primary
 //! hnfm __fs-worker --fs-worker-id <n> --fd <n> --cb-fd <n> --parent-pid <n>
-//!                                   → FS Worker 子进程（内部）
+//!                                   -> FS Worker 子进程（内部）
 //! ```
 //!
 //! 设计要点：不提供 `launch` 子命令，避免 `hnfm launch` 与目录名冲突。
@@ -41,9 +41,9 @@ pub enum Commands {
     FsWorker(FsWorkerCmd),
 }
 
-// ---------------------------------------------------------------------------
+// --
 // Launch args
-// ---------------------------------------------------------------------------
+// --
 
 /// Launch 模式的启动参数。
 pub struct LaunchArgs {
@@ -52,9 +52,9 @@ pub struct LaunchArgs {
     pub paths: Vec<String>,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // FsWorker
-// ---------------------------------------------------------------------------
+// --
 
 /// 启动文件系统 Worker 子进程。
 ///
@@ -65,11 +65,11 @@ pub struct FsWorkerCmd {
     #[arg(long = "fs-worker-id")]
     pub fs_worker_id: u64,
 
-    /// 请求通道 fd（app→worker，继承自父进程）
+    /// 请求通道 fd（app->worker，继承自父进程）
     #[arg(long)]
     pub fd: i32,
 
-    /// 回调通道 fd（worker→app，继承自父进程）
+    /// 回调通道 fd（worker->app，继承自父进程）
     #[arg(long)]
     pub cb_fd: i32,
 
@@ -78,9 +78,9 @@ pub struct FsWorkerCmd {
     pub parent_pid: i32,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 解析
-// ---------------------------------------------------------------------------
+// --
 
 /// 解析结果：决定进程接下来的行为。
 pub enum Dispatch {

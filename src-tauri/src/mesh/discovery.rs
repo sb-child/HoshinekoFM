@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use tracing::{info, warn};
 
-// ---------------------------------------------------------------------------
+// --
 // 路径工具
-// ---------------------------------------------------------------------------
+// --
 
 /// `~/.cache/hnfm/instances/` 目录。
 pub fn instances_dir() -> PathBuf {
@@ -33,9 +33,9 @@ pub fn socket_path(instance_id: u64) -> PathBuf {
     instances_dir().join(format!("instance_{instance_id}.sock"))
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 存活检查
-// ---------------------------------------------------------------------------
+// --
 
 /// 检查 PID 是否存活。
 fn pid_alive(pid: u64) -> bool {
@@ -69,9 +69,9 @@ pub fn instance_exists(instance_id: u64) -> bool {
     is_instance_alive(instance_id)
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 扫描
-// ---------------------------------------------------------------------------
+// --
 
 /// 扫描实例目录，返回 `(instance_id, socket_path)` 列表。
 ///
@@ -107,9 +107,9 @@ pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
     result
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 绑定与清理
-// ---------------------------------------------------------------------------
+// --
 
 /// 绑定本实例的 Unix Domain Socket（含竞态保护）。
 pub fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
@@ -128,6 +128,11 @@ pub fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
             format!("instance {instance_id} is already running"),
         ));
     }
+    // SAFETY: lock_file holds an exclusive flock on the instance lock file.
+    // We intentionally forget it so the lock persists for the process lifetime.
+    // The OS releases the flock automatically when the process exits, so there
+    // is no resource leak. If bind_socket is called twice for the same instance,
+    // the second call correctly returns AddrInUse -- the first lock is still held.
     std::mem::forget(lock_file);
 
     let path = socket_path(instance_id);

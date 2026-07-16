@@ -10,9 +10,9 @@ use crate::channel::{self, RxAsync, Tx};
 
 use super::config::WatchConfig;
 
-// ---------------------------------------------------------------------------
+// --
 // 控制命令
-// ---------------------------------------------------------------------------
+// --
 
 /// Registry 发给 InotifyManager 的控制命令。
 pub enum InotifyCmd {
@@ -31,9 +31,9 @@ pub struct RawEvent {
     pub affected_paths: Vec<PathBuf>,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // InotifyManager
-// ---------------------------------------------------------------------------
+// --
 
 /// watch 表条目，区分原始 watch 和 dual-watch（父目录）。
 struct WatchEntry {
@@ -63,9 +63,9 @@ impl InotifyManager {
     /// 创建 InotifyManager 并返回启动所需的通道对。
     ///
     /// 调用方获得：
-    /// - `(cmd_tx, event_rx)` — 用于向管理器发送命令、从管理器接收事件。
-    /// - `Self` — 持有消费端。
-    /// - `CancellationToken` — 传递给调用方用于取消。
+    /// - `(cmd_tx, event_rx)` -- 用于向管理器发送命令、从管理器接收事件。
+    /// - `Self` -- 持有消费端。
+    /// - `CancellationToken` -- 传递给调用方用于取消。
     pub fn spawn(
         cancel: CancellationToken,
         config: &WatchConfig,
@@ -105,7 +105,7 @@ impl InotifyManager {
                 }
             };
 
-        // track watch descriptors: path → WatchEntry
+        // track watch descriptors: path -> WatchEntry
         let mut watches: HashMap<PathBuf, WatchEntry> = HashMap::new();
 
         loop {

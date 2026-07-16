@@ -1,5 +1,6 @@
-//! FsWorkerPool — Worker 进程池 + UidToken + LeaseSentinel。
+//! FsWorkerPool -- Worker 进程池 + UidToken + LeaseSentinel。
 
+use crate::lock::LockSafe;
 use std::{
     collections::HashMap,
     io,
@@ -22,9 +23,9 @@ use super::{
     WorkerStatus,
 };
 
-// ---------------------------------------------------------------------------
+// --
 // LeaseSentinel
-// ---------------------------------------------------------------------------
+// --
 
 /// token 的引用计数哨兵。最后一个 token drop 时通知 reaper。
 pub struct LeaseSentinel {
@@ -38,9 +39,9 @@ impl Drop for LeaseSentinel {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UidToken
-// ---------------------------------------------------------------------------
+// --
 
 /// UID 访问凭证（RAII）。
 ///
@@ -90,12 +91,12 @@ impl UidToken {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // RelaySlot
-// ---------------------------------------------------------------------------
+// --
 
 pub(crate) struct RelaySlot {
-    /// FsService → Relay 请求通道
+    /// FsService -> Relay 请求通道
     pub(crate) request_tx: channel::Tx<WorkerRequest>,
     /// 共享回调路由
     pub(crate) registry: Arc<CallbackRegistry>,
@@ -107,9 +108,9 @@ pub(crate) struct RelaySlot {
     pub(crate) _abort_handle: tokio::task::AbortHandle,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // FsWorkerPool
-// ---------------------------------------------------------------------------
+// --
 
 /// Worker 进程池，按目标 UID 索引。
 pub struct FsWorkerPool {
@@ -140,7 +141,7 @@ impl FsWorkerPool {
     pub async fn request_token(&self, uid: u32) -> io::Result<UidToken> {
         // 快路径：已有 slot
         {
-            let g = self.slots.lock().unwrap();
+            let g = self.slots.lock_safe();
             if let Some(slot) = g.get(&uid) {
                 if let Some(sentinel) = slot.sentinel.upgrade() {
                     return Ok(UidToken {
@@ -182,7 +183,7 @@ impl FsWorkerPool {
 
         // 并发双 spawn 检查
         {
-            let mut g = self.slots.lock().unwrap();
+            let mut g = self.slots.lock_safe();
             if let Some(existing) = g.get(&uid) {
                 if let Some(existing_sentinel) = existing.sentinel.upgrade() {
                     warn!("concurrent request_token for uid {uid}, reusing existing slot");
@@ -217,13 +218,13 @@ impl Default for FsWorkerPool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reaper — token 监控
-// ---------------------------------------------------------------------------
+// --
+// Reaper -- token 监控
+// --
 
 /// 启动 reaper 后台任务。
 ///
-/// 收到 uid（某 token drop）→ 若该 uid 已无存活 token，立即清理 slot。
+/// 收到 uid（某 token drop）-> 若该 uid 已无存活 token，立即清理 slot。
 fn start_reaper(
     slots: Arc<Mutex<HashMap<u32, RelaySlot>>>,
     status_tx: channel::Tx<WorkerStatus>,
@@ -232,7 +233,7 @@ fn start_reaper(
     tokio::spawn(async move {
         while let Ok(uid) = rx.recv().await {
             let to_remove = {
-                let g = slots.lock().unwrap();
+                let g = slots.lock_safe();
                 match g.get(&uid) {
                     Some(slot) if slot.sentinel.strong_count() == 0 => {
                         let child_pid = slot.pid.load(Ordering::Relaxed);
@@ -247,7 +248,7 @@ fn start_reaper(
                 if child_pid > 0 {
                     kill_fs_worker(uid, child_pid);
                 }
-                slots.lock().unwrap().remove(&uid);
+                slots.lock_safe().remove(&uid);
                 let _ = status_tx.send(WorkerStatus::Disconnected {
                     uid,
                     reason: DisconnectReason::Other {

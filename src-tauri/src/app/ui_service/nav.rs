@@ -5,6 +5,7 @@
 //! 每个窗口一个持久 watch 线程（`start_watch`），内部维护所有 tab 的 watcher 任务 +
 //! 文件列表快照。tab 切换时直接推送缓存快照（零 RPC / 零 I/O），然后接增量事件。
 
+use crate::lock::{LockSafe, ReadSafe, WriteSafe};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,9 +26,9 @@ use crate::mesh::types::ui::{
 use super::UIService;
 use super::breadcrumbs::{BreadcrumbCommand, BreadcrumbManager};
 
-// ---------------------------------------------------------------------------
+// --
 // 运行时 Tab 状态（含 UidToken）
-// ---------------------------------------------------------------------------
+// --
 
 /// 单个 tab 的完整运行时导航状态。
 pub(super) struct TabNavState {
@@ -61,9 +62,9 @@ impl TabNavState {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // Watch 线程内部类型
-// ---------------------------------------------------------------------------
+// --
 
 /// 给 per-window watch 线程的控制命令。
 pub(super) enum WatchCommand {
@@ -89,7 +90,7 @@ pub(super) enum WatchTarget {
 /// Per-watcher 最新状态快照。随 watcher 事件增量更新。
 /// Tab 切换时直接 push 快照避免重新 list_dir。
 enum WatchSnapshot {
-    /// 正常直播中，path → File 映射
+    /// 正常直播中，path -> File 映射
     Live {
         files: HashMap<PathBuf, crate::fsworker::protocol::File>,
     },
@@ -258,7 +259,7 @@ impl WatchSnapshot {
 
 /// Watch 线程维护的 per-tab watcher 元数据。
 struct TabWatchEntry {
-    /// Watcher 转发任务句柄（abort = drop Watcher → unwatch）
+    /// Watcher 转发任务句柄（abort = drop Watcher -> unwatch）
     handle: tokio::task::JoinHandle<()>,
     /// 该 tab 当前文件列表快照
     snapshot: WatchSnapshot,
@@ -272,9 +273,9 @@ struct TabWatchEntry {
     generation: u64,
 }
 
-// ---------------------------------------------------------------------------
-// spawn_watcher_task — 为一个 tab 创建 watcher 转发任务
-// ---------------------------------------------------------------------------
+// --
+// spawn_watcher_task -- 为一个 tab 创建 watcher 转发任务
+// --
 
 /// 创建 watcher 转发任务。任务持有 Watcher（RAII cleanup），
 /// 将事件通过统一 channel 转发给主线程。
@@ -320,14 +321,14 @@ fn spawn_watcher_task(
     (handle, id_rx)
 }
 
-// ---------------------------------------------------------------------------
-// impl UIService — 导航与 Tab 管理
-// ---------------------------------------------------------------------------
+// --
+// impl UIService -- 导航与 Tab 管理
+// --
 
 impl UIService {
-    // -----------------------------------------------------------------------
+    // --
     // 切换活跃 Tab
-    // -----------------------------------------------------------------------
+    // --
 
     /// 切换到指定 tab（前端点击 tab bar）。
     /// 仅更新状态 + 通知 watch 线程，不再直接管理 watcher。
@@ -337,7 +338,7 @@ impl UIService {
             return Ok(());
         }
 
-        if !self.tabs.read().unwrap().contains_key(&tab_id) {
+        if !self.tabs.read_safe().contains_key(&tab_id) {
             return Err(format!("tab {tab_id} not found"));
         }
 
@@ -345,19 +346,19 @@ impl UIService {
         self.emit_tabs(window);
         self.emit_nav_state(window, tab_id);
 
-        if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+        if let Some(tx) = self.watch_txs.read_safe().get(&label) {
             let _ = tx.send(WatchCommand::TabSwitch { tab_id });
         }
 
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Emit 事件辅助方法
-    // -----------------------------------------------------------------------
+    // --
 
     pub(super) fn emit_tabs(&self, window: &tauri::Window) {
-        let tabs = self.tabs.read().unwrap();
+        let tabs = self.tabs.read_safe();
         let active_id = self.get_active_tab(window.label()).unwrap_or_default();
         let tab_info: Vec<TabInfo> = tabs
             .values()
@@ -378,7 +379,7 @@ impl UIService {
 
     pub(super) fn emit_nav_state(&self, window: &tauri::Window, tab_id: u64) {
         let (can_back, can_fwd, target) = {
-            let tabs = self.tabs.read().unwrap();
+            let tabs = self.tabs.read_safe();
             tabs.get(&tab_id)
                 .map(|t| {
                     (
@@ -400,9 +401,9 @@ impl UIService {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Watcher 生命周期 — 每窗口一个持久线程
-    // -----------------------------------------------------------------------
+    // --
+    // Watcher 生命周期 -- 每窗口一个持久线程
+    // --
 
     /// 为窗口启动持久 watch 线程（每个窗口调用一次）。
     ///
@@ -595,11 +596,11 @@ impl UIService {
         info!("watch thread started for window={label}");
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 导航
-    // -----------------------------------------------------------------------
+    // --
 
-    /// 导航到指定目标。更新历史 → 通知 watch 线程。
+    /// 导航到指定目标。更新历史 -> 通知 watch 线程。
     pub async fn nav_to(
         &self,
         window: &tauri::Window,
@@ -609,7 +610,7 @@ impl UIService {
         let token = self.get_tab_token(tab_id)?;
 
         {
-            let mut tabs = self.tabs.write().unwrap();
+            let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
                 .ok_or_else(|| format!("tab {tab_id} not found"))?;
@@ -632,7 +633,7 @@ impl UIService {
             },
         };
 
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             let _ = tx.send(WatchCommand::NavUpdate {
                 tab_id,
                 target: watch_target,
@@ -645,7 +646,7 @@ impl UIService {
     /// 后退。
     pub async fn nav_back(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
         let (target, token) = {
-            let mut tabs = self.tabs.write().unwrap();
+            let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
                 .ok_or_else(|| format!("tab {tab_id} not found"))?;
@@ -666,7 +667,7 @@ impl UIService {
             },
         };
 
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             let _ = tx.send(WatchCommand::NavUpdate {
                 tab_id,
                 target: watch_target,
@@ -679,7 +680,7 @@ impl UIService {
     /// 前进。
     pub async fn nav_forward(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
         let (target, token) = {
-            let mut tabs = self.tabs.write().unwrap();
+            let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
                 .ok_or_else(|| format!("tab {tab_id} not found"))?;
@@ -700,7 +701,7 @@ impl UIService {
             },
         };
 
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             let _ = tx.send(WatchCommand::NavUpdate {
                 tab_id,
                 target: watch_target,
@@ -713,7 +714,7 @@ impl UIService {
     /// 更新选中文件，并 emit hf:selection。
     pub fn update_selection(&self, window: &tauri::Window, tab_id: u64, selected: Vec<String>) {
         {
-            let mut tabs = self.tabs.write().unwrap();
+            let mut tabs = self.tabs.write_safe();
             if let Some(tab) = tabs.get_mut(&tab_id) {
                 if let Some(entry) = tab.nav_history.get_mut(tab.nav_index) {
                     entry.selected = selected.clone();
@@ -725,14 +726,14 @@ impl UIService {
 
     /// 发送 Refresh 命令到 watch 线程。
     pub fn refresh_tab(&self, window: &tauri::Window) {
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             let _ = tx.send(WatchCommand::Refresh);
         }
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Tab 生命周期
-    // -----------------------------------------------------------------------
+    // --
 
     pub fn move_tab(&self, tab_id: u64, target: u64) -> super::MoveTabResult {
         let ctx = ContextId::Tab(tab_id);
@@ -762,27 +763,27 @@ impl UIService {
         let target_instance = target >> 32;
         let is_local = target_instance == self.mgr.mesh.instance_bus().self_id();
 
-        self.tabs.write().unwrap().remove(&tab_id);
+        self.tabs.write_safe().remove(&tab_id);
 
         // 通知所有窗口的 watch 线程此 tab 已关闭
-        for tx in self.watch_txs.read().unwrap().values() {
+        for tx in self.watch_txs.read_safe().values() {
             let _ = tx.send(WatchCommand::TabClosed { tab_id });
         }
 
         {
-            let mut active = self.active_tabs.write().unwrap();
+            let mut active = self.active_tabs.write_safe();
             active.retain(|_, v| *v != tab_id);
         }
 
         if is_local {
-            let mut tabs = self.mgr.tabs.lock().unwrap();
+            let mut tabs = self.mgr.tabs.lock_safe();
             if tabs.remove_tab(tab_id).is_some() {
                 tabs.save_to_disk();
                 info!("tab {tab_id} moved to local window {target}");
             }
         } else {
             let tab_state = {
-                let mut tabs = self.mgr.tabs.lock().unwrap();
+                let mut tabs = self.mgr.tabs.lock_safe();
                 match tabs.transfer_out(tab_id) {
                     Some(state) => {
                         tabs.save_to_disk();
@@ -799,6 +800,7 @@ impl UIService {
             let msg = InstanceMsg::TransferTab { tab: tab_state };
             tokio::spawn(async move {
                 instance_bus.send_to(target_instance, &msg).await;
+                debug!("tab transferred to remote instance {target_instance}");
             });
             info!("tab {tab_id} moved to remote instance {target}");
         }
@@ -809,29 +811,29 @@ impl UIService {
         let label = window.label().to_string();
         let was_active = self.get_active_tab(&label).map_or(false, |id| id == tab_id);
 
-        self.tabs.write().unwrap().remove(&tab_id);
+        self.tabs.write_safe().remove(&tab_id);
         self.clear_active_tab_any(tab_id);
 
         {
-            let mut tabs = self.mgr.tabs.lock().unwrap();
+            let mut tabs = self.mgr.tabs.lock_safe();
             if tabs.remove_tab(tab_id).is_some() {
                 tabs.save_to_disk();
             }
         }
 
         // 通知 watch 线程
-        if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+        if let Some(tx) = self.watch_txs.read_safe().get(&label) {
             let _ = tx.send(WatchCommand::TabClosed { tab_id });
         }
 
         if was_active {
-            if let Some(next_id) = self.tabs.read().unwrap().keys().next().copied() {
+            if let Some(next_id) = self.tabs.read_safe().keys().next().copied() {
                 self.set_active_tab(label.clone(), next_id);
-                if let Some(tx) = self.watch_txs.read().unwrap().get(&label) {
+                if let Some(tx) = self.watch_txs.read_safe().get(&label) {
                     let _ = tx.send(WatchCommand::TabSwitch { tab_id: next_id });
                 }
             } else {
-                info!("last tab closed — window may exit");
+                info!("last tab closed, window may exit");
             }
         }
 
@@ -854,7 +856,7 @@ impl UIService {
         self.emit_tabs(window);
         self.emit_nav_state(window, tab_id);
 
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             // 先推送 NavUpdate（带完整路径和 token）
             let _ = tx.send(WatchCommand::NavUpdate {
                 tab_id,
@@ -873,13 +875,13 @@ impl UIService {
     pub(super) async fn create_tab_internal(&self, token: &UidToken, path: String) -> u64 {
         let tab_id;
         {
-            let mut tabs = self.mgr.tabs.lock().unwrap();
+            let mut tabs = self.mgr.tabs.lock_safe();
             let tab = tabs.add_tab(path.clone());
             tab_id = tab.id;
             tabs.save_to_disk();
         }
         {
-            let mut runtime = self.tabs.write().unwrap();
+            let mut runtime = self.tabs.write_safe();
             runtime.insert(
                 tab_id,
                 TabNavState {
@@ -897,7 +899,7 @@ impl UIService {
     }
 
     fn clear_active_tab_any(&self, tab_id: u64) {
-        let mut active = self.active_tabs.write().unwrap();
+        let mut active = self.active_tabs.write_safe();
         active.retain(|_, v| *v != tab_id);
     }
 }

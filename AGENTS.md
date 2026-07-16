@@ -39,8 +39,9 @@
 - 是否存在`-----------`/`==========`/`↔ → —`等字符(去掉或者用键盘能打的字符替代)？
 - 是否有未明确注释的不明意义行为(或者可以理清代码让它更清晰吗)
 - 大缩进(>=4 tabs)能拆分吗？能展平吗？
+- hack? workaround?
 - 所有的spawn，处理过里面的错误吗，能把里面的错误传回handle吗
-- `Result<String>` → `https://docs.rs/snafu/latest/snafu/`
+- `Result<T, String>` → `https://docs.rs/snafu/latest/snafu/`
 - 不必要的全局变量，不必要的硬编码，不必要的sleep
 - 不必要的copy？async里跑阻塞代码？spawn_blocking 里面如果有循环，能在需要cancel时打断吗？
 - async里的await能一起执行而不是挨个await吗

@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use super::ui::EntryKind;
 
-// ---------------------------------------------------------------------------
+// --
 // FsServiceMsg
-// ---------------------------------------------------------------------------
+// --
 
-/// FsService 端点能收到的消息（主进程 → FsWorker 操作请求）。
+/// FsService 端点能收到的消息（主进程 -> FsWorker 操作请求）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FsServiceMsg {
     WatchDir {
@@ -62,9 +62,9 @@ pub enum FsServiceMsg {
     },
 }
 
-// ---------------------------------------------------------------------------
+// --
 // FsServiceHandler
-// ---------------------------------------------------------------------------
+// --
 
 /// FsService 消息处理器。
 ///
@@ -84,9 +84,9 @@ pub trait FsServiceHandler: Send + Sync + 'static {
     fn on_watch_breadcrumb(&self, watch_id: u64, path: PathBuf);
 }
 
-// ---------------------------------------------------------------------------
-// dispatch — 由宏生成
-// ---------------------------------------------------------------------------
+// --
+// dispatch -- 由宏生成
+// --
 
 crate::endpoint_dispatch!(
     /// 分发 `FsServiceMsg` 到 `FsServiceHandler`。

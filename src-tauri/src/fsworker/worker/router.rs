@@ -9,9 +9,9 @@ use super::config::WatchConfig;
 use crate::channel::{self, RxAsync, Tx};
 use crate::fsworker::protocol::{AppCallbackServiceClient, WatchDelta};
 
-// ---------------------------------------------------------------------------
+// --
 // 控制命令
-// ---------------------------------------------------------------------------
+// --
 
 pub enum RouterCmd {
     Register {
@@ -26,9 +26,9 @@ pub enum RouterCmd {
     Shutdown,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // DeltaRouter
-// ---------------------------------------------------------------------------
+// --
 
 /// 增量路由器。
 ///
@@ -43,9 +43,9 @@ pub struct DeltaRouter {
     cancel: CancellationToken,
     /// 运行时配置。
     config: WatchConfig,
-    /// path → (watch_id, callback)
+    /// path -> (watch_id, callback)
     path_subs: HashMap<PathBuf, Vec<(u64, AppCallbackServiceClient)>>,
-    /// watch_id → path（快速 unregister 查找）
+    /// watch_id -> path（快速 unregister 查找）
     watch_map: HashMap<u64, PathBuf>,
     /// 背压降级标记：被标记的 watch_id 跳过增量推送，恢复时发 Reset。
     overflowed: HashSet<u64>,

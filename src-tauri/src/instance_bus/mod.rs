@@ -9,7 +9,7 @@
 //! └── instance_3072.sock  ← C (listen + connected to A,B)
 //! ```
 //!
-//! 每个实例发现目录中所有 socket → 直连 → 持久 PeerConnection。
+//! 每个实例发现目录中所有 socket -> 直连 -> 持久 PeerConnection。
 //! 窗口路由表通过 fan-out 广播保持同步。
 //!
 //! 注意：实例发现函数（bind_socket/cleanup_socket/discover_sockets 等）
@@ -18,6 +18,7 @@
 pub mod connection;
 pub mod watcher;
 
+use crate::lock::{ReadSafe, WriteSafe};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -38,7 +39,7 @@ pub use crate::mesh::discovery::{
 pub struct InstanceBus {
     self_id: u64,
     peers: RwLock<HashMap<u64, PeerConnection>>,
-    /// window_id → instance_id
+    /// window_id -> instance_id
     routes: RwLock<HashMap<u64, u64>>,
 }
 
@@ -57,7 +58,7 @@ impl InstanceBus {
         if id == self.self_id {
             return;
         }
-        let mut peers = self.peers.write().unwrap();
+        let mut peers = self.peers.write_safe();
         peers.entry(id).or_insert_with(|| {
             info!("new peer connected: instance {id}");
             conn
@@ -65,14 +66,14 @@ impl InstanceBus {
     }
 
     pub fn remove_peer(&self, instance_id: u64) {
-        self.peers.write().unwrap().remove(&instance_id);
+        self.peers.write_safe().remove(&instance_id);
         self.remove_instance_routes(instance_id);
         info!("peer disconnected: instance {instance_id}");
     }
 
     pub async fn send_to(&self, instance_id: u64, msg: &InstanceMsg) {
         let mut conn = {
-            let mut peers = self.peers.write().unwrap();
+            let mut peers = self.peers.write_safe();
             peers.remove(&instance_id)
         };
 
@@ -85,7 +86,7 @@ impl InstanceBus {
 
         if ok {
             if let Some(conn) = conn {
-                self.peers.write().unwrap().insert(instance_id, conn);
+                self.peers.write_safe().insert(instance_id, conn);
             }
         } else {
             if conn.is_some() {
@@ -97,7 +98,7 @@ impl InstanceBus {
 
     pub async fn broadcast(&self, msg: &InstanceMsg) {
         let peers: Vec<(u64, PeerConnection)> = {
-            let mut peers = self.peers.write().unwrap();
+            let mut peers = self.peers.write_safe();
             peers.drain().collect()
         };
 
@@ -109,7 +110,7 @@ impl InstanceBus {
 
         let mut dead = Vec::new();
         {
-            let mut peers = self.peers.write().unwrap();
+            let mut peers = self.peers.write_safe();
             for (id, conn, ok) in results {
                 if ok {
                     peers.insert(id, conn);
@@ -126,15 +127,15 @@ impl InstanceBus {
     }
 
     pub fn window_instance(&self, window_id: u64) -> Option<u64> {
-        self.routes.read().unwrap().get(&window_id).copied()
+        self.routes.read_safe().get(&window_id).copied()
     }
 
     pub fn upsert_route(&self, window_id: u64, instance_id: u64) {
-        self.routes.write().unwrap().insert(window_id, instance_id);
+        self.routes.write_safe().insert(window_id, instance_id);
     }
 
     pub fn remove_route(&self, window_id: u64) {
-        self.routes.write().unwrap().remove(&window_id);
+        self.routes.write_safe().remove(&window_id);
     }
 
     pub fn remove_instance_routes(&self, instance_id: u64) {
@@ -188,9 +189,9 @@ impl InstanceBus {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 实例目录监听（notify，Linux: inotify / macOS: FSEvents）
-// ---------------------------------------------------------------------------
+// --
 
 /// 后台监听 `~/.cache/hnfm/instances/`，自动连接新实例、清理断开实例。
 pub async fn watch_instances(bus: Arc<InstanceBus>) {

@@ -4,8 +4,8 @@
 //!
 //! ## 传输层
 //!
-//! - 实例→Worker：匿名 socketpair + tarpc（主进程=client, Worker=server）
-//! - Worker→实例回调：匿名 socketpair + tarpc（Worker=client, 主进程=server）
+//! - 实例->Worker：匿名 socketpair + tarpc（主进程=client, Worker=server）
+//! - Worker->实例回调：匿名 socketpair + tarpc（Worker=client, 主进程=server）
 
 use std::{path::PathBuf, time::SystemTime};
 
@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::mesh::types::ui::EntryKind;
 
-// ---------------------------------------------------------------------------
+// --
 // 文件系统条目
-// ---------------------------------------------------------------------------
+// --
 
 /// 文件系统条目信息。
 ///
@@ -47,9 +47,9 @@ pub struct File {
     pub thumbnail: Option<Vec<u8>>,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // Watcher 增量事件
-// ---------------------------------------------------------------------------
+// --
 
 /// 目录/文件监视的增量事件。
 ///
@@ -91,7 +91,7 @@ pub enum WatchDelta {
         /// 回退层级
         level: u32,
     },
-    /// 连 / 都无法访问 — watcher 已彻底失效
+    /// 连 / 都无法访问 -- watcher 已彻底失效
     FatalError {
         /// 目标路径
         path: PathBuf,
@@ -111,9 +111,9 @@ pub enum WatchDelta {
     BreadcrumbSegments(Vec<BreadcrumbSegment>),
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 批处理进度 / 冲突
-// ---------------------------------------------------------------------------
+// --
 
 /// 单个条目的处理结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,7 +137,7 @@ pub struct ConflictItem {
     pub dst: PathBuf,
 }
 
-/// 冲突解决方式（上层 → Worker）。
+/// 冲突解决方式（上层 -> Worker）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConflictResolution {
     /// 跳过该项
@@ -152,7 +152,7 @@ pub enum ConflictResolution {
     CancelAll,
 }
 
-/// 批处理进度事件（Worker → 上层，通过反向回调）。
+/// 批处理进度事件（Worker -> 上层，通过反向回调）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProgressEvent {
     /// 操作开始，给出总条目数
@@ -188,11 +188,11 @@ pub enum ProgressEvent {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Worker RPC: FsWorkerService（主进程 → Worker）
-// ---------------------------------------------------------------------------
+// --
+// Worker RPC: FsWorkerService（主进程 -> Worker）
+// --
 
-/// 面包屑路径段信息（FsWorker → 主进程）。
+/// 面包屑路径段信息（FsWorker -> 主进程）。
 ///
 /// FsWorker 内部读取 /etc/passwd 和 /proc/mounts，对每个祖先目录段
 /// 返回 home / mount 判断结果。主进程无需直接访问这些系统文件。
@@ -248,9 +248,9 @@ pub trait FsWorkerService {
     async fn watch_breadcrumb(watch_id: u64, path: PathBuf) -> Result<(), String>;
 }
 
-// ---------------------------------------------------------------------------
-// 反向回调 RPC: AppCallbackService（Worker → 主进程）
-// ---------------------------------------------------------------------------
+// --
+// 反向回调 RPC: AppCallbackService（Worker -> 主进程）
+// --
 
 /// Worker 回调主进程的 RPC 服务。
 ///

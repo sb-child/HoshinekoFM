@@ -1,8 +1,8 @@
 // Native drag module for HoshinekoFM.
 //
 // Sources (both Apache-2.0 OR MIT, CrabNebula Ltd.):
-//   https://crates.io/crates/drag               — cross-platform native drag
-//   https://crates.io/crates/tauri-plugin-drag   — Tauri integration layer
+//   https://crates.io/crates/drag               -- cross-platform native drag
+//   https://crates.io/crates/tauri-plugin-drag   -- Tauri integration layer
 
 pub mod commands;
 #[cfg(target_os = "linux")]

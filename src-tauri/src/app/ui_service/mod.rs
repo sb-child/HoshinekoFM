@@ -1,4 +1,4 @@
-//! UI 服务 — 前端状态机后端。
+//! UI 服务 -- 前端状态机后端。
 //!
 //! UIService 是前端所有 `invoke()` 调的**唯一入口**。全权管理 tab 导航历史、
 //! 目录 watcher、选中状态、剪贴板。前端为纯渲染层，所有数据通过 event 推送。
@@ -6,9 +6,9 @@
 //! ## 分层
 //!
 //! ```text
-//! 前端 invoke ──→ UIService (状态机 + 事件编排)
+//! 前端 invoke ──-> UIService (状态机 + 事件编排)
 //!                     │ emit: hf:tabs / hf:file-list / hf:nav-state / hf:dashboard / hf:clipboard / hf:selection / hf:progress
-//!                     │ 持有: TabNavState / JoinHandle<()> / Progress / ContextId→ops 映射
+//!                     │ 持有: TabNavState / JoinHandle<()> / Progress / ContextId->ops 映射
 //!                     ▼
 //!                 FsService (纯调度, 不感知 tab)
 //! ```
@@ -22,15 +22,16 @@
 //!
 //! ## 子模块
 //!
-//! - `nav` — 导航历史 + tab 管理 + watcher 生命周期
-//! - `clipboard` — 剪贴板 + DnD 状态
-//! - `progress` — 操作归组 + 进度泵
+//! - `nav` -- 导航历史 + tab 管理 + watcher 生命周期
+//! - `clipboard` -- 剪贴板 + DnD 状态
+//! - `progress` -- 操作归组 + 进度泵
 
 pub mod breadcrumbs;
 pub mod clipboard;
 pub mod nav;
 pub mod progress;
 
+use crate::lock::{LockSafe, ReadSafe, WriteSafe};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -43,13 +44,13 @@ use crate::app::fs_service::{Canceller, Op};
 use crate::app::state::AppStateManager;
 use crate::channel;
 use crate::fsworker::UidToken;
-use crate::mesh::types::ui::{ContextId, EntryKind, NavTarget};
+use crate::mesh::types::ui::{ClipboardState, ContextId, EntryKind, NavTarget};
 
 use nav::TabNavState;
 
-// ---------------------------------------------------------------------------
+// --
 // MoveTabResult
-// ---------------------------------------------------------------------------
+// --
 
 /// 阻塞 move_tab 的活跃任务信息（供前端弹窗展示）。
 #[derive(Debug, Clone)]
@@ -65,24 +66,27 @@ pub enum MoveTabResult {
     Blocked { tasks: Vec<TaskInfo> },
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UIService
-// ---------------------------------------------------------------------------
+// --
 
 pub struct UIService {
     pub mgr: Arc<AppStateManager>,
 
-    /// tab_id → 运行时导航状态
+    /// tab_id -> 运行时导航状态
     tabs: RwLock<HashMap<u64, TabNavState>>,
-    /// window_label → active_tab_id
+    /// window_label -> active_tab_id
     active_tabs: RwLock<HashMap<String, u64>>,
-    /// window_label → WatchCommand sender（per-window 持久 watch 线程）
+    /// window_label -> WatchCommand sender（per-window 持久 watch 线程）
     watch_txs: RwLock<HashMap<String, channel::Tx<nav::WatchCommand>>>,
 
-    /// ContextId（tab/window）→ 活跃 op_id 集合
+    /// ContextId（tab/window）-> 活跃 op_id 集合
     contexts: Mutex<HashMap<ContextId, HashSet<u64>>>,
-    /// op_id → 取消句柄
+    /// op_id -> 取消句柄
     cancels: Mutex<HashMap<u64, Canceller>>,
+
+    /// 剪贴板状态（每个 UIService 实例管理，避免全局变量 — AGENTS.md I7）
+    clipboard: Mutex<ClipboardState>,
 
     /// 默认 UidToken（当前用户 uid），所有普通 tab 从此 clone
     default_token: TokioMutex<Option<UidToken>>,
@@ -97,6 +101,10 @@ impl UIService {
             watch_txs: RwLock::new(HashMap::new()),
             contexts: Mutex::new(HashMap::new()),
             cancels: Mutex::new(HashMap::new()),
+            clipboard: Mutex::new(ClipboardState {
+                operation: None,
+                files: Vec::new(),
+            }),
             default_token: TokioMutex::new(None),
         }
     }
@@ -113,19 +121,19 @@ impl UIService {
         Ok(token)
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 访问内部 tab 状态
-    // -----------------------------------------------------------------------
+    // --
 
     fn get_tab_token(&self, tab_id: u64) -> Result<UidToken, String> {
-        let tabs = self.tabs.read().unwrap();
+        let tabs = self.tabs.read_safe();
         tabs.get(&tab_id)
             .map(|t| t.uid_token.clone())
             .ok_or_else(|| format!("tab {tab_id} not found"))
     }
 
     fn get_active_tab(&self, window_label: &str) -> Option<u64> {
-        self.active_tabs.read().unwrap().get(window_label).copied()
+        self.active_tabs.read_safe().get(window_label).copied()
     }
 
     fn set_active_tab(&self, window_label: String, tab_id: u64) {
@@ -135,22 +143,22 @@ impl UIService {
             .insert(window_label, tab_id);
     }
 
-    // -----------------------------------------------------------------------
-    // Ready — 前端就绪初始化
-    // -----------------------------------------------------------------------
+    // --
+    // Ready -- 前端就绪初始化
+    // --
 
     /// 前端 mount 后调用，由 UIService 重建运行时状态并推送初始事件。
     pub async fn ready(&self, window: &tauri::Window) -> Result<(), String> {
         let token = self.ensure_default_token().await?;
 
         let persis_tabs: Vec<crate::mesh::types::ui::TabState> = {
-            let tabs = self.mgr.tabs.lock().unwrap();
+            let tabs = self.mgr.tabs.lock_safe();
             tabs.get_all().to_vec()
         };
 
         // 用默认 token 重建运行时 TabNavState
         {
-            let mut runtime = self.tabs.write().unwrap();
+            let mut runtime = self.tabs.write_safe();
             for ts in &persis_tabs {
                 runtime.entry(ts.id).or_insert_with(|| TabNavState {
                     id: ts.id,
@@ -165,7 +173,7 @@ impl UIService {
         if let Some(first) = persis_tabs.first() {
             self.set_active_tab(window.label().to_string(), first.id);
         } else {
-            // 无持久化 tab → 自动创建一个
+            // 无持久化 tab -> 自动创建一个
             let tab_id = self
                 .create_tab_internal(&token, std::env::var("HOME").unwrap_or_else(|_| "/".into()))
                 .await;
@@ -182,7 +190,7 @@ impl UIService {
 
         // 为所有 tab 发送初始 NavUpdate
         {
-            let tabs = self.tabs.read().unwrap();
+            let tabs = self.tabs.read_safe();
             for tab in tabs.values() {
                 let target = tab.nav_target();
                 let watch_target = match target {
@@ -192,7 +200,7 @@ impl UIService {
                         token: tab.uid_token.clone(),
                     },
                 };
-                if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+                if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
                     let _ = tx.send(nav::WatchCommand::NavUpdate {
                         tab_id: tab.id,
                         target: watch_target,
@@ -204,7 +212,7 @@ impl UIService {
         // 切换到活跃 tab
         if let Some(active_id) = self.get_active_tab(window.label()) {
             self.emit_nav_state(window, active_id);
-            if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+            if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
                 let _ = tx.send(nav::WatchCommand::TabSwitch { tab_id: active_id });
             }
         } else {
@@ -214,9 +222,9 @@ impl UIService {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 权限变更
-    // -----------------------------------------------------------------------
+    // --
 
     /// 将 tab 提升到指定 uid。
     pub async fn elevate_tab(
@@ -232,7 +240,7 @@ impl UIService {
             .await?;
 
         {
-            let mut tabs = self.tabs.write().unwrap();
+            let mut tabs = self.tabs.write_safe();
             match tabs.get_mut(&tab_id) {
                 Some(tab) => {
                     tab.uid_token = new_token.clone();
@@ -242,9 +250,9 @@ impl UIService {
         }
 
         // 通知 watch 线程：token 已更换
-        if let Some(tx) = self.watch_txs.read().unwrap().get(window.label()) {
+        if let Some(tx) = self.watch_txs.read_safe().get(window.label()) {
             let target = {
-                let tabs = self.tabs.read().unwrap();
+                let tabs = self.tabs.read_safe();
                 tabs.get(&tab_id)
                     .map(|t| t.nav_target())
                     .unwrap_or(NavTarget::Filesystem("/".to_string()))
@@ -266,14 +274,14 @@ impl UIService {
 
     /// 窗口关闭时通知 watch 线程清理。
     pub fn shutdown_watch(&self, window_label: &str) {
-        if let Some(tx) = self.watch_txs.write().unwrap().remove(window_label) {
+        if let Some(tx) = self.watch_txs.write_safe().remove(window_label) {
             let _ = tx.send(nav::WatchCommand::Shutdown);
         }
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Dashboard 构建
-    // -----------------------------------------------------------------------
+    // --
 
     async fn build_dashboard(
         &self,
@@ -354,9 +362,9 @@ impl UIService {
         })
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 文件操作入口
-    // -----------------------------------------------------------------------
+    // --
 
     pub async fn create(
         self: &Arc<Self>,
@@ -449,9 +457,9 @@ impl UIService {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Instance Bus 接口
-    // -----------------------------------------------------------------------
+    // --
 
     pub async fn open_window(&self, paths: Vec<String>) {
         let label = self.mgr.next_label();
@@ -470,13 +478,13 @@ impl UIService {
         let token = self.ensure_default_token().await;
         let tab_id;
         {
-            let mut tabs = self.mgr.tabs.lock().unwrap();
+            let mut tabs = self.mgr.tabs.lock_safe();
             tabs.transfer_in(tab_state.clone());
             tabs.save_to_disk();
             tab_id = tab_state.id;
         }
         if let Ok(token) = token {
-            self.tabs.write().unwrap().insert(
+            self.tabs.write_safe().insert(
                 tab_id,
                 TabNavState {
                     id: tab_id,

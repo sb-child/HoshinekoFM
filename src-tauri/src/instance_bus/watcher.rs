@@ -23,8 +23,8 @@ pub enum WatchEvent {
 /// 启动后台 notify 线程，返回事件接收端。
 ///
 /// 线程内部：
-/// 1. 扫描目录 → 发送 `WatchEvent::Init`
-/// 2. 注册 notify watch → 事件循环发送 `New` / `Gone`
+/// 1. 扫描目录 -> 发送 `WatchEvent::Init`
+/// 2. 注册 notify watch -> 事件循环发送 `New` / `Gone`
 pub fn watch_dir(dir: PathBuf) -> channel::RxAsync<WatchEvent> {
     let (tx, rx) = channel::unbounded::<WatchEvent>();
     let dir_c = dir.clone();
@@ -59,7 +59,7 @@ pub fn watch_dir(dir: PathBuf) -> channel::RxAsync<WatchEvent> {
             return;
         }
 
-        // 3. 事件循环：blocking channel → async channel
+        // 3. 事件循环：blocking channel -> async channel
         loop {
             let event = match raw_rx.recv() {
                 Ok(Ok(e)) => e,

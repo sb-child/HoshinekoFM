@@ -3,9 +3,9 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    // =======================================================================
+    // --
     // 模拟 InotifyManager 的 WatchEntry 和路由函数
-    // =======================================================================
+    // --
 
     struct WatchEntry {
         is_dir: bool,
@@ -47,15 +47,15 @@ mod tests {
         );
     }
 
-    // =======================================================================
+    // --
     // 路由测试
-    // =======================================================================
+    // --
 
     #[test]
     fn test_routing_integration() {
-        // =============================================================
+        // --
         // 1. 目录 watch (is_dir=true)：以目标自身为前缀
-        // =============================================================
+        // --
         let e_dir = WatchEntry {
             is_dir: true,
             is_dual: false,
@@ -63,7 +63,7 @@ mod tests {
         // 自身不匹配（防止 phantom 条目）
         let t_home = PathBuf::from("/home");
 
-        // 自身不匹配 —— 这是本次修复的核心
+        // 自身不匹配 ---- 这是本次修复的核心
         assert!(!route_match(&t_home, &t_home, &e_dir), "目录不应匹配自身");
         // 直接子路径匹配
         assert!(route_match(
@@ -109,9 +109,9 @@ mod tests {
         assert!(!route_match(&PathBuf::from("/proc/stat"), &t_root, &e_dir));
         assert!(!route_match(&PathBuf::from("/"), &t_root, &e_dir));
 
-        // =============================================================
+        // --
         // 2. 文件 watch (is_dir=false)：以父目录为前缀
-        // =============================================================
+        // --
         let e_file = WatchEntry {
             is_dir: false,
             is_dual: false,
@@ -139,9 +139,9 @@ mod tests {
             &e_file
         ));
 
-        // =============================================================
+        // --
         // 3. dual-watch 路由：只匹配自身或直接子项
-        // =============================================================
+        // --
         let e_dual = WatchEntry {
             is_dir: true,
             is_dual: true,
@@ -174,9 +174,9 @@ mod tests {
         ));
     }
 
-    // =======================================================================
+    // --
     // handle_watch 升级测试
-    // =======================================================================
+    // --
 
     #[test]
     fn test_handle_watch_upgrade() {
@@ -198,15 +198,15 @@ mod tests {
             },
         );
 
-        // stat watch 监听 /home → dual-watch 升级为 primary (is_dir 保持 true)
+        // stat watch 监听 /home -> dual-watch 升级为 primary (is_dir 保持 true)
         handle_watch_upsert(&mut watches, &PathBuf::from("/home"), false);
         {
             let e = watches.get(&PathBuf::from("/home")).unwrap();
-            assert!(!e.is_dual, "dual → primary");
+            assert!(!e.is_dual, "dual -> primary");
             assert!(e.is_dir, "dual-watch 默认 is_dir=true，不降级");
         }
 
-        // 导航到 /home → watch_dir → is_dir 应更新为 true
+        // 导航到 /home -> watch_dir -> is_dir 应更新为 true
         handle_watch_upsert(&mut watches, &PathBuf::from("/home"), true);
         {
             let e = watches.get(&PathBuf::from("/home")).unwrap();
@@ -214,7 +214,7 @@ mod tests {
             assert!(e.is_dir, "目录 watch 应为 is_dir=true");
         }
 
-        // /proc/mounts breadcrumb → dual-watch /proc (is_dir=true, is_dual=true)
+        // /proc/mounts breadcrumb -> dual-watch /proc (is_dir=true, is_dual=true)
         watches.insert(
             PathBuf::from("/proc/mounts"),
             WatchEntry {
@@ -230,7 +230,7 @@ mod tests {
             },
         );
 
-        // 再次 subscribe /proc/mounts → is_dir 应保持 false, is_dual 升级
+        // 再次 subscribe /proc/mounts -> is_dir 应保持 false, is_dual 升级
         handle_watch_upsert(&mut watches, &PathBuf::from("/proc/mounts"), false);
         {
             let e = watches.get(&PathBuf::from("/proc/mounts")).unwrap();

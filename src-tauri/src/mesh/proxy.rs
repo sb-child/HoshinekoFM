@@ -1,4 +1,4 @@
-//! WindowProxy — 窗口通信句柄。替代旧的 `WindowBus`。
+//! WindowProxy -- 窗口通信句柄。替代旧的 `WindowBus`。
 
 use std::sync::Arc;
 

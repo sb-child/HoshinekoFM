@@ -2,16 +2,17 @@
 //!
 //! ## 结构
 //!
-//! - `AppStateManager` — 通过 Tauri `.manage()` 注入的全局管理器
-//!   - `windows: Mutex<HashMap<label, WindowState>>` — 每个窗口的 per-window 状态
-//!   - `window_registry: Mutex<HashMap<window_id, WebviewWindow>>` — 本地 emit 查询
-//!   - `tabs` / `fs_service` / `mesh` — 全局共享
+//! - `AppStateManager` -- 通过 Tauri `.manage()` 注入的全局管理器
+//!   - `windows: Mutex<HashMap<label, WindowState>>` -- 每个窗口的 per-window 状态
+//!   - `window_registry: Mutex<HashMap<window_id, WebviewWindow>>` -- 本地 emit 查询
+//!   - `tabs` / `fs_service` / `mesh` -- 全局共享
 //!
 //! ## 使用
 //!
 //! Commands 通过 `State<'_, Arc<AppStateManager>>` 访问。
 //! Window label（如 "w0", "w1"）由 process-local counter 生成，标签与 window_id 分离。
 
+use crate::lock::LockSafe;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -27,9 +28,9 @@ use super::tabs::TabManager;
 
 /// 应用全局状态管理器。
 pub struct AppStateManager {
-    /// label → per-window 状态
+    /// label -> per-window 状态
     pub windows: Mutex<HashMap<String, WindowState>>,
-    /// window_id → WebviewWindow（本地消息投递用）
+    /// window_id -> WebviewWindow（本地消息投递用）
     pub window_registry: Mutex<HashMap<u64, WebviewWindow>>,
     /// 全局 Tab 管理器
     pub tabs: Arc<Mutex<TabManager>>,
@@ -41,7 +42,7 @@ pub struct AppStateManager {
     /// Tauri AppHandle（setup 阶段注入，用于跨服务创建窗口）
     app_handle: OnceLock<tauri::AppHandle>,
 
-    /// process-local label 计数器 → "w0", "w1" ...
+    /// process-local label 计数器 -> "w0", "w1" ...
     label_counter: AtomicU64,
     /// process-local window_id 计数器（与 instance_id 编码为全局唯一 ID）
     window_id_counter: AtomicU64,
@@ -89,17 +90,17 @@ impl AppStateManager {
 
     /// 当前窗口数量（按 label 注册表计）。
     pub fn window_count(&self) -> usize {
-        self.windows.lock().unwrap().len()
+        self.windows.lock_safe().len()
     }
 
     /// 当前 registry 数量。
     pub fn registry_count(&self) -> usize {
-        self.window_registry.lock().unwrap().len()
+        self.window_registry.lock_safe().len()
     }
 
     /// 根据 window label 获取 window_id。
     pub fn window_id_by_label(&self, label: &str) -> Option<u64> {
-        self.windows.lock().unwrap().get(label).map(|s| s.window_id)
+        self.windows.lock_safe().get(label).map(|s| s.window_id)
     }
 
     /// 抢占全局唯一 window_id（冲突检测）。
@@ -124,7 +125,7 @@ impl AppStateManager {
             }
 
             {
-                let reg = self.window_registry.lock().unwrap();
+                let reg = self.window_registry.lock_safe();
                 if reg.contains_key(&candidate) {
                     tracing::warn!(
                         "window_id {} conflict in local registry, retrying",
@@ -155,7 +156,7 @@ impl AppStateManager {
             .unwrap()
             .insert(window_id, window);
 
-        self.windows.lock().unwrap().insert(
+        self.windows.lock_safe().insert(
             label,
             WindowState {
                 window_id,
@@ -167,7 +168,7 @@ impl AppStateManager {
 
     /// 注销窗口。
     pub fn unregister(&self, label: &str) {
-        self.windows.lock().unwrap().remove(label);
+        self.windows.lock_safe().remove(label);
     }
 }
 

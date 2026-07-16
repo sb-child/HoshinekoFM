@@ -115,7 +115,7 @@ pub fn create_entry(path: &Path, kind: EntryKind) -> io::Result<()> {
 /// rename/move 的执行策略，用于关闭 TOCTOU 窗口。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ProceedStrategy {
-    /// 目标在检查时不存在 → renameat2(RENAME_NOREPLACE)
+    /// 目标在检查时不存在 -> renameat2(RENAME_NOREPLACE)
     NoConflict,
     /// 覆盖
     Overwrite,
@@ -212,7 +212,7 @@ pub fn copy_path(src: &Path, dst: &Path, noreplace: bool) -> io::Result<()> {
     }
 }
 
-/// 为已存在的目标生成唯一路径：`foo.txt` → `foo (1).txt` → `foo (2).txt` …
+/// 为已存在的目标生成唯一路径：`foo.txt` -> `foo (1).txt` -> `foo (2).txt` …
 pub fn unique_path(dst: &Path) -> PathBuf {
     let parent = dst
         .parent()
@@ -272,9 +272,9 @@ fn guess_mime(path: &Path) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 虚拟文件系统 & poll 支持
-// ---------------------------------------------------------------------------
+// --
 
 /// 检测路径是否在虚拟文件系统上（/proc、/sys）。
 /// 这些文件系统不产生 inotify 事件，必须用 kernel poll (POLLPRI) 监听。
@@ -290,4 +290,18 @@ pub fn open_nonblock(path: &Path) -> io::Result<std::fs::File> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
+}
+
+/// 将路径拆分为逐级祖先目录。
+pub fn split_path_segments(path: &Path) -> Vec<PathBuf> {
+    let mut segments = Vec::new();
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component);
+        if current == Path::new("/") {
+            continue;
+        }
+        segments.push(current.clone());
+    }
+    segments
 }

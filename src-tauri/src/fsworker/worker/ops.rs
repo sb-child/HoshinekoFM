@@ -22,9 +22,9 @@ use crate::fsworker::protocol::{
 
 use super::files::{ProceedStrategy, copy_path, move_path, move_path_noreplace, unique_path};
 
-// ---------------------------------------------------------------------------
+// --
 // 批处理执行
-// ---------------------------------------------------------------------------
+// --
 
 #[derive(Clone, Copy)]
 pub enum BatchKind {
@@ -174,9 +174,9 @@ pub async fn run_batch(
     finish_op(cb, ops, op_id, succeeded, failed, cancelled).await;
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 冲突决策
-// ---------------------------------------------------------------------------
+// --
 
 pub enum Decision {
     Proceed {

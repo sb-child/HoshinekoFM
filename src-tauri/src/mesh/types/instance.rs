@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::ui::{ClipboardState, TabState};
 use super::window::WindowMsg;
 
-// ---------------------------------------------------------------------------
+// --
 // InstanceMsg
-// ---------------------------------------------------------------------------
+// --
 
 /// 跨实例消息（唯一需经 tarpc 序列化的消息类型）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +34,9 @@ pub enum InstanceMsg {
     },
 }
 
-// ---------------------------------------------------------------------------
+// --
 // InstanceHandler
-// ---------------------------------------------------------------------------
+// --
 
 /// 实例消息处理器。
 ///
@@ -49,9 +49,9 @@ pub trait InstanceHandler: Send + Sync + 'static {
     fn on_forward_window_msg(&self, window_id: u64, msg: WindowMsg);
 }
 
-// ---------------------------------------------------------------------------
-// dispatch — 由宏生成
-// ---------------------------------------------------------------------------
+// --
+// dispatch -- 由宏生成
+// --
 
 crate::endpoint_dispatch!(
     /// 分发 `InstanceMsg` 到 `InstanceHandler`。
@@ -63,9 +63,9 @@ crate::endpoint_dispatch!(
     ForwardWindowMsg { window_id, msg } => on_forward_window_msg,
 );
 
-// ---------------------------------------------------------------------------
-// tarpc InstanceService — 进程边界 RPC
-// ---------------------------------------------------------------------------
+// --
+// tarpc InstanceService -- 进程边界 RPC
+// --
 
 /// 实例间 RPC 服务。
 ///

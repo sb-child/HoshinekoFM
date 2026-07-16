@@ -90,7 +90,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
         }
     });
 
-    // 2. 回调通道（worker → app）
+    // 2. 回调通道（worker -> app）
     let cb_fd = opts.cb_fd;
     info!("fs worker {} restoring cb-fd={}", opts.fs_worker_id, cb_fd);
     let cb_std = unsafe { StdUnixStream::from_raw_fd(cb_fd) };
@@ -107,7 +107,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     let config = WatchConfig::default();
     let (registry, handles) = pipeline::assemble(cancel.clone(), &config, opts.fs_worker_id);
 
-    // 4. 请求通道（app → worker）：恢复 fd → tarpc server
+    // 4. 请求通道（app -> worker）：恢复 fd -> tarpc server
     let server = FsWorkerServer::new(opts.fs_worker_id, cb, Arc::new(registry));
     let fd = opts.fd;
     info!("fs worker {} restoring fd={}", opts.fs_worker_id, fd);

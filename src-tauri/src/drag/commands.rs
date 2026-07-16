@@ -25,6 +25,8 @@ pub enum Error {
     #[cfg(not(target_os = "linux"))]
     #[error("drag is not supported on this platform")]
     UnsupportedPlatform,
+    #[error("failed to start drag operation")]
+    FailedToStartDrag,
 }
 
 impl Serialize for Error {
@@ -156,7 +158,9 @@ pub async fn start_drag<R: Runtime>(
                 .unwrap()
                 .as_micros();
             let dir = std::env::temp_dir().join(format!("hnfm-dnd-{pid}-{ts:x}"));
-            let _ = std::fs::create_dir_all(&dir);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!("failed to create drag temp dir {dir:?}: {e}");
+        }
             dir
         };
 
@@ -213,10 +217,13 @@ pub async fn start_drag<R: Runtime>(
                     let _ = on_event.send(callback_result);
 
                     // 延迟清理临时 symlink（给外部 app 时间读取文件）
+                    // FIXME: 应使用 CancellationToken 使清理可取消
                     let td = temp_dir.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_secs(30));
-                        let _ = std::fs::remove_dir_all(&td);
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        if let Err(e) = std::fs::remove_dir_all(&td) {
+                            tracing::warn!("failed to cleanup drag temp dir {td:?}: {e}");
+                        }
                     });
                 },
                 linux::Options {
@@ -228,6 +235,6 @@ pub async fn start_drag<R: Runtime>(
             let _ = tx.send(r);
         })?;
 
-        rx.recv().unwrap()
+        rx.recv().map_err(|_| Error::FailedToStartDrag)?
     }
 }

@@ -3,6 +3,7 @@
 //! 将 Progress/op 绑定到 ContextId（tab/window），
 //! 在后台消费 ProgressEvent 并在操作完成后自动清理。
 
+use crate::lock::LockSafe;
 use std::sync::Arc;
 
 use crate::app::fs_service::{Canceller, Progress};
@@ -15,7 +16,7 @@ impl UIService {
     pub fn track_op(self: &Arc<Self>, context_ids: &[ContextId], progress: Progress) {
         let op_id = progress.op_id();
         {
-            let mut ctxs = self.contexts.lock().unwrap();
+            let mut ctxs = self.contexts.lock_safe();
             for cid in context_ids {
                 ctxs.entry(*cid).or_default().insert(op_id);
             }
@@ -59,18 +60,18 @@ impl UIService {
     }
 
     fn forget_op(&self, context_ids: &[ContextId], op_id: u64) {
-        let mut ctxs = self.contexts.lock().unwrap();
+        let mut ctxs = self.contexts.lock_safe();
         for cid in context_ids {
             if let Some(set) = ctxs.get_mut(cid) {
                 set.remove(&op_id);
             }
         }
         ctxs.retain(|_, v| !v.is_empty());
-        self.cancels.lock().unwrap().remove(&op_id);
+        self.cancels.lock_safe().remove(&op_id);
     }
 
     pub(super) fn context_busy(&self, ids: &[ContextId]) -> Vec<u64> {
-        let ctxs = self.contexts.lock().unwrap();
+        let ctxs = self.contexts.lock_safe();
         let mut ops = Vec::new();
         for id in ids {
             if let Some(set) = ctxs.get(id) {
@@ -82,8 +83,8 @@ impl UIService {
 
     pub(super) async fn cancel_contexts(&self, ids: &[ContextId]) {
         let cancellers: Vec<Canceller> = {
-            let ctxs = self.contexts.lock().unwrap();
-            let cancels = self.cancels.lock().unwrap();
+            let ctxs = self.contexts.lock_safe();
+            let cancels = self.cancels.lock_safe();
             let mut v = Vec::new();
             for id in ids {
                 if let Some(set) = ctxs.get(id) {

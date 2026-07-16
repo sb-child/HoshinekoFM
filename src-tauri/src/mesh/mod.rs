@@ -1,4 +1,4 @@
-//! Mesh 统一通信层 — 端点导向路由。
+//! Mesh 统一通信层 -- 端点导向路由。
 //!
 //! ## 架构
 //!
@@ -7,7 +7,7 @@
 //! Window_1 ──┤── Mesh (路由表) ── InstanceBus ──► 其他实例
 //! FsService ─┘           │
 //!                        ├─ 同进程: trait 直调，零序列化
-//!                        └─ 跨实例: InstanceMsg::ForwardWindowMsg → tarpc
+//!                        └─ 跨实例: InstanceMsg::ForwardWindowMsg -> tarpc
 //! ```
 //!
 //! ## 端点类型
@@ -17,18 +17,18 @@
 //! - Handler trait（`XxxHandler`）
 //! - dispatch 函数（由 `endpoint_dispatch!` 宏生成）
 //!
-//! 新增端点只需: 建 `types/new_endpoint.rs` → 在 `MeshInner` 加一个 `HashMap`
-//! → 加 `send_to_xxx`/`register_xxx` 方法。不需要改已有端点文件。
+//! 新增端点只需: 建 `types/new_endpoint.rs` -> 在 `MeshInner` 加一个 `HashMap`
+//! -> 加 `send_to_xxx`/`register_xxx` 方法。不需要改已有端点文件。
 //!
 //! ## 跨实例 WindowMsg 透明路由
 //!
 //! ```text
 //! mesh.send_to_window(id, msg)
-//!   ├─ 本地 → dispatch_window_msg(handler, &msg)
-//!   └─ 远程 → InstanceMsg::ForwardWindowMsg { window_id: id, msg }
-//!              → instance_bus.send_to(remote) → tarpc
-//!                → mesh/server.rs → handler.on_forward_window_msg(id, msg)
-//!                  → mesh.send_to_window(id, msg)  # 最终本地投递
+//!   ├─ 本地 -> dispatch_window_msg(handler, &msg)
+//!   └─ 远程 -> InstanceMsg::ForwardWindowMsg { window_id: id, msg }
+//!              -> instance_bus.send_to(remote) -> tarpc
+//!                -> mesh/server.rs -> handler.on_forward_window_msg(id, msg)
+//!                  -> mesh.send_to_window(id, msg)  # 最终本地投递
 //! ```
 
 pub mod callback;
@@ -51,6 +51,7 @@ pub use types::{
     dispatch_fs_msg, dispatch_instance_msg, dispatch_window_msg,
 };
 
+use crate::lock::{ReadSafe, WriteSafe};
 use std::collections::HashMap;
 use std::sync::{
     Arc, RwLock,
@@ -59,9 +60,9 @@ use std::sync::{
 
 use crate::instance_bus::InstanceBus;
 
-// ---------------------------------------------------------------------------
+// --
 // Mesh
-// ---------------------------------------------------------------------------
+// --
 
 /// 实例级 Mesh 路由器。
 ///
@@ -75,7 +76,7 @@ struct MeshInner {
     instance_id: u64,
     window_counter: AtomicU64,
 
-    /// window_id → handler（窗口端点）
+    /// window_id -> handler（窗口端点）
     window_handlers: RwLock<HashMap<u64, Arc<dyn WindowHandler>>>,
     /// 全局实例级 handler（app 层注册，唯一）
     instance_handler: RwLock<Option<Arc<dyn InstanceHandler>>>,
@@ -135,7 +136,7 @@ impl Mesh {
 
         if target_instance == Some(self.inner.instance_id) {
             // 本地直投
-            if let Some(handler) = self.inner.window_handlers.read().unwrap().get(&target_id) {
+            if let Some(handler) = self.inner.window_handlers.read_safe().get(&target_id) {
                 let handler = handler.clone();
                 dispatch_window_msg(&msg, handler.as_ref());
             }
@@ -174,7 +175,7 @@ impl Mesh {
 
     /// 分发消息到指定本地窗口（供跨实例转发使用）。
     pub fn dispatch_window_local(&self, window_id: u64, msg: &WindowMsg) {
-        if let Some(handler) = self.inner.window_handlers.read().unwrap().get(&window_id) {
+        if let Some(handler) = self.inner.window_handlers.read_safe().get(&window_id) {
             dispatch_window_msg(msg, handler.as_ref());
         }
     }
@@ -183,7 +184,7 @@ impl Mesh {
 
     /// 注册全局 Instance handler（app 层调用，唯一）。
     pub fn register_instance_handler(&self, handler: Arc<dyn InstanceHandler>) {
-        *self.inner.instance_handler.write().unwrap() = Some(handler);
+        *self.inner.instance_handler.write_safe() = Some(handler);
     }
 
     /// 向远程实例发送 InstanceMsg。
@@ -201,7 +202,7 @@ impl Mesh {
 
     /// 分发 InstanceMsg 到已注册的 InstanceHandler（供 mesh/server.rs 回调）。
     pub fn dispatch_instance(&self, msg: &InstanceMsg) {
-        if let Some(handler) = self.inner.instance_handler.read().unwrap().as_ref() {
+        if let Some(handler) = self.inner.instance_handler.read_safe().as_ref() {
             dispatch_instance_msg(msg, handler.as_ref());
         }
     }

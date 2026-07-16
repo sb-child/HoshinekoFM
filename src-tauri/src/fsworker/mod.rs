@@ -3,7 +3,7 @@
 //! ## 架构
 //!
 //! ```text
-//! FsService  ──(channel)──→  FsWorkerPool(WorkerRelay per UID)  ──(tarpc)──→  FsWorker process
+//! FsService  ──(channel)──->  FsWorkerPool(WorkerRelay per UID)  ──(tarpc)──->  FsWorker process
 //!   ↑                                 │                                          │
 //!   └──(CallbackRegistry route)───────┴──(CallbackServer tarpc)─────────────────┘
 //! ```
@@ -18,25 +18,25 @@
 //!
 //! ```text
 //! request_token(uid)
-//!   ├─ 已有存活 token → 复用（共享 relay 的 request_tx + registry）
-//!   └─ 无 → 创建 WorkerRelay → 开始事件循环
+//!   ├─ 已有存活 token -> 复用（共享 relay 的 request_tx + registry）
+//!   └─ 无 -> 创建 WorkerRelay -> 开始事件循环
 //!
 //! 某 uid 所有 token drop
-//!   → LeaseSentinel::drop → reaper
-//!   → WorkerRelay 检测到无 token → 立即销毁（无宽限期）
+//!   -> LeaseSentinel::drop -> reaper
+//!   -> WorkerRelay 检测到无 token -> 立即销毁（无宽限期）
 //! ```
 //!
 //! ## 崩溃恢复
 //!
 //! Worker 崩溃时 WorkerRelay:
 //! 1. 通过 CallbackRegistry 对所有活跃 watcher/op 发送 ConnectionLost
-//! 2. kill 子进程 → 延迟 → spawn 新子进程
+//! 2. kill 子进程 -> 延迟 -> spawn 新子进程
 //! 3. 无次数限制，直到 uidtoken 全部 drop
 //!
 //! ## 心跳检测
 //!
 //! - 定时检查子进程存活 + ping tarpc
-//! - 超时检测，连续失败 2 次 → 判定崩溃
+//! - 超时检测，连续失败 2 次 -> 判定崩溃
 
 use std::{
     path::PathBuf,
@@ -65,9 +65,9 @@ pub use pool::{FsWorkerPool, LeaseSentinel, UidToken};
 /// 全局 fs_worker_id 计数器（仅用于日志区分）。
 static FS_WORKER_ID: AtomicU64 = AtomicU64::new(1);
 
-// ---------------------------------------------------------------------------
+// --
 // 常量
-// ---------------------------------------------------------------------------
+// --
 
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
 pub(crate) const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -77,28 +77,28 @@ pub(crate) const RESTART_DELAY: Duration = Duration::from_secs(1);
 pub(crate) const CONNECTING_RETRY_DELAY: Duration = Duration::from_millis(250);
 pub(crate) const FALLBACK_CWD: &str = "/tmp";
 
-// ---------------------------------------------------------------------------
+// --
 // FsWorkerOpts
-// ---------------------------------------------------------------------------
+// --
 
 /// FS Worker 启动选项（传递给 `hnfm __fs-worker` 的命令行参数）。
 #[derive(Debug, Clone)]
 pub struct FsWorkerOpts {
     /// FS Worker ID
     pub fs_worker_id: u64,
-    /// 请求通道 fd（app→worker，Worker 作 server）
+    /// 请求通道 fd（app->worker，Worker 作 server）
     pub fd: i32,
-    /// 回调通道 fd（worker→app，Worker 作 client）
+    /// 回调通道 fd（worker->app，Worker 作 client）
     pub cb_fd: i32,
     /// 主进程 PID（用于 Worker 侧孤儿检测，绕过 pkexec 中介）。
     pub parent_pid: i32,
 }
 
-// ---------------------------------------------------------------------------
-// WorkerStatus / DisconnectReason — 连接状态汇报
-// ---------------------------------------------------------------------------
+// --
+// WorkerStatus / DisconnectReason -- 连接状态汇报
+// --
 
-/// Worker 连接状态（WorkerRelay → 上层 FsService）。
+/// Worker 连接状态（WorkerRelay -> 上层 FsService）。
 #[derive(Debug, Clone)]
 pub enum WorkerStatus {
     /// 已连接并正常运行。
@@ -126,11 +126,11 @@ pub enum DisconnectReason {
     Other { message: String },
 }
 
-// ---------------------------------------------------------------------------
-// WorkerRequest / WorkerResponse — FsService ↔ Relay 协议
-// ---------------------------------------------------------------------------
+// --
+// WorkerRequest / WorkerResponse -- FsService ↔ Relay 协议
+// --
 
-/// FsService → WorkerRelay 的请求。
+/// FsService -> WorkerRelay 的请求。
 pub struct WorkerRequest {
     /// 请求内容
     pub content: WorkerRequestContent,
@@ -185,7 +185,7 @@ pub enum WorkerRequestContent {
     },
 }
 
-/// WorkerRelay → FsService 的响应。
+/// WorkerRelay -> FsService 的响应。
 pub enum WorkerResponse {
     Ok,
     Err(String),

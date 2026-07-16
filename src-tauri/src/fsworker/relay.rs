@@ -1,5 +1,6 @@
-//! WorkerRelay — per-UID async loop (spawn / heartbeat / relay / restart).
+//! WorkerRelay -- per-UID async loop (spawn / heartbeat / relay / restart).
 
+use crate::lock::LockSafe;
 use std::{
     io,
     os::unix::{io::AsRawFd, net::UnixStream as StdUnixStream},
@@ -92,6 +93,7 @@ impl WorkerRelay {
                             reconnecting: true,
                         });
                         registry.notify_connection_lost(reason, true);
+                        // FIXME: RESTART_DELAY 应通过 CancellationToken 可取消，避免 Relay abort 时额外等待
                         tokio::time::sleep(RESTART_DELAY).await;
                         continue;
                     }
@@ -285,7 +287,18 @@ impl WorkerRelay {
     async fn wait_process(pid: u32) -> DisconnectReason {
         tokio::task::spawn_blocking(move || {
             let mut status: i32 = 0;
-            unsafe { libc::waitpid(pid as i32, &mut status, 0) };
+            // SAFETY: waitpid is safe to call from spawn_blocking because
+            // the child pid is guaranteed to be valid (spawned by self), and
+            // the status pointer is a valid stack-local mutable reference.
+            // No other thread can call waitpid for the same child.
+            let ret = unsafe { libc::waitpid(pid as i32, &mut status, 0) };
+            if ret == -1 {
+                let err = std::io::Error::last_os_error();
+                tracing::warn!("waitpid({pid}) failed: {err}");
+                // Return a sentinel value; the outer match on WIFEXITED
+                // won't match, so it falls to the unknown branch.
+                return -1;
+            }
             status
         })
         .await
@@ -435,7 +448,7 @@ impl WorkerRelay {
                 use std::io::Read;
                 let mut buf = String::new();
                 let _ = stderr_reader.read_to_string(&mut buf);
-                *stderr_snapshot.lock().unwrap() = buf;
+                *stderr_snapshot.lock_safe() = buf;
             });
             tokio::spawn(async move {
                 if let Err(e) = h.await {
@@ -446,7 +459,7 @@ impl WorkerRelay {
 
         let cb = tokio::task::spawn_blocking(move || {
             let exit_status = child.wait();
-            let stderr_text = stderr_buf.lock().unwrap().clone();
+            let stderr_text = stderr_buf.lock_safe().clone();
 
             match exit_status {
                 Ok(status) => {
@@ -505,7 +518,10 @@ pub(crate) fn kill_fs_worker(uid: u32, pid: u32) {
     let _ = signal::kill(p, signal::Signal::SIGTERM);
     let h = tokio::spawn(async move {
         tokio::time::sleep(SIGKILL_DELAY).await;
-        let _ = signal::kill(p, signal::Signal::SIGKILL);
+        // 检查进程是否仍存活再发送 SIGKILL（防止 PID reuse）
+        if unsafe { libc::kill(pid as i32, 0) } == 0 {
+            let _ = signal::kill(p, signal::Signal::SIGKILL);
+        }
     });
     // 后台监控 panic（极低概率，但 AGENTS.md 要求所有 spawn 处理错误）
     tokio::spawn(async move {

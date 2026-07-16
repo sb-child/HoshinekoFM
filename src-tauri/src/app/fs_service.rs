@@ -21,9 +21,9 @@ use crate::fsworker::protocol::{ConflictResolution, ProgressEvent, WatchDelta};
 use crate::fsworker::{FsWorkerPool, UidToken, WorkerRequestContent};
 use crate::mesh::types::ui::EntryKind;
 
-// ---------------------------------------------------------------------------
-// Op — copy/move 的单项（逐项携带 src/dst token，可表达跨 UID）
-// ---------------------------------------------------------------------------
+// --
+// Op -- copy/move 的单项（逐项携带 src/dst token，可表达跨 UID）
+// --
 
 /// 一个 copy/move 项：从 `src` 到 `dst`，各自携带对应 UID 的凭证。
 pub struct Op {
@@ -33,9 +33,9 @@ pub struct Op {
     pub dst: (UidToken, PathBuf),
 }
 
-// ---------------------------------------------------------------------------
-// Watcher — 目录/文件订阅句柄
-// ---------------------------------------------------------------------------
+// --
+// Watcher -- 目录/文件订阅句柄
+// --
 
 /// 目录或文件的变化订阅。
 ///
@@ -70,6 +70,11 @@ impl Watcher {
     /// 调用者负责用返回的部件自行管理生命周期。
     pub fn into_parts(self) -> (channel::RxAsync<WatchDelta>, u64, UidToken) {
         use std::mem::ManuallyDrop;
+        // SAFETY: ManuallyDrop prevents self from being dropped, so we can
+        // take ownership of each field individually via ptr::read.
+        // watch_id is Copy so no special handling needed.
+        // events and _token are moved out, leaving the original ManuallyDrop
+        // "empty" -- which is safe since ManuallyDrop never calls drop.
         let me = ManuallyDrop::new(self);
         unsafe {
             let events = std::ptr::read(&me.events);
@@ -99,14 +104,14 @@ impl Drop for Watcher {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Progress — 批处理进度句柄
-// ---------------------------------------------------------------------------
+// --
+// Progress -- 批处理进度句柄
+// --
 
 /// 一个变更操作的进度句柄。
 ///
 /// - `events` 收到 `Started` / `Item` / `Tick` / `Conflict` / `Done` / `ConnectionLost`。
-/// - 遇到 `Conflict { conflict_id, .. }` → 调用 `resolve(conflict_id, ...)` 决策。
+/// - 遇到 `Conflict { conflict_id, .. }` -> 调用 `resolve(conflict_id, ...)` 决策。
 /// - `cancel()` 取消整个操作。
 /// - 持有相关 [`UidToken`]，操作期间保活 Worker。
 pub struct Progress {
@@ -175,9 +180,9 @@ impl Canceller {
     }
 }
 
-// ---------------------------------------------------------------------------
+// --
 // FsService
-// ---------------------------------------------------------------------------
+// --
 
 /// 文件系统调度服务。
 pub struct FsService {
@@ -198,9 +203,9 @@ impl FsService {
         self.id_seq.fetch_add(1, Ordering::Relaxed)
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Token
-    // -----------------------------------------------------------------------
+    // --
 
     /// 请求某 uid 的访问凭证。找不到/创建失败（如 pkexec 未通过）时返回错误。
     pub(crate) async fn try_request_uid_token(&self, uid: u32) -> Result<UidToken, String> {
@@ -210,9 +215,9 @@ impl FsService {
             .map_err(|e| format!("request fs-worker for uid {uid}: {e}"))
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Watch
-    // -----------------------------------------------------------------------
+    // --
 
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
     pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &Path) -> Result<Watcher, String> {
@@ -307,9 +312,9 @@ impl FsService {
         }
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 变更操作（一律返回 Progress）
-    // -----------------------------------------------------------------------
+    // --
 
     /// 创建文件或目录。
     pub(crate) async fn create(
@@ -369,7 +374,9 @@ impl FsService {
             .iter()
             .all(|o| o.src.0.uid() == uid && o.dst.0.uid() == uid);
         if !all_same {
-            todo!("跨 UID copy/move 尚未实现");
+            return Err(format!(
+                "跨 UID copy/move 尚未实现"
+            ));
         }
 
         let token = ops[0].src.0.clone();

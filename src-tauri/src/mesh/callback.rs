@@ -1,4 +1,4 @@
-//! App 层 Mesh 回调实现 — UiMeshHandler。
+//! App 层 Mesh 回调实现 -- UiMeshHandler。
 //!
 //! 实现 `WindowHandler` 和 `InstanceHandler`，将 Mesh 消息
 //! 转换为 UIService 调用。通过 channel 或直接持有 UIService/Mesh 引用完成桥接。
@@ -24,7 +24,7 @@ pub struct UiMeshHandler {
 
 impl WindowHandler for UiMeshHandler {
     fn on_dnd_active(&self, session_id: u64, files: Vec<String>, op: DragOp) {
-        // DnD 活跃 — 通过 WindowMsg 广播到所有窗口
+        // DnD 活跃 -- 通过 WindowMsg 广播到所有窗口
         self.mesh.broadcast_windows(WindowMsg::DndSessionActive {
             session_id,
             files,
@@ -38,7 +38,7 @@ impl WindowHandler for UiMeshHandler {
     }
 
     fn on_tab_attached(&self, tab: TabState) {
-        // Tab 已附加 — 前端通过 hf:tabs 事件感知
+        // Tab 已附加 -- 前端通过 hf:tabs 事件感知
         let _ = tab;
     }
 }
@@ -48,15 +48,25 @@ impl WindowHandler for UiMeshHandler {
 impl InstanceHandler for UiMeshHandler {
     fn on_open_window(&self, paths: Vec<String>) {
         let ui = self.ui.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             ui.open_window(paths).await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!("on_open_window task panicked: {e}");
+            }
         });
     }
 
     fn on_transfer_tab(&self, tab: TabState) {
         let ui = self.ui.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             ui.receive_transfer_tab(tab).await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                tracing::error!("on_transfer_tab task panicked: {e}");
+            }
         });
     }
 
@@ -65,7 +75,7 @@ impl InstanceHandler for UiMeshHandler {
     }
 
     fn on_forward_window_msg(&self, window_id: u64, msg: WindowMsg) {
-        // 跨实例转发 — 调回 Mesh 本地投递
+        // 跨实例转发 -- 调回 Mesh 本地投递
         self.mesh.dispatch_window_local(window_id, &msg);
     }
 }

@@ -30,7 +30,20 @@ use super::{
 /// 崩溃诊断用：最后一个 watch_id / 最后一个操作名
 pub(crate) static LAST_WATCH_ID: AtomicU64 = AtomicU64::new(0);
 pub(crate) static LAST_OPERATION: AtomicU64 = AtomicU64::new(0);
-// 操作编码：1=watch_dir 2=unwatch 3=watch_stat 4=refresh 5=run_create 6=run_rename 7=run_move 8=run_copy 9=cancel_op 10=stat_vfs
+
+/// 操作编码常量，用于 set_last_op! 宏。
+const WATCH_DIR: u64 = 1;
+const UNWATCH: u64 = 2;
+const WATCH_STAT: u64 = 3;
+const REFRESH: u64 = 4;
+const RUN_CREATE: u64 = 5;
+const RUN_RENAME: u64 = 6;
+const RUN_MOVE: u64 = 7;
+const RUN_COPY: u64 = 8;
+const CANCEL_OP: u64 = 9;
+const STAT_VFS: u64 = 10;
+const WATCH_BREADCRUMB: u64 = 11;
+
 macro_rules! set_last_op {
     ($code:expr, $wid:expr) => {
         LAST_OPERATION.store($code, std::sync::atomic::Ordering::Relaxed);
@@ -45,7 +58,7 @@ pub struct FsWorkerServer {
     cb: AppCallbackServiceClient,
     registry: Arc<WatchRegistry>,
     watch_paths: Arc<Mutex<HashMap<u64, PathBuf>>>,
-    /// op_id → 取消标志
+    /// op_id -> 取消标志
     ops: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
     /// 冲突 ID 分配
     conflict_seq: Arc<AtomicU64>,
@@ -75,9 +88,9 @@ impl FsWorkerService for FsWorkerServer {
         true
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // Watch
-    // -----------------------------------------------------------------------
+    // --
 
     async fn watch_dir(
         self,
@@ -85,7 +98,7 @@ impl FsWorkerService for FsWorkerServer {
         watch_id: u64,
         path: PathBuf,
     ) -> Result<(), String> {
-        set_last_op!(1, watch_id);
+        set_last_op!(WATCH_DIR, watch_id);
         debug!("[w{}] watch_dir {watch_id} {path:?}", self.fs_worker_id);
         self.registry
             .subscribe(watch_id, path.clone(), true, self.cb.clone())
@@ -100,7 +113,7 @@ impl FsWorkerService for FsWorkerServer {
         watch_id: u64,
         path: PathBuf,
     ) -> Result<(), String> {
-        set_last_op!(3, watch_id);
+        set_last_op!(WATCH_STAT, watch_id);
         debug!("[w{}] watch_stat {watch_id} {path:?}", self.fs_worker_id);
         self.registry
             .subscribe(watch_id, path.clone(), false, self.cb.clone())
@@ -110,7 +123,7 @@ impl FsWorkerService for FsWorkerServer {
     }
 
     async fn refresh(self, _ctx: context::Context, watch_id: u64) {
-        set_last_op!(4, watch_id);
+        set_last_op!(REFRESH, watch_id);
         debug!("[w{}] refresh {watch_id}", self.fs_worker_id);
         if let Some(path) = self.watch_paths.lock().await.get(&watch_id).cloned() {
             self.registry.request_reset(watch_id, &path).await;
@@ -118,16 +131,16 @@ impl FsWorkerService for FsWorkerServer {
     }
 
     async fn unwatch(self, _ctx: context::Context, watch_id: u64) {
-        set_last_op!(2, watch_id);
+        set_last_op!(UNWATCH, watch_id);
         debug!("[w{}] unwatch {watch_id}", self.fs_worker_id);
         if let Some(path) = self.watch_paths.lock().await.remove(&watch_id) {
             self.registry.unsubscribe(watch_id, &path).await;
         }
     }
 
-    // -----------------------------------------------------------------------
+    // --
     // 变更操作
-    // -----------------------------------------------------------------------
+    // --
 
     async fn run_create(
         self,
@@ -136,7 +149,7 @@ impl FsWorkerService for FsWorkerServer {
         path: PathBuf,
         kind: EntryKind,
     ) -> Result<(), String> {
-        set_last_op!(5, op_id);
+        set_last_op!(RUN_CREATE, op_id);
         let _cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
@@ -213,7 +226,7 @@ impl FsWorkerService for FsWorkerServer {
         path: PathBuf,
         new_name: String,
     ) -> Result<(), String> {
-        set_last_op!(6, op_id);
+        set_last_op!(RUN_RENAME, op_id);
         let _cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
@@ -334,7 +347,7 @@ impl FsWorkerService for FsWorkerServer {
         op_id: u64,
         items: Vec<(PathBuf, PathBuf)>,
     ) -> Result<(), String> {
-        set_last_op!(7, op_id);
+        set_last_op!(RUN_MOVE, op_id);
         let cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
@@ -365,7 +378,7 @@ impl FsWorkerService for FsWorkerServer {
         op_id: u64,
         items: Vec<(PathBuf, PathBuf)>,
     ) -> Result<(), String> {
-        set_last_op!(8, op_id);
+        set_last_op!(RUN_COPY, op_id);
         let cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
@@ -391,7 +404,7 @@ impl FsWorkerService for FsWorkerServer {
     }
 
     async fn cancel_op(self, _ctx: context::Context, op_id: u64) {
-        set_last_op!(9, op_id);
+        set_last_op!(CANCEL_OP, op_id);
         if let Some(flag) = self.ops.lock().await.get(&op_id) {
             flag.store(true, Ordering::Relaxed);
             debug!("[w{}] cancel op {op_id}", self.fs_worker_id);
@@ -399,7 +412,7 @@ impl FsWorkerService for FsWorkerServer {
     }
 
     async fn stat_vfs(self, _ctx: context::Context, path: PathBuf) -> Result<(u64, u64), String> {
-        set_last_op!(10, 0);
+        set_last_op!(STAT_VFS, 0);
         let p = path.clone();
         let vfs = tokio::task::spawn_blocking(move || nix::sys::statvfs::statvfs(&p))
             .await
@@ -415,7 +428,7 @@ impl FsWorkerService for FsWorkerServer {
         watch_id: u64,
         path: PathBuf,
     ) -> Result<(), String> {
-        set_last_op!(11, watch_id);
+        set_last_op!(WATCH_BREADCRUMB, watch_id);
         debug!(
             "[w{}] watch_breadcrumb {watch_id} {path:?}",
             self.fs_worker_id
@@ -464,13 +477,13 @@ impl FsWorkerServer {
 
 use super::ops::Decision;
 
-// ---------------------------------------------------------------------------
+// --
 // 面包屑辅助：/etc/passwd + /proc/mounts 读取与路径段判断
-// ---------------------------------------------------------------------------
+// --
 
 use std::sync::LazyLock;
 
-/// 家目录缓存：path → (username, uid)。/etc/passwd 极少变化，进程生命周期内缓存。
+/// 家目录缓存：path -> (username, uid)。/etc/passwd 极少变化，进程生命周期内缓存。
 static HOME_MAP: LazyLock<HashMap<String, (String, u32)>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
@@ -489,7 +502,7 @@ static HOME_MAP: LazyLock<HashMap<String, (String, u32)>> = LazyLock::new(|| {
     map
 });
 
-/// 加载挂载映射：mountpoint → (source, fstype)。
+/// 加载挂载映射：mountpoint -> (source, fstype)。
 /// /proc/mounts 随挂载变化，每次调用重新读取。
 fn load_mount_map() -> HashMap<String, (String, String)> {
     let mut map = HashMap::new();
@@ -509,7 +522,7 @@ fn load_mount_map() -> HashMap<String, (String, String)> {
     map
 }
 
-/// 还原 /proc/mounts 中的转义字符（\040→空格 等）。
+/// 还原 /proc/mounts 中的转义字符（\040->空格 等）。
 fn unescape_mount(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -533,27 +546,13 @@ fn unescape_mount(s: &str) -> String {
     result
 }
 
-/// 将路径拆分为逐级祖先目录。
-fn split_path_segments(path: &std::path::Path) -> Vec<PathBuf> {
-    let mut segments = Vec::new();
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        if current == std::path::Path::new("/") {
-            continue;
-        }
-        segments.push(current.clone());
-    }
-    segments
-}
-
 /// 为面包屑构建每个路径段的 home/mount 信息。
 fn build_breadcrumb_segments(
     path: &std::path::Path,
     home_map: &HashMap<String, (String, u32)>,
     mount_map: &HashMap<String, (String, String)>,
 ) -> Vec<crate::fsworker::protocol::BreadcrumbSegment> {
-    let seg_paths = split_path_segments(path);
+    let seg_paths = super::files::split_path_segments(path);
     seg_paths
         .iter()
         .map(|seg_path| {

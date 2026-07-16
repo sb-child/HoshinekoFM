@@ -1,7 +1,8 @@
-//! Tauri Commands —— 前端可调用的后端函数。
+//! Tauri Commands ---- 前端可调用的后端函数。
 //!
 //! 通过 `invoke()` 调用。前端只发意图，结果通过 event 推送。
 
+use crate::lock::LockSafe;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -12,9 +13,9 @@ use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
 use crate::mesh::types::ui::{ContextId, EntryKind, NavTarget};
 
-// ---------------------------------------------------------------------------
+// --
 // 多窗口命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 创建新窗口（使用给定 label）。
 pub fn create_window(
@@ -56,9 +57,9 @@ pub async fn new_window(
     Ok(window_id)
 }
 
-// ---------------------------------------------------------------------------
-// Ready — 前端就绪
-// ---------------------------------------------------------------------------
+// --
+// Ready -- 前端就绪
+// --
 
 /// 前端 mount 后调用。后端重建运行时状态 + 推送初始事件。
 #[command]
@@ -66,16 +67,16 @@ pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), 
     ui.ready(&window).await
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UIService Tab 生命周期命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 获取所有 tab 列表。
 #[command]
 pub fn list_tabs(
     mgr: State<'_, Arc<AppStateManager>>,
 ) -> Result<Vec<crate::mesh::types::ui::TabState>, String> {
-    let tabs = mgr.tabs.lock().unwrap();
+    let tabs = mgr.tabs.lock_safe();
     Ok(tabs.get_all().to_vec())
 }
 
@@ -150,9 +151,9 @@ pub struct MoveTabTaskInfo {
     pub description: String,
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UIService 导航命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 导航到指定目标。
 #[command]
@@ -204,9 +205,9 @@ pub fn refresh_tab(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), 
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UIService 文件操作命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 创建文件或目录。
 #[command]
@@ -262,9 +263,9 @@ pub async fn copy_files(
     ui.copy_files_by_paths(tab_id, pairs, ctx_id).await
 }
 
-// ---------------------------------------------------------------------------
+// --
 // UIService 权限变更命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 将 tab 权限切换到指定 uid。
 #[command]
@@ -303,9 +304,9 @@ pub async fn import_files(
     ui.copy_files_by_paths(tab_id, pairs, ctx).await
 }
 
-// ---------------------------------------------------------------------------
+// --
 // 工具命令
-// ---------------------------------------------------------------------------
+// --
 
 /// 解析路径中的符号链接，返回规范路径。
 #[command]
