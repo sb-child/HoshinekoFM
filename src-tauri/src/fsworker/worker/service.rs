@@ -103,7 +103,12 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(WATCH_DIR, watch_id);
         debug!("[w{}] watch_dir {watch_id} {path:?}", self.fs_worker_id);
         self.registry
-            .subscribe(watch_id, path.clone(), WatchScope::Children, self.cb.clone())
+            .subscribe(
+                watch_id,
+                path.clone(),
+                WatchScope::Children,
+                self.cb.clone(),
+            )
             .await;
         self.watch_paths.lock().await.insert(watch_id, path);
         Ok(())
@@ -118,7 +123,12 @@ impl FsWorkerService for FsWorkerServer {
         set_last_op!(WATCH_STAT, watch_id);
         debug!("[w{}] watch_stat {watch_id} {path:?}", self.fs_worker_id);
         self.registry
-            .subscribe(watch_id, path.clone(), WatchScope::SelfOnly, self.cb.clone())
+            .subscribe(
+                watch_id,
+                path.clone(),
+                WatchScope::SelfOnly,
+                self.cb.clone(),
+            )
             .await;
         self.watch_paths.lock().await.insert(watch_id, path);
         Ok(())
@@ -497,7 +507,12 @@ impl FsWorkerService for FsWorkerServer {
         // 多个 watch_breadcrumb 共享同一个 /proc/mounts 监视
         let mount_path = PathBuf::from("/proc/mounts");
         self.registry
-            .subscribe(watch_id, mount_path.clone(), WatchScope::SelfOnly, self.cb.clone())
+            .subscribe(
+                watch_id,
+                mount_path.clone(),
+                WatchScope::SelfOnly,
+                self.cb.clone(),
+            )
             .await;
         self.watch_paths.lock().await.insert(watch_id, mount_path);
 

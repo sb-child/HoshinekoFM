@@ -500,7 +500,8 @@ impl WorkerRelay {
         let stderr_snapshot = stderr_buf.clone();
         if let Some(mut stderr_reader) = child.stderr.take() {
             let h = tokio::task::spawn_blocking(move || {
-                let _span: tracing::span::EnteredSpan = tracing::info_span!("relay::spawn_fs_worker::stderr_drain").entered();
+                let _span: tracing::span::EnteredSpan =
+                    tracing::info_span!("relay::spawn_fs_worker::stderr_drain").entered();
                 use std::io::Read;
                 let mut buf = String::new();
                 let _ = stderr_reader.read_to_string(&mut buf);

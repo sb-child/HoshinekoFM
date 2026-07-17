@@ -41,7 +41,10 @@ mod tests {
         };
         let t_home = PathBuf::from("/home");
 
-        assert!(!route_match(&t_home, &t_home, &e_children), "目录自身不匹配");
+        assert!(
+            !route_match(&t_home, &t_home, &e_children),
+            "目录自身不匹配"
+        );
         assert!(route_match(
             &PathBuf::from("/home/sbchild"),
             &t_home,
@@ -62,7 +65,11 @@ mod tests {
         let t_root = PathBuf::from("/");
         assert!(route_match(&PathBuf::from("/home"), &t_root, &e_children));
         assert!(route_match(&PathBuf::from("/proc"), &t_root, &e_children));
-        assert!(!route_match(&PathBuf::from("/proc/stat"), &t_root, &e_children));
+        assert!(!route_match(
+            &PathBuf::from("/proc/stat"),
+            &t_root,
+            &e_children
+        ));
         assert!(!route_match(&PathBuf::from("/"), &t_root, &e_children));
 
         let e_self = WatchEntry {

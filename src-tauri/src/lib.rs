@@ -8,4 +8,5 @@ pub mod fsworker;
 pub mod instance_bus;
 pub(crate) mod lock;
 pub(crate) mod macros;
+pub mod mem_monitor;
 pub(crate) mod mesh;

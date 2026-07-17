@@ -1,11 +1,22 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// dhat heap profiling: only enabled in debug builds
+#[cfg(debug_assertions)]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    // dhat heap profiling: write dhat-heap.json on exit
+    #[cfg(debug_assertions)]
+    let _profiler = dhat::Profiler::builder()
+        .file_name("dhat-heap.json")
+        .build();
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,hnfm_lib=debug,tarpc=warn"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -16,6 +27,14 @@ async fn main() {
 
     match dispatch {
         hnfm_lib::cli::Dispatch::Launch(args) => {
+            // 启动内存监控（仅主进程）
+            let mem_token = CancellationToken::new();
+            hnfm_lib::mem_monitor::spawn_mem_monitor(
+                mem_token.clone(),
+                Duration::from_secs(5),
+                None, // 主进程无父 span
+            );
+
             // 禁止 --new-instance 与已存在的 --instance-id 同时使用
             if args.new_instance {
                 if let Some(id) = args.instance_id {
@@ -54,6 +73,15 @@ async fn main() {
                 fd = %cmd.fd,
                 cbfd = %cmd.cb_fd,
             );
+
+            // 启动内存监控（FsWorker 子进程，继承 worker_span）
+            let mem_token = CancellationToken::new();
+            hnfm_lib::mem_monitor::spawn_mem_monitor(
+                mem_token.clone(),
+                Duration::from_secs(5),
+                Some(worker_span.clone()),
+            );
+
             let opts = hnfm_lib::fsworker::FsWorkerOpts {
                 fs_worker_id: cmd.fs_worker_id,
                 fd: cmd.fd,

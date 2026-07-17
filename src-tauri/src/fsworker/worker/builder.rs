@@ -16,12 +16,8 @@ use super::files::{augment_mime, augment_stat, build_file, build_file_skeleton, 
 use super::scheduler::SchedulerEvent;
 
 pub enum BuilderCmd {
-    Reset {
-        path: PathBuf,
-    },
-    CancelPath {
-        path: PathBuf,
-    },
+    Reset { path: PathBuf },
+    CancelPath { path: PathBuf },
     Shutdown,
 }
 
@@ -106,8 +102,7 @@ impl Pipeline {
 
 fn stat_worker(i: usize, rx: mpsc::Receiver<StatJob>, cancel: CancellationToken) {
     let _span = tracing::info_span!("stat_pool_worker", thread = i).entered();
-    let mut batch: Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)> =
-        Vec::with_capacity(BATCH_SIZE);
+    let mut batch: Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)> = Vec::with_capacity(BATCH_SIZE);
 
     loop {
         match rx.recv_timeout(FLUSH_INTERVAL) {
@@ -152,9 +147,7 @@ fn stat_worker(i: usize, rx: mpsc::Receiver<StatJob>, cancel: CancellationToken)
     }
 }
 
-fn flush_stat_batch(
-    batch: &mut Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)>,
-) {
+fn flush_stat_batch(batch: &mut Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)>) {
     if batch.is_empty() {
         return;
     }
@@ -173,8 +166,7 @@ fn flush_stat_batch(
 
 fn mime_worker(i: usize, rx: mpsc::Receiver<MimeJob>, cancel: CancellationToken) {
     let _span = tracing::info_span!("mime_pool_worker", thread = i).entered();
-    let mut batch: Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)> =
-        Vec::with_capacity(BATCH_SIZE);
+    let mut batch: Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)> = Vec::with_capacity(BATCH_SIZE);
 
     loop {
         match rx.recv_timeout(FLUSH_INTERVAL) {
@@ -210,9 +202,7 @@ fn mime_worker(i: usize, rx: mpsc::Receiver<MimeJob>, cancel: CancellationToken)
     }
 }
 
-fn flush_mime_batch(
-    batch: &mut Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)>,
-) {
+fn flush_mime_batch(batch: &mut Vec<(PathBuf, Tx<(PathBuf, WatchDelta)>, File)>) {
     if batch.is_empty() {
         return;
     }
@@ -365,10 +355,8 @@ impl DeltaBuilder {
                 batch.push(file.clone());
 
                 if batch.len() >= batch_size {
-                    let chunk =
-                        std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
-                    let _ =
-                        delta_tx.send((reset_path.clone(), WatchDelta::UpsertBatch(chunk)));
+                    let chunk = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+                    let _ = delta_tx.send((reset_path.clone(), WatchDelta::UpsertBatch(chunk)));
                 }
 
                 let si = stat_cnt.fetch_add(1, Ordering::Relaxed) % stat_txs.len();
@@ -387,8 +375,7 @@ impl DeltaBuilder {
                 }
             }
             if !batch.is_empty() {
-                let _ =
-                    delta_tx.send((reset_path.clone(), WatchDelta::UpsertBatch(batch)));
+                let _ = delta_tx.send((reset_path.clone(), WatchDelta::UpsertBatch(batch)));
             }
             let _ = done_tx.send(reset_path);
         });
@@ -429,10 +416,8 @@ impl DeltaBuilder {
                     let dt = self.delta_tx.clone();
                     let p = path.clone();
                     let h = tokio::task::spawn_blocking(move || {
-                        let _span = tracing::info_span!(
-                            "builder::incremental_build_file"
-                        )
-                        .entered();
+                        let _span =
+                            tracing::info_span!("builder::incremental_build_file").entered();
                         let file = build_file(&file_path)?;
                         let _ = dt.send((p, WatchDelta::Upsert(file)));
                         Some(())
@@ -440,14 +425,10 @@ impl DeltaBuilder {
                     tokio::spawn(
                         async move {
                             if let Err(e) = h.await {
-                                tracing::error!(
-                                    "builder incremental build_file panicked: {e}"
-                                );
+                                tracing::error!("builder incremental build_file panicked: {e}");
                             }
                         }
-                        .instrument(
-                            tracing::info_span!("builder::incremental_monitor"),
-                        ),
+                        .instrument(tracing::info_span!("builder::incremental_monitor")),
                     );
                 }
             }

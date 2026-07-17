@@ -11,13 +11,8 @@ use crate::channel::{self, RxAsync, Tx};
 use super::config::WatchConfig;
 
 pub enum InotifyCmd {
-    Watch {
-        path: PathBuf,
-        scope: WatchScope,
-    },
-    Unwatch {
-        path: PathBuf,
-    },
+    Watch { path: PathBuf, scope: WatchScope },
+    Unwatch { path: PathBuf },
     Shutdown,
 }
 
@@ -75,18 +70,18 @@ impl InotifyManager {
         let (raw_tx, raw_rx) = channel::unbounded::<Vec<PathBuf>>();
         let raw_rx: RxAsync<Vec<PathBuf>> = raw_rx;
 
-        let mut watcher = match notify::recommended_watcher(
-            move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let _ = raw_tx.send(event.paths);
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                warn!("InotifyManager: failed to create watcher: {e}");
-                return;
-            }
-        };
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    let _ = raw_tx.send(event.paths);
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    warn!("InotifyManager: failed to create watcher: {e}");
+                    return;
+                }
+            };
 
         let mut watches: HashMap<PathBuf, WatchEntry> = HashMap::new();
 
@@ -171,10 +166,7 @@ impl InotifyManager {
 
         match watcher.watch(&path, RecursiveMode::NonRecursive) {
             Ok(()) => {
-                debug!(
-                    "InotifyManager: watching {:?} (scope={:?})",
-                    path, scope
-                );
+                debug!("InotifyManager: watching {:?} (scope={:?})", path, scope);
                 watches.insert(path, WatchEntry { scope });
             }
             Err(e) => {

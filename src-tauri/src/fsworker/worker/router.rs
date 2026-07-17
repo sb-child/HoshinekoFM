@@ -120,6 +120,8 @@ impl DeltaRouter {
                                 subs.retain(|(wid, _)| *wid != watch_id);
                                 if subs.is_empty() {
                                     self.path_subs.remove(&path);
+                                    // 无 subscriber 时清理快照，防止内存泄漏
+                                    self.snapshots.remove(&path);
                                 }
                             }
                             self.overflowed.remove(&watch_id);
