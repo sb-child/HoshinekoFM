@@ -11,6 +11,8 @@ use std::{path::PathBuf, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::AppError;
+
 pub use crate::mesh::types::ui::EntryKind;
 
 // --
@@ -22,7 +24,7 @@ pub use crate::mesh::types::ui::EntryKind;
 /// mime / thumbnail 是**渐进式**字段：初次快照时可能为 `None`，
 /// Worker 后台算好后通过 `WatchDelta::Upsert` 补发。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct File {
+pub(crate) struct File {
     /// 文件名（不含路径）
     pub name: String,
     /// 完整路径
@@ -60,7 +62,7 @@ pub struct File {
 /// - `FatalError` 表示连 `/` 都无法访问，watcher 彻底失效 (Dead)。
 /// - `ConnectionLost` 表示 Worker 连接断开，上层应暂停依赖此 watcher 的 UI。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WatchDelta {
+pub(crate) enum WatchDelta {
     /// 全量快照（首帧 / refresh 后）
     Reset(Vec<File>),
     /// 新增或更新一个文件（也用于渐进式补发 mime / 缩略图）
@@ -117,7 +119,7 @@ pub enum WatchDelta {
 
 /// 单个条目的处理结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ItemStatus {
+pub(crate) enum ItemStatus {
     /// 成功
     Ok,
     /// 成功但目标被自动重命名
@@ -130,7 +132,7 @@ pub enum ItemStatus {
 
 /// 一个待解决的重名冲突。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConflictItem {
+pub(crate) struct ConflictItem {
     /// 源路径
     pub src: PathBuf,
     /// 目标路径（已存在）
@@ -154,7 +156,7 @@ pub enum ConflictResolution {
 
 /// 批处理进度事件（Worker -> 上层，通过反向回调）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProgressEvent {
+pub(crate) enum ProgressEvent {
     /// 操作开始，给出总条目数
     Started { total: u64 },
     /// 单个条目完成
@@ -197,7 +199,7 @@ pub enum ProgressEvent {
 /// FsWorker 内部读取 /etc/passwd 和 /proc/mounts，对每个祖先目录段
 /// 返回 home / mount 判断结果。主进程无需直接访问这些系统文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BreadcrumbSegment {
+pub(crate) struct BreadcrumbSegment {
     /// 段名（如 "Documents"）
     pub name: String,
     /// 截至该段的完整路径（如 "/home/sbchild/Documents"）
@@ -224,28 +226,28 @@ pub trait FsWorkerService {
     /// 存活检查。
     async fn ping() -> bool;
     /// 开始监视目录。首帧全量 + 后续增量通过 `watch_delta` 推送。
-    async fn watch_dir(watch_id: u64, path: PathBuf) -> Result<(), String>;
+    async fn watch_dir(watch_id: u64, path: PathBuf) -> Result<(), AppError>;
     /// 开始监视单个文件/目录的属性（面包屑用）。
-    async fn watch_stat(watch_id: u64, path: PathBuf) -> Result<(), String>;
+    async fn watch_stat(watch_id: u64, path: PathBuf) -> Result<(), AppError>;
     /// 立刻触发一次全量刷新（重新推 `Reset`）。
     async fn refresh(watch_id: u64);
     /// 停止监视并释放资源。
     async fn unwatch(watch_id: u64);
 
     /// 创建文件或目录。
-    async fn run_create(op_id: u64, path: PathBuf, kind: EntryKind) -> Result<(), String>;
+    async fn run_create(op_id: u64, path: PathBuf, kind: EntryKind) -> Result<(), AppError>;
     /// 重命名。
-    async fn run_rename(op_id: u64, path: PathBuf, new_name: String) -> Result<(), String>;
+    async fn run_rename(op_id: u64, path: PathBuf, new_name: String) -> Result<(), AppError>;
     /// 批量移动（同 UID）。`items` 为 `(src, dst)` 列表。
-    async fn run_move(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), String>;
+    async fn run_move(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), AppError>;
     /// 批量复制（同 UID）。
-    async fn run_copy(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), String>;
+    async fn run_copy(op_id: u64, items: Vec<(PathBuf, PathBuf)>) -> Result<(), AppError>;
     /// 取消一个进行中的批处理操作。
     async fn cancel_op(op_id: u64);
     /// 文件系统空间查询。返回 `(total_bytes, free_bytes)`。
-    async fn stat_vfs(path: PathBuf) -> Result<(u64, u64), String>;
+    async fn stat_vfs(path: PathBuf) -> Result<(u64, u64), AppError>;
     /// 监听面包屑路径段信息。首帧立即推送，后续 /proc/mounts 变化时重推。
-    async fn watch_breadcrumb(watch_id: u64, path: PathBuf) -> Result<(), String>;
+    async fn watch_breadcrumb(watch_id: u64, path: PathBuf) -> Result<(), AppError>;
 }
 
 // --

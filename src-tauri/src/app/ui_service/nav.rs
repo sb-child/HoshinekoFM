@@ -11,11 +11,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::Emitter;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, Instrument};
 
 use crate::app::state::AppStateManager;
 use crate::channel;
 use crate::channel::oneshot;
+use crate::error::AppError;
 use crate::fsworker::UidToken;
 use crate::fsworker::protocol::WatchDelta;
 use crate::mesh::types::instance::InstanceMsg;
@@ -300,7 +301,7 @@ fn spawn_watcher_task(
                     generation,
                     WatchDelta::FatalError {
                         path: path.clone(),
-                        reason: e,
+                        reason: e.to_string(),
                     },
                 ));
                 let _ = id_tx.send(0);
@@ -317,7 +318,7 @@ fn spawn_watcher_task(
             }
         }
         debug!("spawn_watcher_task tab={tab_id} gen={generation} watch_id={watch_id} ended");
-    });
+    }.instrument(tracing::info_span!("nav::watcher_task")));
     (handle, id_rx)
 }
 
@@ -332,14 +333,14 @@ impl UIService {
 
     /// 切换到指定 tab（前端点击 tab bar）。
     /// 仅更新状态 + 通知 watch 线程，不再直接管理 watcher。
-    pub async fn switch_tab(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
+    pub async fn switch_tab(&self, window: &tauri::Window, tab_id: u64) -> Result<(), AppError> {
         let label = window.label().to_string();
         if self.get_active_tab(&label) == Some(tab_id) {
             return Ok(());
         }
 
         if !self.tabs.read_safe().contains_key(&tab_id) {
-            return Err(format!("tab {tab_id} not found"));
+            return Err(AppError::NotFound(format!("tab {tab_id} not found")));
         }
 
         self.set_active_tab(window.label().to_string(), tab_id);
@@ -415,8 +416,7 @@ impl UIService {
         let (event_tx, event_rx) = channel::unbounded::<(u64, u64, WatchDelta)>();
 
         self.watch_txs
-            .write()
-            .unwrap()
+            .write_safe()
             .insert(label.clone(), cmd_tx);
 
         let mgr = self.mgr.clone();
@@ -549,7 +549,7 @@ impl UIService {
                                                     },
                                                 )
                                                 .await;
-                                        });
+                                        }.instrument(tracing::info_span!("nav::refresh_rpc")));
                                     } else {
                                         warn!("Refresh: watch_id=0 for active tab {id}, skipping");
                                     }
@@ -584,14 +584,14 @@ impl UIService {
                     }
                 }
             }
-        });
+        }.instrument(tracing::info_span!("nav::watch_thread")));
         // 后台监控 panic：watch 线程是整个窗口的文件系统事件入口，panic 必须可见
         let l = label.clone();
         tokio::spawn(async move {
             if let Err(e) = h.await {
                 tracing::error!(window = %l, "watch thread panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("nav::watch_thread_monitor")));
 
         info!("watch thread started for window={label}");
     }
@@ -606,14 +606,14 @@ impl UIService {
         window: &tauri::Window,
         tab_id: u64,
         target: NavTarget,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let token = self.get_tab_token(tab_id)?;
 
         {
             let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
-                .ok_or_else(|| format!("tab {tab_id} not found"))?;
+                .ok_or_else(|| AppError::NotFound(format!("tab {tab_id} not found")))?;
             tab.nav_history.truncate(tab.nav_index + 1);
             tab.nav_history.push(NavEntry {
                 target: target.clone(),
@@ -644,14 +644,14 @@ impl UIService {
     }
 
     /// 后退。
-    pub async fn nav_back(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
+    pub async fn nav_back(&self, window: &tauri::Window, tab_id: u64) -> Result<(), AppError> {
         let (target, token) = {
             let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
-                .ok_or_else(|| format!("tab {tab_id} not found"))?;
+                .ok_or_else(|| AppError::NotFound(format!("tab {tab_id} not found")))?;
             if tab.nav_index == 0 {
-                return Err("already at oldest entry".to_string());
+                return Err(AppError::Other("already at oldest entry".into()));
             }
             tab.nav_index -= 1;
             (tab.nav_target(), tab.uid_token.clone())
@@ -678,14 +678,14 @@ impl UIService {
     }
 
     /// 前进。
-    pub async fn nav_forward(&self, window: &tauri::Window, tab_id: u64) -> Result<(), String> {
+    pub async fn nav_forward(&self, window: &tauri::Window, tab_id: u64) -> Result<(), AppError> {
         let (target, token) = {
             let mut tabs = self.tabs.write_safe();
             let tab = tabs
                 .get_mut(&tab_id)
-                .ok_or_else(|| format!("tab {tab_id} not found"))?;
+                .ok_or_else(|| AppError::NotFound(format!("tab {tab_id} not found")))?;
             if tab.nav_index + 1 >= tab.nav_history.len() {
-                return Err("already at newest entry".to_string());
+                return Err(AppError::Other("already at newest entry".into()));
             }
             tab.nav_index += 1;
             (tab.nav_target(), tab.uid_token.clone())
@@ -801,7 +801,7 @@ impl UIService {
             tokio::spawn(async move {
                 instance_bus.send_to(target_instance, &msg).await;
                 debug!("tab transferred to remote instance {target_instance}");
-            });
+            }.instrument(tracing::info_span!("nav::remote_transfer_tab")));
             info!("tab {tab_id} moved to remote instance {target}");
         }
     }
@@ -845,7 +845,7 @@ impl UIService {
         &self,
         window: &tauri::Window,
         path: Option<String>,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, AppError> {
         let token = self.ensure_default_token().await?;
         let p = path.unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
 

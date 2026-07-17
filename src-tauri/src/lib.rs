@@ -1,11 +1,11 @@
 pub mod app;
 pub mod appreuse;
-pub mod channel;
+pub(crate) mod channel;
 pub mod cli;
 pub mod drag;
 pub mod error;
 pub mod fsworker;
 pub mod instance_bus;
-pub mod lock;
-pub mod macros;
-pub mod mesh;
+pub(crate) mod lock;
+pub(crate) mod macros;
+pub(crate) mod mesh;

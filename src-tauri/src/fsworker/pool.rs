@@ -11,10 +11,11 @@ use std::{
 };
 
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{info, warn};
+use tracing::{info, warn, Instrument};
 
 use crate::channel;
 use crate::channel::oneshot;
+use crate::error::AppError;
 
 use super::callback::CallbackRegistry;
 use super::relay::{WorkerRelay, kill_fs_worker};
@@ -28,7 +29,7 @@ use super::{
 // --
 
 /// token 的引用计数哨兵。最后一个 token drop 时通知 reaper。
-pub struct LeaseSentinel {
+pub(crate) struct LeaseSentinel {
     uid: u32,
     reaper_tx: channel::Tx<u32>,
 }
@@ -48,7 +49,7 @@ impl Drop for LeaseSentinel {
 /// 持有 `request_tx` 和 `registry`，保证操作期间 Worker 存活。
 /// 所有该 uid 的 token drop 后，对应 Worker 立即销毁（无宽限期）。
 #[derive(Clone)]
-pub struct UidToken {
+pub(crate) struct UidToken {
     uid: u32,
     request_tx: channel::Tx<WorkerRequest>,
     /// 共享的 CallbackRegistry，用于注册 watcher/op 回调
@@ -68,7 +69,7 @@ impl UidToken {
     pub async fn send_request(
         &self,
         content: WorkerRequestContent,
-    ) -> Result<WorkerResponse, String> {
+    ) -> Result<WorkerResponse, AppError> {
         loop {
             let (response_tx, response_rx) = oneshot::oneshot();
             let request = WorkerRequest {
@@ -78,14 +79,14 @@ impl UidToken {
 
             self.request_tx
                 .send(request)
-                .map_err(|_| "request channel closed".to_string())?;
+                .map_err(|_| AppError::Other("request channel closed".to_string()))?;
 
             match response_rx.await {
                 Ok(WorkerResponse::Connecting) => {
                     tokio::time::sleep(CONNECTING_RETRY_DELAY).await;
                 }
                 Ok(other) => return Ok(other),
-                Err(_) => return Err("response dropped".to_string()),
+                Err(_) => return Err(AppError::Other("response dropped".to_string())),
             }
         }
     }
@@ -104,7 +105,9 @@ pub(crate) struct RelaySlot {
     pub(crate) sentinel: Weak<LeaseSentinel>,
     /// 子进程 PID（由 WorkerRelay 更新）
     pub(crate) pid: Arc<AtomicU32>,
-    /// Relay loop 的 abort handle（用于 kill 时同步）
+    /// 中继器实例（含 CancellationToken，用于 cancel 后加速退出）
+    pub(crate) relay: WorkerRelay,
+    /// Relay loop 的 abort handle（用 relay.cancel.cancel() 先取消再 abort）
     pub(crate) _abort_handle: tokio::task::AbortHandle,
 }
 
@@ -113,7 +116,7 @@ pub(crate) struct RelaySlot {
 // --
 
 /// Worker 进程池，按目标 UID 索引。
-pub struct FsWorkerPool {
+pub(crate) struct FsWorkerPool {
     slots: Arc<Mutex<HashMap<u32, RelaySlot>>>,
     status_tx: channel::Tx<WorkerStatus>,
     status_rx: Arc<TokioMutex<channel::RxAsync<WorkerStatus>>>,
@@ -164,7 +167,7 @@ impl FsWorkerPool {
             reaper_tx: self.reaper_tx.clone(),
         });
 
-        let abort_handle = WorkerRelay::spawn(
+        let (relay, abort_handle) = WorkerRelay::spawn(
             uid,
             pid.clone(),
             registry.clone(),
@@ -178,6 +181,7 @@ impl FsWorkerPool {
             registry: registry.clone(),
             sentinel: Arc::downgrade(&sentinel),
             pid,
+            relay,
             _abort_handle: abort_handle,
         };
 
@@ -237,13 +241,15 @@ fn start_reaper(
                 match g.get(&uid) {
                     Some(slot) if slot.sentinel.strong_count() == 0 => {
                         let child_pid = slot.pid.load(Ordering::Relaxed);
-                        Some(child_pid)
+                        let relay_cancel = slot.relay.cancel.clone();
+                        Some((child_pid, relay_cancel))
                     }
                     _ => None,
                 }
             };
 
-            if let Some(child_pid) = to_remove {
+            if let Some((child_pid, relay_cancel)) = to_remove {
+                relay_cancel.cancel();
                 // 先 kill 子进程（WorkerRelay loop 会自行退出）
                 if child_pid > 0 {
                     kill_fs_worker(uid, child_pid);
@@ -259,6 +265,6 @@ fn start_reaper(
                 info!("reaped worker slot for uid {uid}");
             }
         }
-    });
+    }.instrument(tracing::info_span!("pool::reaper_loop")));
     tx
 }

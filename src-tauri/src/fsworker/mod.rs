@@ -58,9 +58,9 @@ pub mod worker;
 pub use worker::run_fs_worker;
 
 // Re-export pub types from submodules
-pub use callback::CallbackRegistry;
-pub use platform::ORPHAN_EXIT_CODE;
-pub use pool::{FsWorkerPool, LeaseSentinel, UidToken};
+pub(crate) use callback::CallbackRegistry;
+pub(crate) use platform::ORPHAN_EXIT_CODE;
+pub(crate) use pool::{FsWorkerPool, LeaseSentinel, UidToken};
 
 /// 全局 fs_worker_id 计数器（仅用于日志区分）。
 static FS_WORKER_ID: AtomicU64 = AtomicU64::new(1);
@@ -185,10 +185,12 @@ pub enum WorkerRequestContent {
     },
 }
 
+use crate::error::AppError;
+
 /// WorkerRelay -> FsService 的响应。
 pub enum WorkerResponse {
     Ok,
-    Err(String),
+    Err(AppError),
     /// Worker 尚未连接，调用方稍后重试。
     Connecting,
     /// statvfs 结果。

@@ -11,7 +11,7 @@ use tracing::{debug, error};
 use crate::mesh::types::instance::{InstanceMsg, InstanceServiceClient};
 
 /// 到另一个 HoshinekoFM 实例的单条直连。
-pub struct PeerConnection {
+pub(crate) struct PeerConnection {
     instance_id: u64,
     client: InstanceServiceClient,
 }

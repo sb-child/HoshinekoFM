@@ -14,9 +14,11 @@ use std::{
 
 use nix::unistd;
 use tokio::{net::UnixStream, select};
-use tracing::{debug, info, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, debug, info, warn};
 
 use crate::channel;
+use crate::error::AppError;
 use crate::fsworker::protocol::FsWorkerServiceClient;
 
 use super::callback::{CallbackRegistry, serve_callback};
@@ -34,7 +36,9 @@ use super::{
 /// 3. 消息中继（channel ↔ tarpc）
 /// 4. 向上层汇报连接状态
 /// 5. 崩溃重启（无次数限制，直到 uidtoken 全部 drop）
-pub(crate) struct WorkerRelay;
+pub(crate) struct WorkerRelay {
+    pub(crate) cancel: CancellationToken,
+}
 
 impl WorkerRelay {
     pub(crate) fn spawn(
@@ -44,11 +48,18 @@ impl WorkerRelay {
         request_rx: channel::RxAsync<WorkerRequest>,
         status_tx: channel::Tx<WorkerStatus>,
         sentinel: Arc<super::LeaseSentinel>,
-    ) -> tokio::task::AbortHandle {
-        tokio::spawn(async move {
-            Self::run_loop(uid, pid, registry, request_rx, status_tx, sentinel).await;
-        })
-        .abort_handle()
+    ) -> (Self, tokio::task::AbortHandle) {
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let cancel_clone2 = cancel.clone();
+        let handle = tokio::spawn(async move {
+            Self::run_loop(
+                uid, pid, registry, request_rx, status_tx, sentinel, cancel_clone, cancel_clone2,
+            )
+            .await;
+        }.instrument(tracing::info_span!("relay::spawn::run_loop")))
+        .abort_handle();
+        (Self { cancel }, handle)
     }
 
     async fn run_loop(
@@ -58,6 +69,8 @@ impl WorkerRelay {
         mut request_rx: channel::RxAsync<WorkerRequest>,
         status_tx: channel::Tx<WorkerStatus>,
         sentinel: Arc<super::LeaseSentinel>,
+        cancel: CancellationToken,
+        cancel_relay: CancellationToken,
     ) {
         info!("WorkerRelay started for uid={uid}");
         let mut attempt: u32 = 0;
@@ -93,8 +106,13 @@ impl WorkerRelay {
                             reconnecting: true,
                         });
                         registry.notify_connection_lost(reason, true);
-                        // FIXME: RESTART_DELAY 应通过 CancellationToken 可取消，避免 Relay abort 时额外等待
-                        tokio::time::sleep(RESTART_DELAY).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(RESTART_DELAY) => {},
+                            _ = cancel.cancelled() => {
+                                info!("WorkerRelay uid={uid}: cancelled during restart delay (spawn failed)");
+                                break;
+                            }
+                        }
                         continue;
                     }
                 };
@@ -103,8 +121,15 @@ impl WorkerRelay {
 
             let _ = status_tx.send(WorkerStatus::Connecting { uid });
 
-            let reason =
-                Self::run_relay(uid, child_pid, &client, &mut request_rx, &status_tx).await;
+            let reason = Self::run_relay(
+                uid,
+                child_pid,
+                &client,
+                &mut request_rx,
+                &status_tx,
+                cancel_relay.clone(),
+            )
+            .await;
             pid.store(0, Ordering::Relaxed);
 
             let _ = status_tx.send(WorkerStatus::Disconnected {
@@ -116,7 +141,13 @@ impl WorkerRelay {
 
             kill_fs_worker(uid, child_pid);
 
-            tokio::time::sleep(RESTART_DELAY).await;
+            tokio::select! {
+                _ = tokio::time::sleep(RESTART_DELAY) => {},
+                _ = cancel.cancelled() => {
+                    info!("WorkerRelay uid={uid}: cancelled during restart delay (disconnected)");
+                    break;
+                }
+            }
         }
         info!("WorkerRelay uid={uid}: loop exited, relay shutting down");
     }
@@ -127,6 +158,7 @@ impl WorkerRelay {
         client: &FsWorkerServiceClient,
         request_rx: &mut channel::RxAsync<WorkerRequest>,
         status_tx: &channel::Tx<WorkerStatus>,
+        _cancel: CancellationToken, // 预留：供 run_relay 内部 select! 在 relay abort 时提前返回
     ) -> DisconnectReason {
         info!("WorkerRelay run_relay started for uid={uid} child_pid={child_pid}");
         let mut connected = false;
@@ -177,13 +209,13 @@ impl WorkerRelay {
                     let h = tokio::spawn(async move {
                         let response = Self::forward_request(&client, request.content).await;
                         let _ = request.response_tx.send(response);
-                    });
+                    }.instrument(tracing::info_span!("relay::handle_request::forward")));
                     // 后台监控 panic，至少记录日志
                     tokio::spawn(async move {
                         if let Err(e) = h.await {
                             tracing::error!(uid, "forward_request task panicked: {e}");
                         }
-                    });
+                    }.instrument(tracing::info_span!("relay::handle_request::monitor")));
                 } else {
                     debug!("run_relay uid={uid}: request while connecting, replying Connecting");
                     let _ = request.response_tx.send(WorkerResponse::Connecting);
@@ -286,6 +318,7 @@ impl WorkerRelay {
 
     async fn wait_process(pid: u32) -> DisconnectReason {
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::info_span!("relay::wait_process").entered();
             let mut status: i32 = 0;
             // SAFETY: waitpid is safe to call from spawn_blocking because
             // the child pid is guaranteed to be valid (spawned by self), and
@@ -337,7 +370,7 @@ impl WorkerRelay {
                     free_bytes: free,
                 },
                 Ok(Err(e)) => WorkerResponse::Err(e),
-                Err(e) => WorkerResponse::Err(format!("RPC error: {e}")),
+                Err(e) => WorkerResponse::Err(AppError::Other(format!("RPC error: {e}"))),
             };
         }
 
@@ -386,7 +419,7 @@ impl WorkerRelay {
         match result {
             Ok(Ok(())) => WorkerResponse::Ok,
             Ok(Err(e)) => WorkerResponse::Err(e),
-            Err(e) => WorkerResponse::Err(format!("RPC error: {e}")),
+            Err(e) => WorkerResponse::Err(AppError::Other(format!("RPC error: {e}"))),
         }
     }
 
@@ -430,6 +463,7 @@ impl WorkerRelay {
         .stderr(Stdio::piped());
 
         let (mut child, pid) = tokio::task::spawn_blocking(move || {
+            let _span = tracing::info_span!("relay::spawn_fs_worker::exec").entered();
             let child = cmd.spawn()?;
             let pid = child.id();
             Ok::<(std::process::Child, u32), io::Error>((child, pid))
@@ -445,6 +479,7 @@ impl WorkerRelay {
         let stderr_snapshot = stderr_buf.clone();
         if let Some(mut stderr_reader) = child.stderr.take() {
             let h = tokio::task::spawn_blocking(move || {
+                let _span = tracing::info_span!("relay::spawn_fs_worker::stderr_drain").entered();
                 use std::io::Read;
                 let mut buf = String::new();
                 let _ = stderr_reader.read_to_string(&mut buf);
@@ -454,10 +489,11 @@ impl WorkerRelay {
                 if let Err(e) = h.await {
                     tracing::error!("stderr_reader task panicked: {e}");
                 }
-            });
+            }.instrument(tracing::info_span!("relay::spawn_fs_worker::stderr_monitor")));
         }
 
         let cb = tokio::task::spawn_blocking(move || {
+            let _span = tracing::info_span!("relay::spawn_fs_worker::wait_child").entered();
             let exit_status = child.wait();
             let stderr_text = stderr_buf.lock_safe().clone();
 
@@ -487,7 +523,7 @@ impl WorkerRelay {
             if let Err(e) = cb.await {
                 tracing::error!(pid, fs_worker_id, "child_waiter task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("relay::spawn_fs_worker::child_monitor")));
 
         parent_req.set_nonblocking(true)?;
         let req_stream = UnixStream::from_std(parent_req)?;
@@ -515,18 +551,22 @@ pub(crate) fn kill_fs_worker(uid: u32, pid: u32) {
     }
     let p = Pid::from_raw(pid as i32);
     debug!("killing fs-worker uid={uid} pid={pid}");
-    let _ = signal::kill(p, signal::Signal::SIGTERM);
+    if let Err(e) = signal::kill(p, signal::Signal::SIGTERM) {
+        warn!("failed to SIGTERM fs-worker uid={uid} pid={pid}: {e}");
+    }
     let h = tokio::spawn(async move {
         tokio::time::sleep(SIGKILL_DELAY).await;
         // 检查进程是否仍存活再发送 SIGKILL（防止 PID reuse）
         if unsafe { libc::kill(pid as i32, 0) } == 0 {
-            let _ = signal::kill(p, signal::Signal::SIGKILL);
+            if let Err(e) = signal::kill(p, signal::Signal::SIGKILL) {
+                warn!("failed to SIGKILL fs-worker uid={uid} pid={pid}: {e}");
+            }
         }
-    });
+    }.instrument(tracing::info_span!("relay::kill_worker::delay_then_kill")));
     // 后台监控 panic（极低概率，但 AGENTS.md 要求所有 spawn 处理错误）
     tokio::spawn(async move {
         if let Err(e) = h.await {
             tracing::error!(uid, pid, "kill_fs_worker SIGKILL task panicked: {e}");
         }
-    });
+    }.instrument(tracing::info_span!("relay::kill_worker::monitor")));
 }

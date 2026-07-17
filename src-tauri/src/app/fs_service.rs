@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::channel;
 
+use crate::error::AppError;
 use crate::fsworker::protocol::{ConflictResolution, ProgressEvent, WatchDelta};
 use crate::fsworker::{FsWorkerPool, UidToken, WorkerRequestContent};
 use crate::mesh::types::ui::EntryKind;
@@ -208,11 +209,11 @@ impl FsService {
     // --
 
     /// 请求某 uid 的访问凭证。找不到/创建失败（如 pkexec 未通过）时返回错误。
-    pub(crate) async fn try_request_uid_token(&self, uid: u32) -> Result<UidToken, String> {
+    pub(crate) async fn try_request_uid_token(&self, uid: u32) -> Result<UidToken, AppError> {
         self.pool
             .request_token(uid)
             .await
-            .map_err(|e| format!("request fs-worker for uid {uid}: {e}"))
+            .map_err(|e| AppError::Ipc(format!("request fs-worker for uid {uid}: {e}")))
     }
 
     // --
@@ -220,7 +221,7 @@ impl FsService {
     // --
 
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
-    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &Path) -> Result<Watcher, String> {
+    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &Path) -> Result<Watcher, AppError> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -252,7 +253,7 @@ impl FsService {
         &self,
         token: &UidToken,
         file: &Path,
-    ) -> Result<Watcher, String> {
+    ) -> Result<Watcher, AppError> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -285,7 +286,7 @@ impl FsService {
         &self,
         token: &UidToken,
         path: &Path,
-    ) -> Result<Watcher, String> {
+    ) -> Result<Watcher, AppError> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -322,7 +323,7 @@ impl FsService {
         token: &UidToken,
         path: &Path,
         kind: EntryKind,
-    ) -> Result<Progress, String> {
+    ) -> Result<Progress, AppError> {
         let op_id = self.next_id();
         let rx = token.registry.register_op(op_id);
         let rpc = token
@@ -341,7 +342,7 @@ impl FsService {
         token: &UidToken,
         path: &Path,
         new_name: &str,
-    ) -> Result<Progress, String> {
+    ) -> Result<Progress, AppError> {
         let op_id = self.next_id();
         let rx = token.registry.register_op(op_id);
         let rpc = token
@@ -355,18 +356,18 @@ impl FsService {
     }
 
     /// 批量移动。
-    pub(crate) async fn move_(&self, ops: Vec<Op>) -> Result<Progress, String> {
+    pub(crate) async fn move_(&self, ops: Vec<Op>) -> Result<Progress, AppError> {
         self.run_batch(ops, true).await
     }
 
     /// 批量复制。
-    pub(crate) async fn copy(&self, ops: Vec<Op>) -> Result<Progress, String> {
+    pub(crate) async fn copy(&self, ops: Vec<Op>) -> Result<Progress, AppError> {
         self.run_batch(ops, false).await
     }
 
-    async fn run_batch(&self, ops: Vec<Op>, is_move: bool) -> Result<Progress, String> {
+    async fn run_batch(&self, ops: Vec<Op>, is_move: bool) -> Result<Progress, AppError> {
         if ops.is_empty() {
-            return Err("empty ops".into());
+            return Err(AppError::Other("empty ops".into()));
         }
         // v1：要求所有项同一 UID（跨 UID 待实现）
         let uid = ops[0].src.0.uid();
@@ -374,8 +375,8 @@ impl FsService {
             .iter()
             .all(|o| o.src.0.uid() == uid && o.dst.0.uid() == uid);
         if !all_same {
-            return Err(format!(
-                "跨 UID copy/move 尚未实现"
+            return Err(AppError::Other(
+                "跨 UID copy/move 尚未实现".into(),
             ));
         }
 
@@ -397,11 +398,11 @@ impl FsService {
 
     /// 统一处理派发结果：成功建 Progress，失败注销 op。
     fn finish_dispatch(
-        rpc: Result<crate::fsworker::WorkerResponse, String>,
+        rpc: Result<crate::fsworker::WorkerResponse, AppError>,
         token: &UidToken,
         rx: channel::RxAsync<ProgressEvent>,
         op_id: u64,
-    ) -> Result<Progress, String> {
+    ) -> Result<Progress, AppError> {
         match rpc {
             Ok(crate::fsworker::WorkerResponse::Ok) => Ok(Progress {
                 events: rx,

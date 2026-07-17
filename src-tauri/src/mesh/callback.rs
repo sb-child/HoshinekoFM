@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use tracing::Instrument;
+
 use crate::app::ui_service::UIService;
 use crate::mesh::types::ui::{ClipboardState, DragOp, TabState};
 use crate::mesh::types::window::WindowMsg;
@@ -50,24 +52,24 @@ impl InstanceHandler for UiMeshHandler {
         let ui = self.ui.clone();
         let handle = tokio::spawn(async move {
             ui.open_window(paths).await;
-        });
+        }.instrument(tracing::info_span!("mesh::callback::on_open_window")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!("on_open_window task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("mesh::callback::on_open_window_monitor")));
     }
 
     fn on_transfer_tab(&self, tab: TabState) {
         let ui = self.ui.clone();
         let handle = tokio::spawn(async move {
             ui.receive_transfer_tab(tab).await;
-        });
+        }.instrument(tracing::info_span!("mesh::callback::on_transfer_tab")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!("on_transfer_tab task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("mesh::callback::on_transfer_tab_monitor")));
     }
 
     fn on_clipboard_sync(&self, state: ClipboardState) {

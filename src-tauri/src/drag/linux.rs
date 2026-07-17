@@ -96,8 +96,7 @@ pub fn start_drag_native<F: Fn(DragResult, CursorPosition) + Send + 'static>(
             tracing::debug!("Setting up file drag with {} paths", paths.len());
             window.drag_source_add_uri_targets();
             handler_ids
-                .lock()
-                .unwrap()
+                .lock_safe()
                 .push(window.connect_drag_data_get(move |_, _, data, _, _| {
                     tracing::debug!("Preparing URIs for drag data");
                     let uris: Vec<String> = paths
@@ -172,8 +171,7 @@ fn on_drop_failed<F: Fn(DragResult, CursorPosition) + Send + 'static>(
     let skip_animation = options.skip_animation_on_cancel_or_failure;
 
     handler_ids
-        .lock()
-        .unwrap()
+        .lock_safe()
         .push(window.connect_drag_failed(move |_, _, _| {
             tracing::debug!("Drag failed or cancelled");
             callback(

@@ -43,6 +43,7 @@ use tracing::{error, info};
 use crate::app::fs_service::{Canceller, Op};
 use crate::app::state::AppStateManager;
 use crate::channel;
+use crate::error::AppError;
 use crate::fsworker::UidToken;
 use crate::mesh::types::ui::{ClipboardState, ContextId, EntryKind, NavTarget};
 
@@ -110,7 +111,7 @@ impl UIService {
     }
 
     /// 确保默认 UidToken 已初始化（懒加载）。
-    async fn ensure_default_token(&self) -> Result<UidToken, String> {
+    async fn ensure_default_token(&self) -> Result<UidToken, AppError> {
         let mut guard = self.default_token.lock().await;
         if let Some(ref token) = *guard {
             return Ok(token.clone());
@@ -125,11 +126,11 @@ impl UIService {
     // 访问内部 tab 状态
     // --
 
-    fn get_tab_token(&self, tab_id: u64) -> Result<UidToken, String> {
+    fn get_tab_token(&self, tab_id: u64) -> Result<UidToken, AppError> {
         let tabs = self.tabs.read_safe();
         tabs.get(&tab_id)
             .map(|t| t.uid_token.clone())
-            .ok_or_else(|| format!("tab {tab_id} not found"))
+            .ok_or_else(|| AppError::NotFound(format!("tab {tab_id} not found")))
     }
 
     fn get_active_tab(&self, window_label: &str) -> Option<u64> {
@@ -138,8 +139,7 @@ impl UIService {
 
     fn set_active_tab(&self, window_label: String, tab_id: u64) {
         self.active_tabs
-            .write()
-            .unwrap()
+            .write_safe()
             .insert(window_label, tab_id);
     }
 
@@ -148,7 +148,7 @@ impl UIService {
     // --
 
     /// 前端 mount 后调用，由 UIService 重建运行时状态并推送初始事件。
-    pub async fn ready(&self, window: &tauri::Window) -> Result<(), String> {
+    pub async fn ready(&self, window: &tauri::Window) -> Result<(), AppError> {
         let token = self.ensure_default_token().await?;
 
         let persis_tabs: Vec<crate::mesh::types::ui::TabState> = {
@@ -216,7 +216,7 @@ impl UIService {
                 let _ = tx.send(nav::WatchCommand::TabSwitch { tab_id: active_id });
             }
         } else {
-            return Err("no tabs available".into());
+            return Err(AppError::NotFound("no tabs available".into()));
         }
 
         Ok(())
@@ -232,7 +232,7 @@ impl UIService {
         window: &tauri::Window,
         tab_id: u64,
         target_uid: u32,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let new_token = self
             .mgr
             .fs_service
@@ -245,7 +245,7 @@ impl UIService {
                 Some(tab) => {
                     tab.uid_token = new_token.clone();
                 }
-                None => return Err(format!("tab {tab_id} not found")),
+                None => return Err(AppError::NotFound(format!("tab {tab_id} not found"))),
             }
         }
 
@@ -286,7 +286,7 @@ impl UIService {
     async fn build_dashboard(
         &self,
         token: &UidToken,
-    ) -> Result<crate::mesh::types::ui::DashboardData, String> {
+    ) -> Result<crate::mesh::types::ui::DashboardData, AppError> {
         use crate::mesh::types::ui::{CommonLocation, DashboardData, StorageSummary};
 
         let (total, free) = {
@@ -295,14 +295,14 @@ impl UIService {
                     path: PathBuf::from("/"),
                 })
                 .await
-                .map_err(|e| format!("statvfs: {e}"))?;
+                .map_err(|e| AppError::Ipc(format!("statvfs: {e}")))?;
             match resp {
                 crate::fsworker::WorkerResponse::StatVfsResult {
                     total_bytes,
                     free_bytes,
                 } => (total_bytes, free_bytes),
                 crate::fsworker::WorkerResponse::Err(e) => return Err(e),
-                _ => return Err("unexpected worker response".to_string()),
+                _ => return Err(AppError::Ipc("unexpected worker response".into())),
             }
         };
 
@@ -338,6 +338,7 @@ impl UIService {
         let common_locations: Vec<CommonLocation> = {
             let paths: Vec<String> = locations.iter().map(|(_, p)| p.clone()).collect();
             let exists_flags = tokio::task::spawn_blocking(move || {
+                let _span = tracing::info_span!("ui_service::check_exists").entered();
                 paths
                     .iter()
                     .map(|p| std::path::Path::new(p).exists())
@@ -372,7 +373,7 @@ impl UIService {
         path: &Path,
         kind: EntryKind,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.create(&token, path, kind).await?;
         self.track_op(&[ctx_id], progress);
@@ -385,7 +386,7 @@ impl UIService {
         path: &Path,
         new_name: &str,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.rename(&token, path, new_name).await?;
         self.track_op(&[ctx_id], progress);
@@ -397,7 +398,7 @@ impl UIService {
         tab_id: u64,
         ops: Vec<Op>,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let _token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.move_(ops).await?;
         self.track_op(&[ctx_id], progress);
@@ -409,7 +410,7 @@ impl UIService {
         tab_id: u64,
         ops: Vec<Op>,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let _token = self.get_tab_token(tab_id)?;
         let progress = self.mgr.fs_service.copy(ops).await?;
         self.track_op(&[ctx_id], progress);
@@ -423,7 +424,7 @@ impl UIService {
         tab_id: u64,
         pairs: Vec<(PathBuf, PathBuf)>,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let token = self.get_tab_token(tab_id)?;
         let ops: Vec<Op> = pairs
             .into_iter()
@@ -443,7 +444,7 @@ impl UIService {
         tab_id: u64,
         pairs: Vec<(PathBuf, PathBuf)>,
         ctx_id: crate::mesh::types::ui::ContextId,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let token = self.get_tab_token(tab_id)?;
         let ops: Vec<Op> = pairs
             .into_iter()

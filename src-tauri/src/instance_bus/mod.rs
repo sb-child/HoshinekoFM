@@ -15,28 +15,31 @@
 //! 注意：实例发现函数（bind_socket/cleanup_socket/discover_sockets 等）
 //! 已移至 `crate::mesh::discovery`。`watch_instances` 后台任务保留于此。
 
-pub mod connection;
-pub mod watcher;
+pub(crate) mod connection;
+pub(crate) mod watcher;
 
+use crate::error::AppError;
 use crate::lock::{ReadSafe, WriteSafe};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use futures::prelude::*;
 use tarpc::server::Channel;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use crate::mesh::Mesh;
 use crate::mesh::types::instance::{InstanceMsg, InstanceService};
 use connection::PeerConnection;
 
 // Re-export discovery functions from mesh
-pub use crate::mesh::discovery::{
-    bind_socket, cleanup_socket, discover_sockets, instance_exists, instances_dir, lock_path,
+// Re-export discovery functions from mesh
+pub use crate::mesh::discovery::instance_exists;
+pub(crate) use crate::mesh::discovery::{
+    bind_socket, cleanup_socket, discover_sockets, instances_dir, lock_path,
     socket_path,
 };
 
-pub struct InstanceBus {
+pub(crate) struct InstanceBus {
     self_id: u64,
     peers: RwLock<HashMap<u64, PeerConnection>>,
     /// window_id -> instance_id
@@ -44,7 +47,7 @@ pub struct InstanceBus {
 }
 
 impl InstanceBus {
-    pub async fn start(self_id: u64) -> Result<Arc<Self>, String> {
+    pub async fn start(self_id: u64) -> Result<Arc<Self>, AppError> {
         let bus = Arc::new(Self {
             self_id,
             peers: RwLock::new(HashMap::new()),
@@ -140,8 +143,7 @@ impl InstanceBus {
 
     pub fn remove_instance_routes(&self, instance_id: u64) {
         self.routes
-            .write()
-            .unwrap()
+            .write_safe()
             .retain(|_, v| *v != instance_id);
     }
 
@@ -171,14 +173,14 @@ impl InstanceBus {
                         async fn spawn(
                             fut: impl std::future::Future<Output = ()> + Send + 'static,
                         ) {
-                            tokio::spawn(fut);
+                            tokio::spawn(fut.instrument(tracing::info_span!("instance_bus::accept_spawn_fn")));
                         }
 
                         tarpc::server::BaseChannel::with_defaults(transport)
                             .execute(server.serve())
                             .for_each(spawn)
                             .await;
-                    });
+                    }.instrument(tracing::info_span!("instance_bus::accept")));
                 }
                 Err(e) => {
                     error!("instance listener error: {e}");
@@ -212,8 +214,12 @@ pub async fn watch_instances(bus: Arc<InstanceBus>) {
                     }
                     if !crate::mesh::discovery::is_instance_alive(id) {
                         warn!("watch_instances: stale socket for instance {id}, removing {path:?}");
-                        let _ = std::fs::remove_file(&path);
-                        let _ = std::fs::remove_file(&lock_path(id));
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            warn!("failed to remove stale socket {path:?}: {e}");
+                        }
+                        if let Err(e) = std::fs::remove_file(&lock_path(id)) {
+                            warn!("failed to remove stale lock for instance {id}: {e}");
+                        }
                         continue;
                     }
                     debug!("watch_instances: connecting to instance {id}");

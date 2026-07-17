@@ -20,7 +20,7 @@ use std::{
 use futures::StreamExt;
 use tokio::net::UnixStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{info, warn, Instrument};
 
 use super::{config::WatchConfig, pipeline, service::FsWorkerServer};
 use crate::{
@@ -88,7 +88,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
                 }
             }
         }
-    });
+    }.instrument(tracing::info_span!("run::orphan_check")));
 
     // 2. 回调通道（worker -> app）
     let cb_fd = opts.cb_fd;
@@ -120,7 +120,7 @@ pub async fn run_fs_worker(opts: FsWorkerOpts) -> ! {
     );
 
     async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
-        tokio::spawn(fut);
+        tokio::spawn(fut.instrument(tracing::info_span!("run::channel_handler")));
     }
 
     info!("fs worker {} entering serve loop", opts.fs_worker_id);

@@ -51,6 +51,8 @@ pub use types::{
     dispatch_fs_msg, dispatch_instance_msg, dispatch_window_msg,
 };
 
+use tracing::Instrument;
+
 use crate::lock::{ReadSafe, WriteSafe};
 use std::collections::HashMap;
 use std::sync::{
@@ -115,8 +117,7 @@ impl Mesh {
         let window_id = self.inner.window_counter.fetch_add(1, Ordering::Relaxed);
         self.inner
             .window_handlers
-            .write()
-            .unwrap()
+            .write_safe()
             .insert(window_id, handler);
         proxy::new_proxy(self.clone(), window_id)
     }
@@ -125,8 +126,7 @@ impl Mesh {
     pub(super) fn remove_window(&self, window_id: u64) {
         self.inner
             .window_handlers
-            .write()
-            .unwrap()
+            .write_safe()
             .remove(&window_id);
     }
 
@@ -149,12 +149,12 @@ impl Mesh {
             };
             let h = tokio::spawn(async move {
                 let _ = instance_bus.send_to(remote_instance, &instance_msg).await;
-            });
+            }.instrument(tracing::info_span!("mesh::send_to_window")));
             tokio::spawn(async move {
                 if let Err(e) = h.await {
                     tracing::error!(target_id, "send_to_window task panicked: {e}");
                 }
-            });
+            }.instrument(tracing::info_span!("mesh::send_to_window_monitor")));
         }
     }
 
@@ -163,8 +163,7 @@ impl Mesh {
         let handlers: Vec<_> = self
             .inner
             .window_handlers
-            .read()
-            .unwrap()
+            .read_safe()
             .values()
             .cloned()
             .collect();
@@ -192,12 +191,12 @@ impl Mesh {
         let instance_bus = self.inner.instance_bus.clone();
         let h = tokio::spawn(async move {
             let _ = instance_bus.send_to(instance_id, &msg).await;
-        });
+        }.instrument(tracing::info_span!("mesh::send_to_instance")));
         tokio::spawn(async move {
             if let Err(e) = h.await {
                 tracing::error!(instance_id, "send_to_instance task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("mesh::send_to_instance_monitor")));
     }
 
     /// 分发 InstanceMsg 到已注册的 InstanceHandler（供 mesh/server.rs 回调）。

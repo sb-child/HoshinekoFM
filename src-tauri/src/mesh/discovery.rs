@@ -15,7 +15,7 @@ use tracing::{info, warn};
 // --
 
 /// `~/.cache/hnfm/instances/` 目录。
-pub fn instances_dir() -> PathBuf {
+pub(crate) fn instances_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     PathBuf::from(home)
         .join(".cache")
@@ -24,12 +24,12 @@ pub fn instances_dir() -> PathBuf {
 }
 
 /// 实例的 lock 文件路径。
-pub fn lock_path(instance_id: u64) -> PathBuf {
+pub(crate) fn lock_path(instance_id: u64) -> PathBuf {
     instances_dir().join(format!("instance_{instance_id}.lock"))
 }
 
 /// 本实例的 socket 文件路径。
-pub fn socket_path(instance_id: u64) -> PathBuf {
+pub(crate) fn socket_path(instance_id: u64) -> PathBuf {
     instances_dir().join(format!("instance_{instance_id}.sock"))
 }
 
@@ -46,7 +46,7 @@ fn pid_alive(pid: u64) -> bool {
 ///
 /// 优先通过 lock 文件的 flock 判断，无 lock 文件时回退到 `pid_alive()`
 /// 以兼容旧版本实例（未持有 lock 文件）。
-pub fn is_instance_alive(instance_id: u64) -> bool {
+pub(crate) fn is_instance_alive(instance_id: u64) -> bool {
     let lock = lock_path(instance_id);
     if let Ok(file) = std::fs::OpenOptions::new()
         .write(true)
@@ -76,7 +76,7 @@ pub fn instance_exists(instance_id: u64) -> bool {
 /// 扫描实例目录，返回 `(instance_id, socket_path)` 列表。
 ///
 /// 通过 lock 文件 flock 判断存活，同时清理残骸。
-pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
+pub(crate) fn discover_sockets() -> Vec<(u64, PathBuf)> {
     let dir = instances_dir();
     let mut result = Vec::new();
 
@@ -97,8 +97,12 @@ pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
                     result.push((id, path));
                 } else {
                     warn!("discover_sockets: stale socket for instance {id}, removing {path:?}");
-                    let _ = std::fs::remove_file(&path);
-                    let _ = std::fs::remove_file(&lock_path(id));
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        warn!("failed to remove stale socket {path:?}: {e}");
+                    }
+                    if let Err(e) = std::fs::remove_file(&lock_path(id)) {
+                        warn!("failed to remove stale lock for instance {id}: {e}");
+                    }
                 }
             }
         }
@@ -112,7 +116,7 @@ pub fn discover_sockets() -> Vec<(u64, PathBuf)> {
 // --
 
 /// 绑定本实例的 Unix Domain Socket（含竞态保护）。
-pub fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
+pub(crate) fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
     let dir = instances_dir();
     std::fs::create_dir_all(&dir)?;
 
@@ -136,14 +140,16 @@ pub fn bind_socket(instance_id: u64) -> io::Result<tokio::net::UnixListener> {
     std::mem::forget(lock_file);
 
     let path = socket_path(instance_id);
-    let _ = std::fs::remove_file(&path);
+    if let Err(e) = std::fs::remove_file(&path) {
+        warn!("failed to remove stale socket before bind {path:?}: {e}");
+    }
     let listener = tokio::net::UnixListener::bind(&path)?;
     info!("instance {instance_id} listening on {path:?}");
     Ok(listener)
 }
 
 /// 退出时删除本实例的 socket 和 lock 文件。
-pub fn cleanup_socket(instance_id: u64) {
+pub(crate) fn cleanup_socket(instance_id: u64) {
     let path = socket_path(instance_id);
     if let Err(e) = std::fs::remove_file(&path) {
         warn!("failed to cleanup socket {path:?}: {e}");
@@ -151,5 +157,7 @@ pub fn cleanup_socket(instance_id: u64) {
         info!("cleaned up socket {path:?}");
     }
     let lock = lock_path(instance_id);
-    let _ = std::fs::remove_file(&lock);
+    if let Err(e) = std::fs::remove_file(&lock) {
+        warn!("failed to cleanup lock {lock:?}: {e}");
+    }
 }

@@ -75,6 +75,13 @@ impl serde::Serialize for AppError {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for AppError {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(AppError::Other(s))
+    }
+}
+
 impl From<AppError> for String {
     fn from(e: AppError) -> Self {
         e.to_string()

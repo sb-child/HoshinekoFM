@@ -15,15 +15,16 @@ use std::{
 
 use tarpc::context;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{Instrument, debug, info};
 
+use crate::error::AppError;
 use crate::fsworker::protocol::{
     AppCallbackServiceClient, EntryKind, FsWorkerService, ProgressEvent, WatchDelta,
 };
 
 use super::{
     files::ProceedStrategy,
-    ops::{BatchKind, decide_dst, finish_op, run_batch},
+    ops::{BatchConfig, BatchKind, decide_dst, finish_op, run_batch},
     registry::WatchRegistry,
 };
 
@@ -97,7 +98,7 @@ impl FsWorkerService for FsWorkerServer {
         _ctx: context::Context,
         watch_id: u64,
         path: PathBuf,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(WATCH_DIR, watch_id);
         debug!("[w{}] watch_dir {watch_id} {path:?}", self.fs_worker_id);
         self.registry
@@ -112,7 +113,7 @@ impl FsWorkerService for FsWorkerServer {
         _ctx: context::Context,
         watch_id: u64,
         path: PathBuf,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(WATCH_STAT, watch_id);
         debug!("[w{}] watch_stat {watch_id} {path:?}", self.fs_worker_id);
         self.registry
@@ -148,7 +149,7 @@ impl FsWorkerService for FsWorkerServer {
         op_id: u64,
         path: PathBuf,
         kind: EntryKind,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(RUN_CREATE, op_id);
         let _cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
@@ -183,7 +184,10 @@ impl FsWorkerService for FsWorkerServer {
                 }
                 Decision::Proceed { dst, .. } => {
                     let res =
-                        tokio::task::spawn_blocking(move || super::files::create_entry(&dst, kind))
+                        tokio::task::spawn_blocking(move || {
+                            let _span = tracing::info_span!("service::run_create::create_entry").entered();
+                            super::files::create_entry(&dst, kind)
+                        })
                             .await
                             .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
                     let status = match res {
@@ -210,12 +214,12 @@ impl FsWorkerService for FsWorkerServer {
                 }
             }
             finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
-        });
+        }.instrument(tracing::info_span!("service::run_create::worker")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!(op_id, "run_create task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("service::run_create::monitor")));
         Ok(())
     }
 
@@ -225,7 +229,7 @@ impl FsWorkerService for FsWorkerServer {
         op_id: u64,
         path: PathBuf,
         new_name: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(RUN_RENAME, op_id);
         let _cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
@@ -332,12 +336,12 @@ impl FsWorkerService for FsWorkerServer {
                 }
             }
             finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
-        });
+        }.instrument(tracing::info_span!("service::run_rename::worker")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!(op_id, "run_rename task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("service::run_rename::monitor")));
         Ok(())
     }
 
@@ -346,29 +350,29 @@ impl FsWorkerService for FsWorkerServer {
         _ctx: context::Context,
         op_id: u64,
         items: Vec<(PathBuf, PathBuf)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(RUN_MOVE, op_id);
         let cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
         let handle = tokio::spawn(async move {
-            run_batch(
-                &cb,
-                &ops,
+            run_batch(BatchConfig {
+                cb: Arc::new(cb),
+                ops,
                 op_id,
                 cancel,
-                &conflict_seq,
+                conflict_seq,
                 items,
-                BatchKind::Move,
-            )
+                kind: BatchKind::Move,
+            })
             .await;
-        });
+        }.instrument(tracing::info_span!("service::run_move::worker")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!(op_id, "run_move task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("service::run_move::monitor")));
         Ok(())
     }
 
@@ -377,29 +381,29 @@ impl FsWorkerService for FsWorkerServer {
         _ctx: context::Context,
         op_id: u64,
         items: Vec<(PathBuf, PathBuf)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(RUN_COPY, op_id);
         let cancel = self.register_op(op_id).await;
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
         let handle = tokio::spawn(async move {
-            run_batch(
-                &cb,
-                &ops,
+            run_batch(BatchConfig {
+                cb: Arc::new(cb),
+                ops,
                 op_id,
                 cancel,
-                &conflict_seq,
+                conflict_seq,
                 items,
-                BatchKind::Copy,
-            )
+                kind: BatchKind::Copy,
+            })
             .await;
-        });
+        }.instrument(tracing::info_span!("service::run_copy::worker")));
         tokio::spawn(async move {
             if let Err(e) = handle.await {
                 tracing::error!(op_id, "run_copy task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("service::run_copy::monitor")));
         Ok(())
     }
 
@@ -411,13 +415,16 @@ impl FsWorkerService for FsWorkerServer {
         }
     }
 
-    async fn stat_vfs(self, _ctx: context::Context, path: PathBuf) -> Result<(u64, u64), String> {
+    async fn stat_vfs(self, _ctx: context::Context, path: PathBuf) -> Result<(u64, u64), AppError> {
         set_last_op!(STAT_VFS, 0);
         let p = path.clone();
-        let vfs = tokio::task::spawn_blocking(move || nix::sys::statvfs::statvfs(&p))
+        let vfs = tokio::task::spawn_blocking(move || {
+            let _span = tracing::info_span!("service::stat_vfs").entered();
+            nix::sys::statvfs::statvfs(&p)
+        })
             .await
-            .map_err(|e| format!("spawn_blocking: {e}"))?
-            .map_err(|e| format!("statvfs {}: {e}", path.display()))?;
+            .map_err(|e| AppError::Other(format!("spawn_blocking: {e}")))?
+            .map_err(|e| AppError::Other(format!("statvfs {}: {e}", path.display())))?;
         let block_size = vfs.block_size() as u64;
         Ok((vfs.blocks() * block_size, vfs.blocks_free() * block_size))
     }
@@ -427,7 +434,7 @@ impl FsWorkerService for FsWorkerServer {
         _ctx: context::Context,
         watch_id: u64,
         path: PathBuf,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         set_last_op!(WATCH_BREADCRUMB, watch_id);
         debug!(
             "[w{}] watch_breadcrumb {watch_id} {path:?}",
@@ -438,13 +445,14 @@ impl FsWorkerService for FsWorkerServer {
         let initial_segments = tokio::task::spawn_blocking({
             let path = path.clone();
             move || {
+                let _span = tracing::info_span!("service::watch_breadcrumb::init").entered();
                 let home_map = HOME_MAP.clone();
                 let mount_map = load_mount_map();
                 build_breadcrumb_segments(&path, &home_map, &mount_map)
             }
         })
         .await
-        .map_err(|e| format!("spawn_blocking: {e}"))?;
+        .map_err(|e| AppError::Other(format!("spawn_blocking: {e}")))?;
 
         let _ = self
             .cb

@@ -18,7 +18,7 @@ use crate::mesh::Mesh;
 /// 收到跨实例 RPC 后转为 `InstanceMsg` 枚举并通过 `Mesh::dispatch_instance` 分发，
 /// `InstanceHandler` 由 app 层注册到 Mesh。
 #[derive(Clone)]
-pub struct InstanceBusServer {
+pub(crate) struct InstanceBusServer {
     mesh: Arc<Mesh>,
 }
 

@@ -8,7 +8,7 @@ use std::{
 
 use tarpc::context;
 use tokio::net::UnixStream;
-use tracing::info;
+use tracing::{info, Instrument};
 
 use crate::channel;
 use crate::channel::oneshot;
@@ -62,8 +62,7 @@ impl CallbackRegistry {
     pub fn unregister_op(&self, op_id: u64) {
         self.ops.lock_safe().remove(&op_id);
         self.conflicts
-            .lock()
-            .unwrap()
+            .lock_safe()
             .retain(|(oid, _), _| *oid != op_id);
     }
 
@@ -129,8 +128,7 @@ impl CallbackRegistry {
         self.push_progress(op_id, ProgressEvent::Conflict { conflict_id, item });
         let (tx, rx) = oneshot::oneshot();
         self.conflicts
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert((op_id, conflict_id), tx);
         rx.await.unwrap_or(ConflictResolution::CancelAll)
     }
@@ -178,12 +176,13 @@ pub(crate) fn serve_callback(stream: UnixStream, registry: Arc<CallbackRegistry>
     let server = CallbackServer { registry };
 
     async fn spawn(fut: impl futures::Future<Output = ()> + Send + 'static) {
-        tokio::spawn(fut);
+        tokio::spawn(fut.instrument(tracing::info_span!("callback::serve")));
     }
 
     tokio::spawn(
         tarpc::server::BaseChannel::with_defaults(transport)
             .execute(server.serve())
-            .for_each(spawn),
+            .for_each(spawn)
+            .instrument(tracing::info_span!("callback::serve_spawn_fn")),
     );
 }

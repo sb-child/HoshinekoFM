@@ -7,6 +7,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize, ser::Serializer};
 use tauri::{AppHandle, Runtime, Window, command, ipc::Channel};
+use tracing::{Instrument, warn};
 
 #[cfg(target_os = "linux")]
 use super::linux::{self, DragMode as NativeDragMode};
@@ -185,14 +186,18 @@ pub async fn start_drag<R: Runtime>(
             let raw_window = match window.gtk_window() {
                 Ok(w) => w,
                 Err(e) => {
-                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+                        warn!("failed to remove temp_dir {temp_dir:?}: {e}");
+                    }
                     let _ = tx.send(Err(Error::Tauri(e)));
                     return;
                 }
             };
 
             if is_data {
-                let _ = std::fs::remove_dir_all(&temp_dir);
+                if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+                    warn!("failed to remove temp_dir {temp_dir:?}: {e}");
+                }
                 let _ = tx.send(Ok(()));
                 return;
             }
@@ -224,7 +229,7 @@ pub async fn start_drag<R: Runtime>(
                         if let Err(e) = std::fs::remove_dir_all(&td) {
                             tracing::warn!("failed to cleanup drag temp dir {td:?}: {e}");
                         }
-                    });
+                    }.instrument(tracing::info_span!("drag::delayed_cleanup")));
                 },
                 linux::Options {
                     skip_animation_on_cancel_or_failure: false,

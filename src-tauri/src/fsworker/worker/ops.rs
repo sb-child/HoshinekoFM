@@ -13,6 +13,8 @@ use std::{
     time::Duration,
 };
 
+use tracing::warn;
+
 use tarpc::context;
 use tokio::sync::Mutex;
 
@@ -32,20 +34,21 @@ pub enum BatchKind {
     Copy,
 }
 
+pub struct BatchConfig {
+    pub cb: Arc<AppCallbackServiceClient>,
+    pub ops: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
+    pub op_id: u64,
+    pub cancel: Arc<AtomicBool>,
+    pub conflict_seq: Arc<AtomicU64>,
+    pub items: Vec<(PathBuf, PathBuf)>,
+    pub kind: BatchKind,
+}
+
 /// 执行批处理操作（move 或 copy）。每个条目均需检查冲突。
-#[allow(clippy::too_many_arguments)]
-pub async fn run_batch(
-    cb: &AppCallbackServiceClient,
-    ops: &Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
-    op_id: u64,
-    cancel: Arc<AtomicBool>,
-    conflict_seq: &Arc<AtomicU64>,
-    items: Vec<(PathBuf, PathBuf)>,
-    kind: BatchKind,
-) {
-    let total = items.len() as u64;
-    let _ = cb
-        .progress(context::current(), op_id, ProgressEvent::Started { total })
+pub async fn run_batch(config: BatchConfig) {
+    let total = config.items.len() as u64;
+    let _ = config.cb
+        .progress(context::current(), config.op_id, ProgressEvent::Started { total })
         .await;
 
     let mut succeeded = 0u64;
@@ -53,14 +56,14 @@ pub async fn run_batch(
     let mut cancelled = false;
     let mut done = 0u64;
 
-    for (src, dst) in items {
-        if cancel.load(Ordering::Relaxed) {
+    for (src, dst) in config.items {
+        if config.cancel.load(Ordering::Relaxed) {
             cancelled = true;
             break;
         }
         done += 1;
 
-        let status = match decide_dst(cb, op_id, conflict_seq, &src, &dst).await {
+        let status = match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &dst).await {
             Decision::Cancel => {
                 cancelled = true;
                 break;
@@ -73,7 +76,10 @@ pub async fn run_batch(
                 let renamed = final_dst != dst;
                 let s = src.clone();
                 let d = final_dst.clone();
-                let res = tokio::task::spawn_blocking(move || match kind {
+                let kind = config.kind;
+                let res = tokio::task::spawn_blocking(move || {
+                    let _span = tracing::info_span!("ops::run_batch_move_copy").entered();
+                    match kind {
                     BatchKind::Move => {
                         if strategy == ProceedStrategy::Overwrite {
                             move_path(&s, &d)
@@ -82,6 +88,7 @@ pub async fn run_batch(
                         }
                     }
                     BatchKind::Copy => copy_path(&s, &d, strategy != ProceedStrategy::Overwrite),
+                    }
                 })
                 .await
                 .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
@@ -101,7 +108,7 @@ pub async fn run_batch(
                     {
                         // TOCTOU: 重问
                         let d2 = final_dst.clone();
-                        match decide_dst(cb, op_id, conflict_seq, &src, &d2).await {
+                        match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &d2).await {
                             Decision::Proceed {
                                 dst: fd,
                                 strategy: st2,
@@ -109,6 +116,7 @@ pub async fn run_batch(
                                 let s2 = src.clone();
                                 let fd_move = fd.clone();
                                 let res2 = tokio::task::spawn_blocking(move || {
+                                    let _span = tracing::info_span!("ops::run_batch_toctou_retry").entered();
                                     if st2 == ProceedStrategy::Overwrite {
                                         move_path(&s2, &fd_move)
                                     } else {
@@ -147,10 +155,10 @@ pub async fn run_batch(
             }
         };
 
-        let _ = cb
+        let _ = config.cb
             .progress(
                 context::current(),
-                op_id,
+                config.op_id,
                 ProgressEvent::Item {
                     src: src.clone(),
                     dst: dst.clone(),
@@ -158,10 +166,10 @@ pub async fn run_batch(
                 },
             )
             .await;
-        let _ = cb
+        let _ = config.cb
             .progress(
                 context::current(),
-                op_id,
+                config.op_id,
                 ProgressEvent::Tick {
                     done,
                     total,
@@ -171,7 +179,7 @@ pub async fn run_batch(
             .await;
     }
 
-    finish_op(cb, ops, op_id, succeeded, failed, cancelled).await;
+    finish_op(&config.cb, &config.ops, config.op_id, succeeded, failed, cancelled).await;
 }
 
 // --
@@ -196,7 +204,10 @@ pub async fn decide_dst(
     dst: &Path,
 ) -> Decision {
     let dst_buf = dst.to_path_buf();
-    let exists = tokio::task::spawn_blocking(move || dst_buf.exists())
+    let exists = tokio::task::spawn_blocking(move || {
+        let _span = tracing::info_span!("ops::decide_dst_exists").entered();
+        dst_buf.exists()
+    })
         .await
         .unwrap_or(false);
     if !exists {
@@ -254,7 +265,7 @@ pub async fn finish_op(
     failed: u64,
     cancelled: bool,
 ) {
-    let _ = cb
+    if let Err(e) = cb
         .progress(
             context::current(),
             op_id,
@@ -264,6 +275,9 @@ pub async fn finish_op(
                 cancelled,
             },
         )
-        .await;
+        .await
+    {
+        warn!("failed to send Progress::Done for op_id={op_id}: {e}");
+    }
     ops.lock().await.remove(&op_id);
 }

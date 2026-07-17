@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::select;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument, warn, Instrument};
 
 use super::config::WatchConfig;
 use crate::channel::{self, RxAsync, Tx};
@@ -164,6 +164,7 @@ impl DeltaBuilder {
             let _permit = sem.acquire_owned().await;
 
             let _ = tokio::task::spawn_blocking(move || {
+                let _span = tracing::info_span!("builder::handle_reset_read_dir").entered();
                 let read = match std::fs::read_dir(&path) {
                     Ok(r) => r,
                     Err(e) => {
@@ -200,12 +201,12 @@ impl DeltaBuilder {
                 }
             })
             .await;
-        });
+        }.instrument(tracing::info_span!("builder::handle_reset_worker")));
         tokio::spawn(async move {
             if let Err(e) = h.await {
                 tracing::error!("DeltaBuilder handle_reset task panicked: {e}");
             }
-        });
+        }.instrument(tracing::info_span!("builder::handle_reset_monitor")));
     }
 }
 
@@ -224,6 +225,7 @@ async fn build_upserts_impl(
         tokio::spawn(async move {
             let _permit = sem.acquire_owned().await;
             let delta = tokio::task::spawn_blocking(move || {
+                let _span = tracing::info_span!("builder::build_file").entered();
                 if fp.exists() {
                     build_file(&fp).map(WatchDelta::Upsert)
                 } else {
@@ -239,6 +241,6 @@ async fn build_upserts_impl(
             if let Some(d) = delta {
                 let _ = dt.send((p, d));
             }
-        });
+        }.instrument(tracing::info_span!("builder::build_upsert")));
     }
 }

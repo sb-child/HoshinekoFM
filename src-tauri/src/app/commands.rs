@@ -11,6 +11,7 @@ use tauri::{State, Window, command};
 
 use crate::app::state::AppStateManager;
 use crate::app::ui_service::{self, UIService};
+use crate::error::AppError;
 use crate::mesh::types::ui::{ContextId, EntryKind, NavTarget};
 
 // --
@@ -22,7 +23,7 @@ pub fn create_window(
     app: &tauri::AppHandle,
     label: &str,
     _paths: &[String],
-) -> Result<tauri::WebviewWindow, String> {
+) -> Result<tauri::WebviewWindow, AppError> {
     use tauri::WebviewWindowBuilder;
 
     let builder =
@@ -32,7 +33,7 @@ pub fn create_window(
 
     let window = builder
         .build()
-        .map_err(|e| format!("failed to create window: {e}"))?;
+        .map_err(|e| AppError::Other(format!("failed to create window: {e}")))?;
 
     tracing::info!("created new window: {label}");
 
@@ -45,7 +46,7 @@ pub async fn new_window(
     app: tauri::AppHandle,
     mgr: State<'_, Arc<AppStateManager>>,
     paths: Option<Vec<String>>,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     let paths = paths.unwrap_or_default();
 
     let label = mgr.next_label();
@@ -63,8 +64,9 @@ pub async fn new_window(
 
 /// 前端 mount 后调用。后端重建运行时状态 + 推送初始事件。
 #[command]
-pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), String> {
-    ui.ready(&window).await
+pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), AppError> {
+    ui.ready(&window).await?;
+    Ok(())
 }
 
 // --
@@ -75,7 +77,7 @@ pub async fn ready(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), 
 #[command]
 pub fn list_tabs(
     mgr: State<'_, Arc<AppStateManager>>,
-) -> Result<Vec<crate::mesh::types::ui::TabState>, String> {
+) -> Result<Vec<crate::mesh::types::ui::TabState>, AppError> {
     let tabs = mgr.tabs.lock_safe();
     Ok(tabs.get_all().to_vec())
 }
@@ -86,8 +88,9 @@ pub async fn switch_tab(
     window: Window,
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
-) -> Result<(), String> {
-    ui.switch_tab(&window, tab_id).await
+) -> Result<(), AppError> {
+    ui.switch_tab(&window, tab_id).await?;
+    Ok(())
 }
 
 /// 创建新 tab（自动切换为活跃）。
@@ -96,13 +99,13 @@ pub async fn new_tab(
     window: Window,
     ui: State<'_, Arc<UIService>>,
     path: Option<String>,
-) -> Result<u64, String> {
-    ui.new_tab(&window, path).await
+) -> Result<u64, AppError> {
+    ui.new_tab(&window, path).await.map_err(AppError::from)
 }
 
 /// 关闭 tab。
 #[command]
-pub fn close_tab(window: Window, ui: State<'_, Arc<UIService>>, tab_id: u64) -> Result<(), String> {
+pub fn close_tab(window: Window, ui: State<'_, Arc<UIService>>, tab_id: u64) -> Result<(), AppError> {
     ui.close_tab(&window, tab_id);
     Ok(())
 }
@@ -113,7 +116,7 @@ pub fn move_tab(
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
     target: u64,
-) -> Result<MoveTabCmdResult, String> {
+) -> Result<MoveTabCmdResult, AppError> {
     match ui.move_tab(tab_id, target) {
         ui_service::MoveTabResult::Ok => Ok(MoveTabCmdResult::Ok),
         ui_service::MoveTabResult::Blocked { tasks } => Ok(MoveTabCmdResult::Blocked {
@@ -134,7 +137,7 @@ pub async fn move_tab_force(
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
     target: u64,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     ui.move_tab_force(tab_id, target).await;
     Ok(())
 }
@@ -162,8 +165,9 @@ pub async fn nav_to(
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
     target: NavTarget,
-) -> Result<(), String> {
-    ui.nav_to(&window, tab_id, target).await
+) -> Result<(), AppError> {
+    ui.nav_to(&window, tab_id, target).await?;
+    Ok(())
 }
 
 /// 导航后退。
@@ -172,8 +176,9 @@ pub async fn nav_back(
     window: Window,
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
-) -> Result<(), String> {
-    ui.nav_back(&window, tab_id).await
+) -> Result<(), AppError> {
+    ui.nav_back(&window, tab_id).await?;
+    Ok(())
 }
 
 /// 导航前进。
@@ -182,8 +187,9 @@ pub async fn nav_forward(
     window: Window,
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
-) -> Result<(), String> {
-    ui.nav_forward(&window, tab_id).await
+) -> Result<(), AppError> {
+    ui.nav_forward(&window, tab_id).await?;
+    Ok(())
 }
 
 /// 更新选中文件，emit hf:selection。
@@ -193,14 +199,14 @@ pub fn select_files(
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
     selected: Vec<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     ui.update_selection(&window, tab_id, selected);
     Ok(())
 }
 
 /// 刷新当前 tab 的文件列表（F5）。
 #[command]
-pub fn refresh_tab(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), String> {
+pub fn refresh_tab(window: Window, ui: State<'_, Arc<UIService>>) -> Result<(), AppError> {
     ui.refresh_tab(&window);
     Ok(())
 }
@@ -216,9 +222,10 @@ pub async fn create_entry(
     tab_id: u64,
     path: String,
     kind: EntryKind,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let ctx = ContextId::Tab(tab_id);
-    ui.create(tab_id, Path::new(&path), kind, ctx).await
+    ui.create(tab_id, Path::new(&path), kind, ctx).await?;
+    Ok(())
 }
 
 /// 重命名文件或目录。
@@ -228,9 +235,10 @@ pub async fn rename_entry(
     tab_id: u64,
     path: String,
     new_name: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let ctx = ContextId::Tab(tab_id);
-    ui.rename(tab_id, Path::new(&path), &new_name, ctx).await
+    ui.rename(tab_id, Path::new(&path), &new_name, ctx).await?;
+    Ok(())
 }
 
 /// 批量移动文件。
@@ -240,12 +248,13 @@ pub async fn move_files(
     tab_id: u64,
     pairs: Vec<(String, String)>,
     ctx_id: ContextId,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = pairs
         .into_iter()
         .map(|(s, d)| (std::path::PathBuf::from(s), std::path::PathBuf::from(d)))
         .collect();
-    ui.move_files_by_paths(tab_id, pairs, ctx_id).await
+    ui.move_files_by_paths(tab_id, pairs, ctx_id).await?;
+    Ok(())
 }
 
 /// 批量复制文件。
@@ -255,12 +264,13 @@ pub async fn copy_files(
     tab_id: u64,
     pairs: Vec<(String, String)>,
     ctx_id: ContextId,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = pairs
         .into_iter()
         .map(|(s, d)| (std::path::PathBuf::from(s), std::path::PathBuf::from(d)))
         .collect();
-    ui.copy_files_by_paths(tab_id, pairs, ctx_id).await
+    ui.copy_files_by_paths(tab_id, pairs, ctx_id).await?;
+    Ok(())
 }
 
 // --
@@ -274,8 +284,9 @@ pub async fn elevate_tab(
     ui: State<'_, Arc<UIService>>,
     tab_id: u64,
     target_uid: u32,
-) -> Result<(), String> {
-    ui.elevate_tab(&window, tab_id, target_uid).await
+) -> Result<(), AppError> {
+    ui.elevate_tab(&window, tab_id, target_uid).await?;
+    Ok(())
 }
 
 /// 导入外部文件到当前 tab 目录。
@@ -288,7 +299,7 @@ pub async fn import_files(
     tab_id: u64,
     sources: Vec<String>,
     target_dir: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let ctx = ContextId::Tab(tab_id);
     let target = Path::new(&target_dir);
     let pairs: Vec<(std::path::PathBuf, std::path::PathBuf)> = sources
@@ -301,7 +312,8 @@ pub async fn import_files(
             (std::path::PathBuf::from(src), target.join(file_name))
         })
         .collect();
-    ui.copy_files_by_paths(tab_id, pairs, ctx).await
+    ui.copy_files_by_paths(tab_id, pairs, ctx).await?;
+    Ok(())
 }
 
 // --
@@ -310,16 +322,16 @@ pub async fn import_files(
 
 /// 解析路径中的符号链接，返回规范路径。
 #[command]
-pub fn realpath(path: String) -> Result<String, String> {
+pub fn realpath(path: String) -> Result<String, AppError> {
     std::fs::canonicalize(&path)
         .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
+        .map_err(AppError::from)
 }
 
 /// 获取当前窗口的全局唯一 window_id。
 #[command]
-pub fn get_window_id(window: Window, mgr: State<'_, Arc<AppStateManager>>) -> Result<u64, String> {
+pub fn get_window_id(window: Window, mgr: State<'_, Arc<AppStateManager>>) -> Result<u64, AppError> {
     let label = window.label();
     mgr.window_id_by_label(&label)
-        .ok_or_else(|| format!("window not registered: {label}"))
+        .ok_or_else(|| AppError::NotFound(format!("window not registered: {label}")))
 }

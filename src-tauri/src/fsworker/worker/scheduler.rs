@@ -104,8 +104,8 @@ impl WatchScheduler {
                 }
 
                 _ = async {
-                    if sleep_enabled {
-                        self.sleep.as_mut().unwrap().await
+                    if let Some(sleep) = &mut self.sleep {
+                        sleep.await
                     } else {
                         std::future::pending::<()>().await
                     }
@@ -188,8 +188,8 @@ impl WatchScheduler {
             self.send_event(&raw.path, &old_affected, old_pending);
         }
 
-        // re-acquire mutable borrow
-        let entry = self.paths.get_mut(&raw.path).unwrap();
+        // re-acquire mutable borrow (guaranteed to exist: checked at function entry)
+        let entry = self.paths.get_mut(&raw.path).expect("scheduler invariant: entry must exist after initial check");
         entry.affected = raw.affected_paths;
         entry.dirty = true;
         entry.last_flush = Instant::now();
@@ -228,6 +228,7 @@ impl WatchScheduler {
             {
                 let p = path.clone();
                 match tokio::task::spawn_blocking(move || {
+                    let _span = tracing::info_span!("scheduler::flush_metadata").entered();
                     std::fs::metadata(&p).map(|m| (m.is_dir(), m.modified()))
                 })
                 .await
@@ -315,7 +316,10 @@ impl WatchScheduler {
 
     async fn retry_access(&mut self, path: PathBuf, level: usize) {
         let p = path.clone();
-        let ok = tokio::task::spawn_blocking(move || p.metadata().is_ok())
+        let ok = tokio::task::spawn_blocking(move || {
+            let _span = tracing::info_span!("scheduler::retry_access").entered();
+            p.metadata().is_ok()
+        })
             .await
             .unwrap_or(false);
 
