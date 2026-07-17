@@ -25,7 +25,7 @@ use std::sync::{Arc, RwLock};
 
 use futures::prelude::*;
 use tarpc::server::Channel;
-use tracing::{debug, error, info, warn, Instrument};
+use tracing::{Instrument, debug, error, info, warn};
 
 use crate::mesh::Mesh;
 use crate::mesh::types::instance::{InstanceMsg, InstanceService};
@@ -35,8 +35,7 @@ use connection::PeerConnection;
 // Re-export discovery functions from mesh
 pub use crate::mesh::discovery::instance_exists;
 pub(crate) use crate::mesh::discovery::{
-    bind_socket, cleanup_socket, discover_sockets, instances_dir, lock_path,
-    socket_path,
+    bind_socket, cleanup_socket, discover_sockets, instances_dir, lock_path, socket_path,
 };
 
 pub(crate) struct InstanceBus {
@@ -142,9 +141,7 @@ impl InstanceBus {
     }
 
     pub fn remove_instance_routes(&self, instance_id: u64) {
-        self.routes
-            .write_safe()
-            .retain(|_, v| *v != instance_id);
+        self.routes.write_safe().retain(|_, v| *v != instance_id);
     }
 
     pub fn self_id(&self) -> u64 {
@@ -163,24 +160,29 @@ impl InstanceBus {
                 Ok((stream, addr)) => {
                     debug!("instance connection from {addr:?}");
                     let mesh = mesh.clone();
-                    tokio::spawn(async move {
-                        let transport = tarpc::serde_transport::new(
-                            crate::mesh::transport::frame_stream(stream),
-                            tarpc::tokio_serde::formats::Bincode::default(),
-                        );
-                        let server = crate::mesh::server::InstanceBusServer::new(mesh);
+                    tokio::spawn(
+                        async move {
+                            let transport = tarpc::serde_transport::new(
+                                crate::mesh::transport::frame_stream(stream),
+                                tarpc::tokio_serde::formats::Bincode::default(),
+                            );
+                            let server = crate::mesh::server::InstanceBusServer::new(mesh);
 
-                        async fn spawn(
-                            fut: impl std::future::Future<Output = ()> + Send + 'static,
-                        ) {
-                            tokio::spawn(fut.instrument(tracing::info_span!("instance_bus::accept_spawn_fn")));
+                            async fn spawn(
+                                fut: impl std::future::Future<Output = ()> + Send + 'static,
+                            ) {
+                                tokio::spawn(fut.instrument(tracing::info_span!(
+                                    "instance_bus::accept_spawn_fn"
+                                )));
+                            }
+
+                            tarpc::server::BaseChannel::with_defaults(transport)
+                                .execute(server.serve())
+                                .for_each(spawn)
+                                .await;
                         }
-
-                        tarpc::server::BaseChannel::with_defaults(transport)
-                            .execute(server.serve())
-                            .for_each(spawn)
-                            .await;
-                    }.instrument(tracing::info_span!("instance_bus::accept")));
+                        .instrument(tracing::info_span!("instance_bus::accept")),
+                    );
                 }
                 Err(e) => {
                     error!("instance listener error: {e}");
@@ -196,7 +198,7 @@ impl InstanceBus {
 // --
 
 /// 后台监听 `~/.cache/hnfm/instances/`，自动连接新实例、清理断开实例。
-pub async fn watch_instances(bus: Arc<InstanceBus>) {
+pub(crate) async fn watch_instances(bus: Arc<InstanceBus>) {
     let dir = instances_dir();
     std::fs::create_dir_all(&dir).ok();
 

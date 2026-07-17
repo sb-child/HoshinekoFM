@@ -155,71 +155,77 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        let handle = tokio::spawn(async move {
-            let _ = cb
-                .progress(
-                    context::current(),
-                    op_id,
-                    ProgressEvent::Started { total: 1 },
-                )
-                .await;
-            let mut succeeded = 0u64;
-            let mut failed = 0u64;
-            let mut cancelled = false;
+        let handle = tokio::spawn(
+            async move {
+                let _ = cb
+                    .progress(
+                        context::current(),
+                        op_id,
+                        ProgressEvent::Started { total: 1 },
+                    )
+                    .await;
+                let mut succeeded = 0u64;
+                let mut failed = 0u64;
+                let mut cancelled = false;
 
-            match decide_dst(&cb, op_id, &conflict_seq, &path, &path).await {
-                Decision::Cancel => cancelled = true,
-                Decision::Skip => {
-                    let _ = cb
-                        .progress(
-                            context::current(),
-                            op_id,
-                            ProgressEvent::Item {
-                                src: path.clone(),
-                                dst: path.clone(),
-                                status: crate::fsworker::protocol::ItemStatus::Skipped,
-                            },
-                        )
-                        .await;
-                }
-                Decision::Proceed { dst, .. } => {
-                    let res =
-                        tokio::task::spawn_blocking(move || {
-                            let _span = tracing::info_span!("service::run_create::create_entry").entered();
+                match decide_dst(&cb, op_id, &conflict_seq, &path, &path).await {
+                    Decision::Cancel => cancelled = true,
+                    Decision::Skip => {
+                        let _ = cb
+                            .progress(
+                                context::current(),
+                                op_id,
+                                ProgressEvent::Item {
+                                    src: path.clone(),
+                                    dst: path.clone(),
+                                    status: crate::fsworker::protocol::ItemStatus::Skipped,
+                                },
+                            )
+                            .await;
+                    }
+                    Decision::Proceed { dst, .. } => {
+                        let res = tokio::task::spawn_blocking(move || {
+                            let _span =
+                                tracing::info_span!("service::run_create::create_entry").entered();
                             super::files::create_entry(&dst, kind)
                         })
-                            .await
-                            .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
-                    let status = match res {
-                        Ok(()) => {
-                            succeeded += 1;
-                            crate::fsworker::protocol::ItemStatus::Ok
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
-                        }
-                    };
-                    let _ = cb
-                        .progress(
-                            context::current(),
-                            op_id,
-                            ProgressEvent::Item {
-                                src: path.clone(),
-                                dst: path.clone(),
-                                status,
-                            },
-                        )
-                        .await;
+                        .await
+                        .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
+                        let status = match res {
+                            Ok(()) => {
+                                succeeded += 1;
+                                crate::fsworker::protocol::ItemStatus::Ok
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
+                            }
+                        };
+                        let _ = cb
+                            .progress(
+                                context::current(),
+                                op_id,
+                                ProgressEvent::Item {
+                                    src: path.clone(),
+                                    dst: path.clone(),
+                                    status,
+                                },
+                            )
+                            .await;
+                    }
+                }
+                finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
+            }
+            .instrument(tracing::info_span!("service::run_create::worker")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!(op_id, "run_create task panicked: {e}");
                 }
             }
-            finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
-        }.instrument(tracing::info_span!("service::run_create::worker")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!(op_id, "run_create task panicked: {e}");
-            }
-        }.instrument(tracing::info_span!("service::run_create::monitor")));
+            .instrument(tracing::info_span!("service::run_create::monitor")),
+        );
         Ok(())
     }
 
@@ -235,113 +241,124 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        let handle = tokio::spawn(async move {
-            let _ = cb
-                .progress(
-                    context::current(),
-                    op_id,
-                    ProgressEvent::Started { total: 1 },
-                )
-                .await;
-            let parent = path
-                .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("/"));
-            let dst = parent.join(&new_name);
-            let mut succeeded = 0u64;
-            let mut failed = 0u64;
-            let mut cancelled = false;
+        let handle = tokio::spawn(
+            async move {
+                let _ = cb
+                    .progress(
+                        context::current(),
+                        op_id,
+                        ProgressEvent::Started { total: 1 },
+                    )
+                    .await;
+                let parent = path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                let dst = parent.join(&new_name);
+                let mut succeeded = 0u64;
+                let mut failed = 0u64;
+                let mut cancelled = false;
 
-            match decide_dst(&cb, op_id, &conflict_seq, &path, &dst).await {
-                Decision::Cancel => cancelled = true,
-                Decision::Skip => {
-                    let _ = cb
-                        .progress(
-                            context::current(),
-                            op_id,
-                            ProgressEvent::Item {
-                                src: path.clone(),
-                                dst: dst.clone(),
-                                status: crate::fsworker::protocol::ItemStatus::Skipped,
-                            },
-                        )
-                        .await;
-                }
-                Decision::Proceed {
-                    dst: final_dst,
-                    strategy,
-                } => {
-                    let renamed = final_dst != dst;
-                    let s = path.clone();
-                    let d = final_dst.clone();
-                    let res = super::files::rename_with_strategy(&s, &d, strategy);
-                    let status = match res {
-                        Ok(()) => {
-                            succeeded += 1;
-                            if renamed {
-                                crate::fsworker::protocol::ItemStatus::Renamed(final_dst.clone())
-                            } else {
-                                crate::fsworker::protocol::ItemStatus::Ok
-                            }
-                        }
-                        Err(e)
-                            if strategy != ProceedStrategy::Overwrite
-                                && e.raw_os_error() == Some(nix::errno::Errno::EEXIST as i32) =>
-                        {
-                            let s2 = s.clone();
-                            let d2 = final_dst.clone();
-                            match decide_dst(&cb, op_id, &conflict_seq, &s2, &d2).await {
-                                Decision::Proceed {
-                                    dst: fd,
-                                    strategy: st2,
-                                } => match super::files::rename_with_strategy(&s2, &fd, st2) {
-                                    Ok(()) => {
-                                        succeeded += 1;
-                                        if fd != d2 {
-                                            crate::fsworker::protocol::ItemStatus::Renamed(fd)
-                                        } else {
-                                            crate::fsworker::protocol::ItemStatus::Ok
-                                        }
-                                    }
-                                    Err(e2) => {
-                                        failed += 1;
-                                        crate::fsworker::protocol::ItemStatus::Failed(
-                                            e2.to_string(),
-                                        )
-                                    }
+                match decide_dst(&cb, op_id, &conflict_seq, &path, &dst).await {
+                    Decision::Cancel => cancelled = true,
+                    Decision::Skip => {
+                        let _ = cb
+                            .progress(
+                                context::current(),
+                                op_id,
+                                ProgressEvent::Item {
+                                    src: path.clone(),
+                                    dst: dst.clone(),
+                                    status: crate::fsworker::protocol::ItemStatus::Skipped,
                                 },
-                                Decision::Skip => crate::fsworker::protocol::ItemStatus::Skipped,
-                                Decision::Cancel => {
-                                    cancelled = true;
-                                    crate::fsworker::protocol::ItemStatus::Skipped
+                            )
+                            .await;
+                    }
+                    Decision::Proceed {
+                        dst: final_dst,
+                        strategy,
+                    } => {
+                        let renamed = final_dst != dst;
+                        let s = path.clone();
+                        let d = final_dst.clone();
+                        let res = super::files::rename_with_strategy(&s, &d, strategy);
+                        let status = match res {
+                            Ok(()) => {
+                                succeeded += 1;
+                                if renamed {
+                                    crate::fsworker::protocol::ItemStatus::Renamed(
+                                        final_dst.clone(),
+                                    )
+                                } else {
+                                    crate::fsworker::protocol::ItemStatus::Ok
                                 }
                             }
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
-                        }
-                    };
-                    let _ = cb
-                        .progress(
-                            context::current(),
-                            op_id,
-                            ProgressEvent::Item {
-                                src: path.clone(),
-                                dst: final_dst,
-                                status,
-                            },
-                        )
-                        .await;
+                            Err(e)
+                                if strategy != ProceedStrategy::Overwrite
+                                    && e.raw_os_error()
+                                        == Some(nix::errno::Errno::EEXIST as i32) =>
+                            {
+                                let s2 = s.clone();
+                                let d2 = final_dst.clone();
+                                match decide_dst(&cb, op_id, &conflict_seq, &s2, &d2).await {
+                                    Decision::Proceed {
+                                        dst: fd,
+                                        strategy: st2,
+                                    } => match super::files::rename_with_strategy(&s2, &fd, st2) {
+                                        Ok(()) => {
+                                            succeeded += 1;
+                                            if fd != d2 {
+                                                crate::fsworker::protocol::ItemStatus::Renamed(fd)
+                                            } else {
+                                                crate::fsworker::protocol::ItemStatus::Ok
+                                            }
+                                        }
+                                        Err(e2) => {
+                                            failed += 1;
+                                            crate::fsworker::protocol::ItemStatus::Failed(
+                                                e2.to_string(),
+                                            )
+                                        }
+                                    },
+                                    Decision::Skip => {
+                                        crate::fsworker::protocol::ItemStatus::Skipped
+                                    }
+                                    Decision::Cancel => {
+                                        cancelled = true;
+                                        crate::fsworker::protocol::ItemStatus::Skipped
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                crate::fsworker::protocol::ItemStatus::Failed(e.to_string())
+                            }
+                        };
+                        let _ = cb
+                            .progress(
+                                context::current(),
+                                op_id,
+                                ProgressEvent::Item {
+                                    src: path.clone(),
+                                    dst: final_dst,
+                                    status,
+                                },
+                            )
+                            .await;
+                    }
+                }
+                finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
+            }
+            .instrument(tracing::info_span!("service::run_rename::worker")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!(op_id, "run_rename task panicked: {e}");
                 }
             }
-            finish_op(&cb, &ops, op_id, succeeded, failed, cancelled).await;
-        }.instrument(tracing::info_span!("service::run_rename::worker")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!(op_id, "run_rename task panicked: {e}");
-            }
-        }.instrument(tracing::info_span!("service::run_rename::monitor")));
+            .instrument(tracing::info_span!("service::run_rename::monitor")),
+        );
         Ok(())
     }
 
@@ -356,23 +373,29 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        let handle = tokio::spawn(async move {
-            run_batch(BatchConfig {
-                cb: Arc::new(cb),
-                ops,
-                op_id,
-                cancel,
-                conflict_seq,
-                items,
-                kind: BatchKind::Move,
-            })
-            .await;
-        }.instrument(tracing::info_span!("service::run_move::worker")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!(op_id, "run_move task panicked: {e}");
+        let handle = tokio::spawn(
+            async move {
+                run_batch(BatchConfig {
+                    cb: Arc::new(cb),
+                    ops,
+                    op_id,
+                    cancel,
+                    conflict_seq,
+                    items,
+                    kind: BatchKind::Move,
+                })
+                .await;
             }
-        }.instrument(tracing::info_span!("service::run_move::monitor")));
+            .instrument(tracing::info_span!("service::run_move::worker")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!(op_id, "run_move task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!("service::run_move::monitor")),
+        );
         Ok(())
     }
 
@@ -387,23 +410,29 @@ impl FsWorkerService for FsWorkerServer {
         let cb = self.cb.clone();
         let conflict_seq = self.conflict_seq.clone();
         let ops = self.ops.clone();
-        let handle = tokio::spawn(async move {
-            run_batch(BatchConfig {
-                cb: Arc::new(cb),
-                ops,
-                op_id,
-                cancel,
-                conflict_seq,
-                items,
-                kind: BatchKind::Copy,
-            })
-            .await;
-        }.instrument(tracing::info_span!("service::run_copy::worker")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!(op_id, "run_copy task panicked: {e}");
+        let handle = tokio::spawn(
+            async move {
+                run_batch(BatchConfig {
+                    cb: Arc::new(cb),
+                    ops,
+                    op_id,
+                    cancel,
+                    conflict_seq,
+                    items,
+                    kind: BatchKind::Copy,
+                })
+                .await;
             }
-        }.instrument(tracing::info_span!("service::run_copy::monitor")));
+            .instrument(tracing::info_span!("service::run_copy::worker")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!(op_id, "run_copy task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!("service::run_copy::monitor")),
+        );
         Ok(())
     }
 
@@ -422,9 +451,9 @@ impl FsWorkerService for FsWorkerServer {
             let _span = tracing::info_span!("service::stat_vfs").entered();
             nix::sys::statvfs::statvfs(&p)
         })
-            .await
-            .map_err(|e| AppError::Other(format!("spawn_blocking: {e}")))?
-            .map_err(|e| AppError::Other(format!("statvfs {}: {e}", path.display())))?;
+        .await
+        .map_err(|e| AppError::Other(format!("spawn_blocking: {e}")))?
+        .map_err(|e| AppError::Other(format!("statvfs {}: {e}", path.display())))?;
         let block_size = vfs.block_size() as u64;
         Ok((vfs.blocks() * block_size, vfs.blocks_free() * block_size))
     }

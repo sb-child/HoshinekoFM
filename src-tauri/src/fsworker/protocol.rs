@@ -24,7 +24,7 @@ pub use crate::mesh::types::ui::EntryKind;
 /// mime / thumbnail 是**渐进式**字段：初次快照时可能为 `None`，
 /// Worker 后台算好后通过 `WatchDelta::Upsert` 补发。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct File {
+pub struct File {
     /// 文件名（不含路径）
     pub name: String,
     /// 完整路径
@@ -62,7 +62,7 @@ pub(crate) struct File {
 /// - `FatalError` 表示连 `/` 都无法访问，watcher 彻底失效 (Dead)。
 /// - `ConnectionLost` 表示 Worker 连接断开，上层应暂停依赖此 watcher 的 UI。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum WatchDelta {
+pub enum WatchDelta {
     /// 全量快照（首帧 / refresh 后）
     Reset(Vec<File>),
     /// 新增或更新一个文件（也用于渐进式补发 mime / 缩略图）
@@ -119,7 +119,7 @@ pub(crate) enum WatchDelta {
 
 /// 单个条目的处理结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ItemStatus {
+pub enum ItemStatus {
     /// 成功
     Ok,
     /// 成功但目标被自动重命名
@@ -132,7 +132,7 @@ pub(crate) enum ItemStatus {
 
 /// 一个待解决的重名冲突。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ConflictItem {
+pub struct ConflictItem {
     /// 源路径
     pub src: PathBuf,
     /// 目标路径（已存在）
@@ -156,7 +156,7 @@ pub enum ConflictResolution {
 
 /// 批处理进度事件（Worker -> 上层，通过反向回调）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ProgressEvent {
+pub enum ProgressEvent {
     /// 操作开始，给出总条目数
     Started { total: u64 },
     /// 单个条目完成
@@ -199,7 +199,7 @@ pub(crate) enum ProgressEvent {
 /// FsWorker 内部读取 /etc/passwd 和 /proc/mounts，对每个祖先目录段
 /// 返回 home / mount 判断结果。主进程无需直接访问这些系统文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct BreadcrumbSegment {
+pub struct BreadcrumbSegment {
     /// 段名（如 "Documents"）
     pub name: String,
     /// 截至该段的完整路径（如 "/home/sbchild/Documents"）

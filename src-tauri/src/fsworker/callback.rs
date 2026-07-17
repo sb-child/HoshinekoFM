@@ -8,7 +8,7 @@ use std::{
 
 use tarpc::context;
 use tokio::net::UnixStream;
-use tracing::{info, Instrument};
+use tracing::{Instrument, info};
 
 use crate::channel;
 use crate::channel::oneshot;
@@ -40,7 +40,7 @@ impl CallbackRegistry {
     }
 
     /// 注册一个 watcher，返回增量接收端。
-    pub fn register_watch(&self, watch_id: u64) -> channel::RxAsync<WatchDelta> {
+    pub(crate) fn register_watch(&self, watch_id: u64) -> channel::RxAsync<WatchDelta> {
         let (tx, rx) = channel::unbounded();
         self.watches.lock_safe().insert(watch_id, tx);
         rx
@@ -52,7 +52,7 @@ impl CallbackRegistry {
     }
 
     /// 注册一个批处理操作，返回进度接收端。
-    pub fn register_op(&self, op_id: u64) -> channel::RxAsync<ProgressEvent> {
+    pub(crate) fn register_op(&self, op_id: u64) -> channel::RxAsync<ProgressEvent> {
         let (tx, rx) = channel::unbounded();
         self.ops.lock_safe().insert(op_id, tx);
         rx
@@ -127,9 +127,7 @@ impl CallbackRegistry {
     ) -> ConflictResolution {
         self.push_progress(op_id, ProgressEvent::Conflict { conflict_id, item });
         let (tx, rx) = oneshot::oneshot();
-        self.conflicts
-            .lock_safe()
-            .insert((op_id, conflict_id), tx);
+        self.conflicts.lock_safe().insert((op_id, conflict_id), tx);
         rx.await.unwrap_or(ConflictResolution::CancelAll)
     }
 }

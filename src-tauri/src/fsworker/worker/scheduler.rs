@@ -189,7 +189,10 @@ impl WatchScheduler {
         }
 
         // re-acquire mutable borrow (guaranteed to exist: checked at function entry)
-        let entry = self.paths.get_mut(&raw.path).expect("scheduler invariant: entry must exist after initial check");
+        let entry = self
+            .paths
+            .get_mut(&raw.path)
+            .expect("scheduler invariant: entry must exist after initial check");
         entry.affected = raw.affected_paths;
         entry.dirty = true;
         entry.last_flush = Instant::now();
@@ -320,8 +323,8 @@ impl WatchScheduler {
             let _span = tracing::info_span!("scheduler::retry_access").entered();
             p.metadata().is_ok()
         })
-            .await
-            .unwrap_or(false);
+        .await
+        .unwrap_or(false);
 
         if ok {
             if let Some(e) = self.paths.get_mut(&path) {

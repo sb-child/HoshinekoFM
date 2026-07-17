@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::spawn_with_span;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -46,12 +47,12 @@ pub fn assemble(
 
     // 1. InotifyManager
     let (inotify_tx, event_rx, inotify) = InotifyManager::spawn(cancel.clone(), config);
-    let inotify_handle = tokio::spawn(async move { inotify.run().await });
+    let inotify_handle = spawn_with_span!(span.clone(), async move { inotify.run().await });
 
     // 2. WatchScheduler
     let (scheduler_tx, scheduler_event_rx, scheduler) =
         WatchScheduler::spawn(cancel.clone(), config, event_rx);
-    let scheduler_handle = tokio::spawn(async move {
+    let scheduler_handle = spawn_with_span!(span.clone(), async move {
         let mut s = scheduler;
         s.run().await;
     });
@@ -59,14 +60,14 @@ pub fn assemble(
     // 3. DeltaBuilder
     let (builder_tx, delta_rx, builder) =
         DeltaBuilder::spawn(cancel.clone(), config, scheduler_event_rx);
-    let builder_handle = tokio::spawn(async move {
+    let builder_handle = spawn_with_span!(span.clone(), async move {
         let mut b = builder;
         b.run().await;
     });
 
     // 4. DeltaRouter
     let (router_tx, mut router) = DeltaRouter::spawn(cancel.clone(), config, delta_rx);
-    let router_handle = tokio::spawn(async move { router.run().await });
+    let router_handle = spawn_with_span!(span.clone(), async move { router.run().await });
 
     // 5. WatchRegistry
     let registry = WatchRegistry::new(inotify_tx, scheduler_tx, builder_tx, router_tx);

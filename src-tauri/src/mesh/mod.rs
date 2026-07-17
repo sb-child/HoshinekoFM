@@ -87,7 +87,7 @@ struct MeshInner {
 }
 
 impl Mesh {
-    pub fn new(instance_id: u64, instance_bus: Arc<InstanceBus>) -> Self {
+    pub(crate) fn new(instance_id: u64, instance_bus: Arc<InstanceBus>) -> Self {
         Self {
             inner: Arc::new(MeshInner {
                 instance_id,
@@ -106,7 +106,7 @@ impl Mesh {
     }
 
     /// InstanceBus 的引用（向后兼容）。
-    pub fn instance_bus(&self) -> &Arc<InstanceBus> {
+    pub(crate) fn instance_bus(&self) -> &Arc<InstanceBus> {
         &self.inner.instance_bus
     }
 
@@ -124,10 +124,7 @@ impl Mesh {
 
     /// 移除窗口端点。
     pub(super) fn remove_window(&self, window_id: u64) {
-        self.inner
-            .window_handlers
-            .write_safe()
-            .remove(&window_id);
+        self.inner.window_handlers.write_safe().remove(&window_id);
     }
 
     /// 向指定窗口发送消息（自动判断本地/远程）。
@@ -147,14 +144,20 @@ impl Mesh {
                 window_id: target_id,
                 msg,
             };
-            let h = tokio::spawn(async move {
-                let _ = instance_bus.send_to(remote_instance, &instance_msg).await;
-            }.instrument(tracing::info_span!("mesh::send_to_window")));
-            tokio::spawn(async move {
-                if let Err(e) = h.await {
-                    tracing::error!(target_id, "send_to_window task panicked: {e}");
+            let h = tokio::spawn(
+                async move {
+                    let _ = instance_bus.send_to(remote_instance, &instance_msg).await;
                 }
-            }.instrument(tracing::info_span!("mesh::send_to_window_monitor")));
+                .instrument(tracing::info_span!("mesh::send_to_window")),
+            );
+            tokio::spawn(
+                async move {
+                    if let Err(e) = h.await {
+                        tracing::error!(target_id, "send_to_window task panicked: {e}");
+                    }
+                }
+                .instrument(tracing::info_span!("mesh::send_to_window_monitor")),
+            );
         }
     }
 
@@ -189,14 +192,20 @@ impl Mesh {
     /// 向远程实例发送 InstanceMsg。
     pub fn send_to_instance(&self, instance_id: u64, msg: InstanceMsg) {
         let instance_bus = self.inner.instance_bus.clone();
-        let h = tokio::spawn(async move {
-            let _ = instance_bus.send_to(instance_id, &msg).await;
-        }.instrument(tracing::info_span!("mesh::send_to_instance")));
-        tokio::spawn(async move {
-            if let Err(e) = h.await {
-                tracing::error!(instance_id, "send_to_instance task panicked: {e}");
+        let h = tokio::spawn(
+            async move {
+                let _ = instance_bus.send_to(instance_id, &msg).await;
             }
-        }.instrument(tracing::info_span!("mesh::send_to_instance_monitor")));
+            .instrument(tracing::info_span!("mesh::send_to_instance")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = h.await {
+                    tracing::error!(instance_id, "send_to_instance task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!("mesh::send_to_instance_monitor")),
+        );
     }
 
     /// 分发 InstanceMsg 到已注册的 InstanceHandler（供 mesh/server.rs 回调）。

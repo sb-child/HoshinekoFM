@@ -38,7 +38,7 @@ pub fn normalize_path_no_symlink(path: &Path) -> PathBuf {
 }
 
 /// 列出目录内容为 `File` 列表（含 mime；缩略图 TODO）。
-pub fn list_dir_files(dir: &Path) -> Vec<File> {
+pub(crate) fn list_dir_files(dir: &Path) -> Vec<File> {
     let mut files = Vec::new();
     let read = match std::fs::read_dir(dir) {
         Ok(r) => r,
@@ -61,7 +61,7 @@ pub fn list_dir_files(dir: &Path) -> Vec<File> {
 }
 
 /// 构建单个 `File`（用 symlink 元数据判断软链接，用 stat 取属性）。
-pub fn build_file(path: &Path) -> Option<File> {
+pub(crate) fn build_file(path: &Path) -> Option<File> {
     let symlink_meta = std::fs::symlink_metadata(path).ok()?;
     let is_symlink = symlink_meta.file_type().is_symlink();
     let meta = std::fs::metadata(path).unwrap_or(symlink_meta);

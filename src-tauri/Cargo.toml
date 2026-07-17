@@ -31,7 +31,7 @@ base64 = "0.22"
 tarpc = { version = "0.37", features = ["serde-transport"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 nix = { version = "0.31", features = ["fs", "process", "signal", "user"] }
-notify = { version = "7", features = ["macos_kqueue"] }
+notify = { version = "8.2.0", features = ["macos_kqueue"] }
 tokio-serde = { version = "0.9.0", features = ["bincode"] }
 futures = "0.3.32"
 libc = { version = "0.2.186", features = ["extra_traits"] }

@@ -50,26 +50,42 @@ impl WindowHandler for UiMeshHandler {
 impl InstanceHandler for UiMeshHandler {
     fn on_open_window(&self, paths: Vec<String>) {
         let ui = self.ui.clone();
-        let handle = tokio::spawn(async move {
-            ui.open_window(paths).await;
-        }.instrument(tracing::info_span!("mesh::callback::on_open_window")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!("on_open_window task panicked: {e}");
+        let handle = tokio::spawn(
+            async move {
+                ui.open_window(paths).await;
             }
-        }.instrument(tracing::info_span!("mesh::callback::on_open_window_monitor")));
+            .instrument(tracing::info_span!("mesh::callback::on_open_window")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!("on_open_window task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!(
+                "mesh::callback::on_open_window_monitor"
+            )),
+        );
     }
 
     fn on_transfer_tab(&self, tab: TabState) {
         let ui = self.ui.clone();
-        let handle = tokio::spawn(async move {
-            ui.receive_transfer_tab(tab).await;
-        }.instrument(tracing::info_span!("mesh::callback::on_transfer_tab")));
-        tokio::spawn(async move {
-            if let Err(e) = handle.await {
-                tracing::error!("on_transfer_tab task panicked: {e}");
+        let handle = tokio::spawn(
+            async move {
+                ui.receive_transfer_tab(tab).await;
             }
-        }.instrument(tracing::info_span!("mesh::callback::on_transfer_tab_monitor")));
+            .instrument(tracing::info_span!("mesh::callback::on_transfer_tab")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = handle.await {
+                    tracing::error!("on_transfer_tab task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!(
+                "mesh::callback::on_transfer_tab_monitor"
+            )),
+        );
     }
 
     fn on_clipboard_sync(&self, state: ClipboardState) {

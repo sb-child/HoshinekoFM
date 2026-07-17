@@ -47,8 +47,13 @@ pub struct BatchConfig {
 /// 执行批处理操作（move 或 copy）。每个条目均需检查冲突。
 pub async fn run_batch(config: BatchConfig) {
     let total = config.items.len() as u64;
-    let _ = config.cb
-        .progress(context::current(), config.op_id, ProgressEvent::Started { total })
+    let _ = config
+        .cb
+        .progress(
+            context::current(),
+            config.op_id,
+            ProgressEvent::Started { total },
+        )
         .await;
 
     let mut succeeded = 0u64;
@@ -63,7 +68,9 @@ pub async fn run_batch(config: BatchConfig) {
         }
         done += 1;
 
-        let status = match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &dst).await {
+        let status = match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &dst)
+            .await
+        {
             Decision::Cancel => {
                 cancelled = true;
                 break;
@@ -80,14 +87,16 @@ pub async fn run_batch(config: BatchConfig) {
                 let res = tokio::task::spawn_blocking(move || {
                     let _span = tracing::info_span!("ops::run_batch_move_copy").entered();
                     match kind {
-                    BatchKind::Move => {
-                        if strategy == ProceedStrategy::Overwrite {
-                            move_path(&s, &d)
-                        } else {
-                            move_path_noreplace(&s, &d)
+                        BatchKind::Move => {
+                            if strategy == ProceedStrategy::Overwrite {
+                                move_path(&s, &d)
+                            } else {
+                                move_path_noreplace(&s, &d)
+                            }
                         }
-                    }
-                    BatchKind::Copy => copy_path(&s, &d, strategy != ProceedStrategy::Overwrite),
+                        BatchKind::Copy => {
+                            copy_path(&s, &d, strategy != ProceedStrategy::Overwrite)
+                        }
                     }
                 })
                 .await
@@ -108,7 +117,9 @@ pub async fn run_batch(config: BatchConfig) {
                     {
                         // TOCTOU: 重问
                         let d2 = final_dst.clone();
-                        match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &d2).await {
+                        match decide_dst(&config.cb, config.op_id, &config.conflict_seq, &src, &d2)
+                            .await
+                        {
                             Decision::Proceed {
                                 dst: fd,
                                 strategy: st2,
@@ -116,7 +127,8 @@ pub async fn run_batch(config: BatchConfig) {
                                 let s2 = src.clone();
                                 let fd_move = fd.clone();
                                 let res2 = tokio::task::spawn_blocking(move || {
-                                    let _span = tracing::info_span!("ops::run_batch_toctou_retry").entered();
+                                    let _span = tracing::info_span!("ops::run_batch_toctou_retry")
+                                        .entered();
                                     if st2 == ProceedStrategy::Overwrite {
                                         move_path(&s2, &fd_move)
                                     } else {
@@ -155,7 +167,8 @@ pub async fn run_batch(config: BatchConfig) {
             }
         };
 
-        let _ = config.cb
+        let _ = config
+            .cb
             .progress(
                 context::current(),
                 config.op_id,
@@ -166,7 +179,8 @@ pub async fn run_batch(config: BatchConfig) {
                 },
             )
             .await;
-        let _ = config.cb
+        let _ = config
+            .cb
             .progress(
                 context::current(),
                 config.op_id,
@@ -179,7 +193,15 @@ pub async fn run_batch(config: BatchConfig) {
             .await;
     }
 
-    finish_op(&config.cb, &config.ops, config.op_id, succeeded, failed, cancelled).await;
+    finish_op(
+        &config.cb,
+        &config.ops,
+        config.op_id,
+        succeeded,
+        failed,
+        cancelled,
+    )
+    .await;
 }
 
 // --
@@ -208,8 +230,8 @@ pub async fn decide_dst(
         let _span = tracing::info_span!("ops::decide_dst_exists").entered();
         dst_buf.exists()
     })
-        .await
-        .unwrap_or(false);
+    .await
+    .unwrap_or(false);
     if !exists {
         return Decision::Proceed {
             dst: dst.to_path_buf(),

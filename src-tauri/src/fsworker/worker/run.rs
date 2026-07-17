@@ -20,7 +20,7 @@ use std::{
 use futures::StreamExt;
 use tokio::net::UnixStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn, Instrument};
+use tracing::{Instrument, info, warn};
 
 use super::{config::WatchConfig, pipeline, service::FsWorkerServer};
 use crate::{

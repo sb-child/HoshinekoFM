@@ -11,7 +11,7 @@ use std::{
 };
 
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{info, warn, Instrument};
+use tracing::{Instrument, info, warn};
 
 use crate::channel;
 use crate::channel::oneshot;
@@ -49,7 +49,7 @@ impl Drop for LeaseSentinel {
 /// 持有 `request_tx` 和 `registry`，保证操作期间 Worker 存活。
 /// 所有该 uid 的 token drop 后，对应 Worker 立即销毁（无宽限期）。
 #[derive(Clone)]
-pub(crate) struct UidToken {
+pub struct UidToken {
     uid: u32,
     request_tx: channel::Tx<WorkerRequest>,
     /// 共享的 CallbackRegistry，用于注册 watcher/op 回调
@@ -234,37 +234,40 @@ fn start_reaper(
     status_tx: channel::Tx<WorkerStatus>,
 ) -> channel::Tx<u32> {
     let (tx, rx) = channel::unbounded::<u32>();
-    tokio::spawn(async move {
-        while let Ok(uid) = rx.recv().await {
-            let to_remove = {
-                let g = slots.lock_safe();
-                match g.get(&uid) {
-                    Some(slot) if slot.sentinel.strong_count() == 0 => {
-                        let child_pid = slot.pid.load(Ordering::Relaxed);
-                        let relay_cancel = slot.relay.cancel.clone();
-                        Some((child_pid, relay_cancel))
+    tokio::spawn(
+        async move {
+            while let Ok(uid) = rx.recv().await {
+                let to_remove = {
+                    let g = slots.lock_safe();
+                    match g.get(&uid) {
+                        Some(slot) if slot.sentinel.strong_count() == 0 => {
+                            let child_pid = slot.pid.load(Ordering::Relaxed);
+                            let relay_cancel = slot.relay.cancel.clone();
+                            Some((child_pid, relay_cancel))
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                }
-            };
+                };
 
-            if let Some((child_pid, relay_cancel)) = to_remove {
-                relay_cancel.cancel();
-                // 先 kill 子进程（WorkerRelay loop 会自行退出）
-                if child_pid > 0 {
-                    kill_fs_worker(uid, child_pid);
+                if let Some((child_pid, relay_cancel)) = to_remove {
+                    relay_cancel.cancel();
+                    // 先 kill 子进程（WorkerRelay loop 会自行退出）
+                    if child_pid > 0 {
+                        kill_fs_worker(uid, child_pid);
+                    }
+                    slots.lock_safe().remove(&uid);
+                    let _ = status_tx.send(WorkerStatus::Disconnected {
+                        uid,
+                        reason: DisconnectReason::Other {
+                            message: "all tokens dropped".into(),
+                        },
+                        reconnecting: false,
+                    });
+                    info!("reaped worker slot for uid {uid}");
                 }
-                slots.lock_safe().remove(&uid);
-                let _ = status_tx.send(WorkerStatus::Disconnected {
-                    uid,
-                    reason: DisconnectReason::Other {
-                        message: "all tokens dropped".into(),
-                    },
-                    reconnecting: false,
-                });
-                info!("reaped worker slot for uid {uid}");
             }
         }
-    }.instrument(tracing::info_span!("pool::reaper_loop")));
+        .instrument(tracing::info_span!("pool::reaper_loop")),
+    );
     tx
 }

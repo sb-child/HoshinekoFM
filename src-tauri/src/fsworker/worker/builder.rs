@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::select;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument, warn, Instrument};
+use tracing::{Instrument, info, instrument, warn};
 
 use super::config::WatchConfig;
 use crate::channel::{self, RxAsync, Tx};
@@ -57,7 +57,7 @@ pub struct DeltaBuilder {
 }
 
 impl DeltaBuilder {
-    pub fn spawn(
+    pub(crate) fn spawn(
         cancel: CancellationToken,
         config: &WatchConfig,
         event_rx: RxAsync<SchedulerEvent>,
@@ -160,53 +160,60 @@ impl DeltaBuilder {
         let batch_size = self.config.reset_batch_size;
         let delta_tx = self.delta_tx.clone();
 
-        let h = tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await;
+        let h = tokio::spawn(
+            async move {
+                let _permit = sem.acquire_owned().await;
 
-            let _ = tokio::task::spawn_blocking(move || {
-                let _span = tracing::info_span!("builder::handle_reset_read_dir").entered();
-                let read = match std::fs::read_dir(&path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let _ = delta_tx.send((
-                            path.clone(),
-                            WatchDelta::Inaccessible {
-                                path: path.clone(),
-                                ancestor: path.clone(),
-                                level: 0,
-                                reason: e.to_string(),
-                            },
-                        ));
-                        return;
-                    }
-                };
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _span = tracing::info_span!("builder::handle_reset_read_dir").entered();
+                    let read = match std::fs::read_dir(&path) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = delta_tx.send((
+                                path.clone(),
+                                WatchDelta::Inaccessible {
+                                    path: path.clone(),
+                                    ancestor: path.clone(),
+                                    level: 0,
+                                    reason: e.to_string(),
+                                },
+                            ));
+                            return;
+                        }
+                    };
 
-                // 先清空前端的旧文件列表（通过同一个 channel 顺序保证 Reset 在 UpsertBatch 前到达）
-                let _ = delta_tx.send((path.clone(), WatchDelta::Reset(Vec::new())));
+                    // 先清空前端的旧文件列表（通过同一个 channel 顺序保证 Reset 在 UpsertBatch 前到达）
+                    let _ = delta_tx.send((path.clone(), WatchDelta::Reset(Vec::new())));
 
-                let mut batch: Vec<crate::fsworker::protocol::File> =
-                    Vec::with_capacity(batch_size);
-                for entry in read.flatten() {
-                    if let Some(f) = build_file(&entry.path()) {
-                        batch.push(f);
-                        if batch.len() >= batch_size {
-                            let chunk =
-                                std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
-                            let _ = delta_tx.send((path.clone(), WatchDelta::UpsertBatch(chunk)));
+                    let mut batch: Vec<crate::fsworker::protocol::File> =
+                        Vec::with_capacity(batch_size);
+                    for entry in read.flatten() {
+                        if let Some(f) = build_file(&entry.path()) {
+                            batch.push(f);
+                            if batch.len() >= batch_size {
+                                let chunk =
+                                    std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+                                let _ =
+                                    delta_tx.send((path.clone(), WatchDelta::UpsertBatch(chunk)));
+                            }
                         }
                     }
-                }
-                if !batch.is_empty() {
-                    let _ = delta_tx.send((path.clone(), WatchDelta::UpsertBatch(batch)));
-                }
-            })
-            .await;
-        }.instrument(tracing::info_span!("builder::handle_reset_worker")));
-        tokio::spawn(async move {
-            if let Err(e) = h.await {
-                tracing::error!("DeltaBuilder handle_reset task panicked: {e}");
+                    if !batch.is_empty() {
+                        let _ = delta_tx.send((path.clone(), WatchDelta::UpsertBatch(batch)));
+                    }
+                })
+                .await;
             }
-        }.instrument(tracing::info_span!("builder::handle_reset_monitor")));
+            .instrument(tracing::info_span!("builder::handle_reset_worker")),
+        );
+        tokio::spawn(
+            async move {
+                if let Err(e) = h.await {
+                    tracing::error!("DeltaBuilder handle_reset task panicked: {e}");
+                }
+            }
+            .instrument(tracing::info_span!("builder::handle_reset_monitor")),
+        );
     }
 }
 
@@ -222,25 +229,28 @@ async fn build_upserts_impl(
         let p = path.clone();
         let sem = sem.clone();
 
-        tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await;
-            let delta = tokio::task::spawn_blocking(move || {
-                let _span = tracing::info_span!("builder::build_file").entered();
-                if fp.exists() {
-                    build_file(&fp).map(WatchDelta::Upsert)
-                } else {
-                    Some(WatchDelta::Remove(fp))
-                }
-            })
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!("build_upserts spawn_blocking panicked: {e}");
-                None
-            });
+        tokio::spawn(
+            async move {
+                let _permit = sem.acquire_owned().await;
+                let delta = tokio::task::spawn_blocking(move || {
+                    let _span = tracing::info_span!("builder::build_file").entered();
+                    if fp.exists() {
+                        build_file(&fp).map(WatchDelta::Upsert)
+                    } else {
+                        Some(WatchDelta::Remove(fp))
+                    }
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("build_upserts spawn_blocking panicked: {e}");
+                    None
+                });
 
-            if let Some(d) = delta {
-                let _ = dt.send((p, d));
+                if let Some(d) = delta {
+                    let _ = dt.send((p, d));
+                }
             }
-        }.instrument(tracing::info_span!("builder::build_upsert")));
+            .instrument(tracing::info_span!("builder::build_upsert")),
+        );
     }
 }

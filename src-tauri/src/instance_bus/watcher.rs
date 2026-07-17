@@ -49,15 +49,18 @@ pub fn watch_dir(dir: PathBuf) -> channel::RxAsync<WatchEvent> {
 
         // 2. 注册 notify
         let (raw_tx, raw_rx) = channel::unbounded_blocking();
-        let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            let _ = raw_tx.send(res);
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::error!("failed to create notify watcher (inotify limit exhausted?): {e}");
-                return;
-            }
-        };
+        let mut watcher =
+            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                let _ = raw_tx.send(res);
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to create notify watcher (inotify limit exhausted?): {e}"
+                    );
+                    return;
+                }
+            };
 
         if watcher.watch(&dir_c, RecursiveMode::NonRecursive).is_err() {
             return;

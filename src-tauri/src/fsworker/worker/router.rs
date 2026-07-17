@@ -54,7 +54,7 @@ pub struct DeltaRouter {
 }
 
 impl DeltaRouter {
-    pub fn spawn(
+    pub(crate) fn spawn(
         cancel: CancellationToken,
         config: &WatchConfig,
         delta_rx: RxAsync<(PathBuf, WatchDelta)>,

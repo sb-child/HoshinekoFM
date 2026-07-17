@@ -221,7 +221,11 @@ impl FsService {
     // --
 
     /// 监视目录。立刻返回 Watcher；首帧全量，之后增量。
-    pub(crate) async fn watch_dir(&self, token: &UidToken, dir: &Path) -> Result<Watcher, AppError> {
+    pub(crate) async fn watch_dir(
+        &self,
+        token: &UidToken,
+        dir: &Path,
+    ) -> Result<Watcher, AppError> {
         let watch_id = self.next_id();
         let rx = token.registry.register_watch(watch_id);
         match token
@@ -375,9 +379,7 @@ impl FsService {
             .iter()
             .all(|o| o.src.0.uid() == uid && o.dst.0.uid() == uid);
         if !all_same {
-            return Err(AppError::Other(
-                "跨 UID copy/move 尚未实现".into(),
-            ));
+            return Err(AppError::Other("跨 UID copy/move 尚未实现".into()));
         }
 
         let token = ops[0].src.0.clone();

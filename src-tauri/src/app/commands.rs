@@ -105,7 +105,11 @@ pub async fn new_tab(
 
 /// 关闭 tab。
 #[command]
-pub fn close_tab(window: Window, ui: State<'_, Arc<UIService>>, tab_id: u64) -> Result<(), AppError> {
+pub fn close_tab(
+    window: Window,
+    ui: State<'_, Arc<UIService>>,
+    tab_id: u64,
+) -> Result<(), AppError> {
     ui.close_tab(&window, tab_id);
     Ok(())
 }
@@ -330,7 +334,10 @@ pub fn realpath(path: String) -> Result<String, AppError> {
 
 /// 获取当前窗口的全局唯一 window_id。
 #[command]
-pub fn get_window_id(window: Window, mgr: State<'_, Arc<AppStateManager>>) -> Result<u64, AppError> {
+pub fn get_window_id(
+    window: Window,
+    mgr: State<'_, Arc<AppStateManager>>,
+) -> Result<u64, AppError> {
     let label = window.label();
     mgr.window_id_by_label(&label)
         .ok_or_else(|| AppError::NotFound(format!("window not registered: {label}")))

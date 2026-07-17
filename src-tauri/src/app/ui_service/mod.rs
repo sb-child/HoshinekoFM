@@ -138,9 +138,7 @@ impl UIService {
     }
 
     fn set_active_tab(&self, window_label: String, tab_id: u64) {
-        self.active_tabs
-            .write_safe()
-            .insert(window_label, tab_id);
+        self.active_tabs.write_safe().insert(window_label, tab_id);
     }
 
     // --

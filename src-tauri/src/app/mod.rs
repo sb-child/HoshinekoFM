@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::Manager;
-use tracing::{error, info, Instrument};
+use tracing::{Instrument, error, info};
 
 use crate::instance_bus::{self, InstanceBus};
 use crate::mesh::Mesh;
@@ -65,7 +65,7 @@ pub async fn run_app(opts: RunOpts) {
         async move {
             instance_bus::watch_instances(instance_bus_watch).await;
         }
-        .instrument(tracing::info_span!("watch_instances"))
+        .instrument(tracing::info_span!("watch_instances")),
     );
 
     // 3. 创建 Mesh（包装 InstanceBus）
@@ -96,7 +96,7 @@ pub async fn run_app(opts: RunOpts) {
         async move {
             ib_listen.listen(listener, mesh_listen).await;
         }
-        .instrument(tracing::info_span!("instance_bus_listen"))
+        .instrument(tracing::info_span!("instance_bus_listen")),
     );
 
     // 7. 告知 Tauri 共用当前 tokio runtime
@@ -187,7 +187,7 @@ fn setup_first_window(handle: &tauri::AppHandle, mgr: &Arc<AppStateManager>, pat
                 async move {
                     mgr_c.register_window(window, label).await;
                 }
-                .instrument(tracing::info_span!("register_window"))
+                .instrument(tracing::info_span!("register_window")),
             );
         }
         Err(e) => {
@@ -212,7 +212,7 @@ fn spawn_ctrlc_handler(mgr: &Arc<AppStateManager>, shutdown: &Arc<AtomicBool>) {
             crate::mesh::discovery::cleanup_socket(instance_id);
             std::process::exit(0);
         }
-        .instrument(tracing::info_span!("ctrl_c_handler"))
+        .instrument(tracing::info_span!("ctrl_c_handler")),
     );
 }
 
@@ -238,7 +238,7 @@ fn handle_window_destroyed(mgr: &Arc<AppStateManager>, label: &str, shutdown: &A
                     std::process::exit(0);
                 }
             }
-            .instrument(tracing::info_span!("window_destroyed"))
+            .instrument(tracing::info_span!("window_destroyed")),
         );
     }
 }

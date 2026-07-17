@@ -160,8 +160,8 @@ pub async fn start_drag<R: Runtime>(
                 .as_micros();
             let dir = std::env::temp_dir().join(format!("hnfm-dnd-{pid}-{ts:x}"));
             if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::warn!("failed to create drag temp dir {dir:?}: {e}");
-        }
+                tracing::warn!("failed to create drag temp dir {dir:?}: {e}");
+            }
             dir
         };
 
@@ -224,12 +224,15 @@ pub async fn start_drag<R: Runtime>(
                     // 延迟清理临时 symlink（给外部 app 时间读取文件）
                     // FIXME: 应使用 CancellationToken 使清理可取消
                     let td = temp_dir.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                        if let Err(e) = std::fs::remove_dir_all(&td) {
-                            tracing::warn!("failed to cleanup drag temp dir {td:?}: {e}");
+                    tokio::spawn(
+                        async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                            if let Err(e) = std::fs::remove_dir_all(&td) {
+                                tracing::warn!("failed to cleanup drag temp dir {td:?}: {e}");
+                            }
                         }
-                    }.instrument(tracing::info_span!("drag::delayed_cleanup")));
+                        .instrument(tracing::info_span!("drag::delayed_cleanup")),
+                    );
                 },
                 linux::Options {
                     skip_animation_on_cancel_or_failure: false,

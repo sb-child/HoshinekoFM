@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::Emitter;
-use tracing::{debug, info, warn, Instrument};
+use tracing::{Instrument, debug, info, warn};
 
 use crate::app::state::AppStateManager;
 use crate::channel;
@@ -291,34 +291,37 @@ fn spawn_watcher_task(
     mgr: Arc<AppStateManager>,
 ) -> (tokio::task::JoinHandle<()>, oneshot::RxOneshot<u64>) {
     let (id_tx, id_rx) = oneshot::oneshot();
-    let handle = tokio::spawn(async move {
-        let watcher = match mgr.fs_service.watch_dir(&token, &path).await {
-            Ok(w) => w,
-            Err(e) => {
-                warn!("spawn_watcher_task tab={tab_id}: watch_dir failed: {e}");
-                let _ = event_tx.send((
-                    tab_id,
-                    generation,
-                    WatchDelta::FatalError {
-                        path: path.clone(),
-                        reason: e.to_string(),
-                    },
-                ));
-                let _ = id_tx.send(0);
-                return;
-            }
-        };
-        let watch_id = watcher.watch_id();
-        let _ = id_tx.send(watch_id);
-        debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
+    let handle = tokio::spawn(
+        async move {
+            let watcher = match mgr.fs_service.watch_dir(&token, &path).await {
+                Ok(w) => w,
+                Err(e) => {
+                    warn!("spawn_watcher_task tab={tab_id}: watch_dir failed: {e}");
+                    let _ = event_tx.send((
+                        tab_id,
+                        generation,
+                        WatchDelta::FatalError {
+                            path: path.clone(),
+                            reason: e.to_string(),
+                        },
+                    ));
+                    let _ = id_tx.send(0);
+                    return;
+                }
+            };
+            let watch_id = watcher.watch_id();
+            let _ = id_tx.send(watch_id);
+            debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
 
-        while let Ok(delta) = watcher.events.recv().await {
-            if event_tx.send((tab_id, generation, delta)).is_err() {
-                break;
+            while let Ok(delta) = watcher.events.recv().await {
+                if event_tx.send((tab_id, generation, delta)).is_err() {
+                    break;
+                }
             }
+            debug!("spawn_watcher_task tab={tab_id} gen={generation} watch_id={watch_id} ended");
         }
-        debug!("spawn_watcher_task tab={tab_id} gen={generation} watch_id={watch_id} ended");
-    }.instrument(tracing::info_span!("nav::watcher_task")));
+        .instrument(tracing::info_span!("nav::watcher_task")),
+    );
     (handle, id_rx)
 }
 
@@ -415,9 +418,7 @@ impl UIService {
         let (cmd_tx, cmd_rx) = channel::unbounded::<WatchCommand>();
         let (event_tx, event_rx) = channel::unbounded::<(u64, u64, WatchDelta)>();
 
-        self.watch_txs
-            .write_safe()
-            .insert(label.clone(), cmd_tx);
+        self.watch_txs.write_safe().insert(label.clone(), cmd_tx);
 
         let mgr = self.mgr.clone();
 
@@ -587,11 +588,14 @@ impl UIService {
         }.instrument(tracing::info_span!("nav::watch_thread")));
         // 后台监控 panic：watch 线程是整个窗口的文件系统事件入口，panic 必须可见
         let l = label.clone();
-        tokio::spawn(async move {
-            if let Err(e) = h.await {
-                tracing::error!(window = %l, "watch thread panicked: {e}");
+        tokio::spawn(
+            async move {
+                if let Err(e) = h.await {
+                    tracing::error!(window = %l, "watch thread panicked: {e}");
+                }
             }
-        }.instrument(tracing::info_span!("nav::watch_thread_monitor")));
+            .instrument(tracing::info_span!("nav::watch_thread_monitor")),
+        );
 
         info!("watch thread started for window={label}");
     }
@@ -798,10 +802,13 @@ impl UIService {
 
             let instance_bus = self.mgr.mesh.instance_bus().clone();
             let msg = InstanceMsg::TransferTab { tab: tab_state };
-            tokio::spawn(async move {
-                instance_bus.send_to(target_instance, &msg).await;
-                debug!("tab transferred to remote instance {target_instance}");
-            }.instrument(tracing::info_span!("nav::remote_transfer_tab")));
+            tokio::spawn(
+                async move {
+                    instance_bus.send_to(target_instance, &msg).await;
+                    debug!("tab transferred to remote instance {target_instance}");
+                }
+                .instrument(tracing::info_span!("nav::remote_transfer_tab")),
+            );
             info!("tab {tab_id} moved to remote instance {target}");
         }
     }
