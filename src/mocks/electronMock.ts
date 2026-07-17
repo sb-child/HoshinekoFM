@@ -191,7 +191,7 @@ const electronMock = {
         if (entry.isDirectory) {
           size += walk(entry.path);
         } else {
-          size += entry.size;
+          size += entry.size ?? 0;
         }
       }
       return size;

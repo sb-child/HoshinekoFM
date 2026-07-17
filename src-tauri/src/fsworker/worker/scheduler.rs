@@ -166,6 +166,10 @@ impl WatchScheduler {
     }
 
     fn on_raw_event(&mut self, raw: RawEvent) {
+        if raw.scope == super::inotify::WatchScope::SelfOnly {
+            return;
+        }
+
         let Some(entry) = self.paths.get_mut(&raw.path) else {
             return;
         };

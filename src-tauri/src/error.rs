@@ -1,6 +1,4 @@
 //! 统一错误类型 -- 替代裸 String 错误。
-//!
-//! AGENTS.md 要求使用结构化错误代替 `Result<String>`。
 
 use std::fmt;
 

@@ -7,7 +7,7 @@ use tracing::{info, instrument, warn};
 
 use super::config::WatchConfig;
 use crate::channel::{self, RxAsync, Tx};
-use crate::fsworker::protocol::{AppCallbackServiceClient, WatchDelta};
+use crate::fsworker::protocol::{AppCallbackServiceClient, File, WatchDelta};
 
 // --
 // 控制命令
@@ -51,6 +51,9 @@ pub struct DeltaRouter {
     overflowed: HashSet<u64>,
     /// per-watch_id 连续 push 超时计数。
     push_timeouts: HashMap<u64, usize>,
+    /// per-path 文件状态快照。用于新 subscriber 注册时补发初始状态，
+    /// 无需依赖 Registry 的 `was_empty` 判断。
+    snapshots: HashMap<PathBuf, Vec<File>>,
 }
 
 impl DeltaRouter {
@@ -71,6 +74,7 @@ impl DeltaRouter {
                 watch_map: HashMap::new(),
                 overflowed: HashSet::new(),
                 push_timeouts: HashMap::new(),
+                snapshots: HashMap::new(),
             },
         )
     }
@@ -91,7 +95,21 @@ impl DeltaRouter {
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
                         Ok(RouterCmd::Register { watch_id, path, cb }) => {
-                            self.path_subs.entry(path.clone())
+                            if let Some(files) = self.snapshots.get(&path) {
+                                let files = files.clone();
+                                let cb = cb.clone();
+                                tokio::spawn(async move {
+                                    let _ = cb
+                                        .watch_delta(
+                                            tarpc::context::current(),
+                                            watch_id,
+                                            WatchDelta::UpsertBatch(files),
+                                        )
+                                        .await;
+                                });
+                            }
+                            self.path_subs
+                                .entry(path.clone())
                                 .or_default()
                                 .push((watch_id, cb));
                             self.watch_map.insert(watch_id, path);
@@ -127,6 +145,8 @@ impl DeltaRouter {
 
     #[instrument(skip(self, delta), name = "route")]
     async fn route(&mut self, path: &PathBuf, delta: WatchDelta) {
+        self.apply_to_snapshot(path, &delta);
+
         let Some(subs) = self.path_subs.get(path) else {
             return;
         };
@@ -135,7 +155,6 @@ impl DeltaRouter {
 
         for (watch_id, cb) in &subs {
             if self.overflowed.contains(watch_id) {
-                // 背压降级中：跳过增量，等恢复时统一发 Reset
                 continue;
             }
 
@@ -154,10 +173,72 @@ impl DeltaRouter {
                     self.on_push_failure(*watch_id);
                 }
                 Err(_) => {
-                    // 超时
                     self.on_push_failure(*watch_id);
                 }
             }
+        }
+    }
+
+    fn apply_to_snapshot(&mut self, path: &PathBuf, delta: &WatchDelta) {
+        match delta {
+            WatchDelta::Reset(files) => {
+                self.snapshots.insert(path.clone(), files.clone());
+            }
+            WatchDelta::UpsertBatch(files) => {
+                let snapshot = self.snapshots.entry(path.clone()).or_default();
+                let incoming: std::collections::HashMap<_, _> = files
+                    .iter()
+                    .filter(|f| {
+                        if f.path == *path {
+                            warn!(
+                                path = %path.display(),
+                                file = %f.path.display(),
+                                "router: snapshot rejecting watch_root entry (UpsertBatch)"
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|f| (f.path.clone(), f))
+                    .collect();
+                snapshot.retain(|old| !incoming.contains_key(&old.path));
+                snapshot.extend(incoming.into_values().cloned());
+            }
+            WatchDelta::Upsert(file) => {
+                if file.path == *path {
+                    warn!(
+                        path = %path.display(),
+                        file = %file.path.display(),
+                        "router: snapshot rejecting watch_root entry (Upsert)"
+                    );
+                    return;
+                }
+                let snapshot = self.snapshots.entry(path.clone()).or_default();
+                snapshot.retain(|old| old.path != file.path);
+                snapshot.push(file.clone());
+            }
+            WatchDelta::Remove(file_path) => {
+                if let Some(snapshot) = self.snapshots.get_mut(path) {
+                    snapshot.retain(|f| &f.path != file_path);
+                }
+            }
+            WatchDelta::Rename { from, to } => {
+                if let Some(snapshot) = self.snapshots.get_mut(path) {
+                    if let Some(pos) = snapshot.iter().position(|f| &f.path == from) {
+                        snapshot[pos].path = to.clone();
+                        snapshot[pos].name = to
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                    }
+                }
+            }
+            WatchDelta::Inaccessible { .. }
+            | WatchDelta::Recovering { .. }
+            | WatchDelta::FatalError { .. }
+            | WatchDelta::ConnectionLost { .. }
+            | WatchDelta::BreadcrumbSegments(..) => {}
         }
     }
 

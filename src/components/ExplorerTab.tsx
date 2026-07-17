@@ -44,7 +44,7 @@ function mapBackendFile(f: FileEntry): IFile {
     path: f.path,
     isDirectory: f.is_directory,
     size: f.size,
-    mtime: new Date(f.modified * 1000),
+    mtime: f.modified != null ? new Date(f.modified * 1000) : null,
     mime: f.mime,
   };
 }
@@ -410,10 +410,10 @@ export function ExplorerTab({ tabId, isActive, initialPath, onPathChange, onCont
         result = a.name.localeCompare(b.name);
         break;
       case 'size':
-        result = a.size - b.size;
+        result = (a.size ?? 0) - (b.size ?? 0);
         break;
       case 'date':
-        result = a.mtime.getTime() - b.mtime.getTime();
+        result = (a.mtime?.getTime() ?? 0) - (b.mtime?.getTime() ?? 0);
         break;
       }
       return sortOrder === 'asc' ? result : -result;

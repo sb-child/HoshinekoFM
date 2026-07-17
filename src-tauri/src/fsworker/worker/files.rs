@@ -3,9 +3,8 @@
 use std::{
     ffi::CString,
     io,
-    os::unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 use tracing::warn;
@@ -61,6 +60,7 @@ pub(crate) fn list_dir_files(dir: &Path) -> Vec<File> {
 }
 
 /// 构建单个 `File`（用 symlink 元数据判断软链接，用 stat 取属性）。
+/// 保留供 `list_dir_files` 兼容用。新代码应使用流水线函数。
 pub(crate) fn build_file(path: &Path) -> Option<File> {
     let symlink_meta = std::fs::symlink_metadata(path).ok()?;
     let is_symlink = symlink_meta.file_type().is_symlink();
@@ -82,16 +82,123 @@ pub(crate) fn build_file(path: &Path) -> Option<File> {
     Some(File {
         name,
         path: path.to_path_buf(),
-        size: meta.len(),
-        modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        size: Some(meta.len()),
+        modified: meta.modified().ok(),
         is_directory,
         is_symlink,
-        permissions: meta.mode(),
-        owner_uid: meta.uid(),
-        owner_gid: meta.gid(),
+        permissions: Some(meta.mode()),
+        owner_uid: Some(meta.uid()),
+        owner_gid: Some(meta.gid()),
         mime,
         thumbnail: None,
     })
+}
+
+/// Stage 1 构建：从 `DirEntry` 直接获取文件名和类型，**0 次 stat**。
+///
+/// 仅填充 `name` / `path` / `is_directory` / `is_symlink`；
+/// 其余字段为 `None`。symlink 在 skeleton 阶段 `is_directory` 始终为 false，
+/// Stage 2 跟随目标后才确定。
+pub(crate) fn build_file_skeleton(entry: &std::fs::DirEntry) -> Option<File> {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path();
+    let ft = match entry.file_type() {
+        Ok(ft) => ft,
+        Err(_) => {
+            let meta = std::fs::symlink_metadata(&path).ok()?;
+            meta.file_type()
+        }
+    };
+
+    let is_symlink = ft.is_symlink();
+    let is_directory = ft.is_dir() && !is_symlink;
+    let mime = if is_directory {
+        Some("inode/directory".to_string())
+    } else {
+        None
+    };
+
+    Some(File {
+        name,
+        path,
+        is_directory,
+        is_symlink,
+        size: None,
+        modified: None,
+        permissions: None,
+        owner_uid: None,
+        owner_gid: None,
+        mime,
+        thumbnail: None,
+    })
+}
+
+/// Stage 2：stat 填充 metadata。仅一次 `symlink_metadata`；
+/// 若是合法 symlink 则再 `metadata` 跟随目标补全 `is_directory` / `size` / `modified`。
+pub(crate) fn augment_stat(mut file: File) -> io::Result<File> {
+    let meta = std::fs::symlink_metadata(&file.path)?;
+    let is_symlink = meta.file_type().is_symlink();
+
+    if is_symlink {
+        if let Ok(target_meta) = std::fs::metadata(&file.path) {
+            file.size = Some(target_meta.len());
+            file.modified = target_meta.modified().ok();
+            file.is_directory = target_meta.is_dir();
+            file.mime = if file.is_directory {
+                Some("inode/directory".to_string())
+            } else {
+                None
+            };
+        } else {
+            file.mime = Some("inode/symlink".to_string());
+        }
+    } else {
+        file.size = Some(meta.len());
+        file.modified = meta.modified().ok();
+        file.is_directory = meta.is_dir();
+        if file.is_directory {
+            file.mime = Some("inode/directory".to_string());
+        }
+    }
+
+    file.permissions = Some(meta.mode());
+    file.owner_uid = Some(meta.uid());
+    file.owner_gid = Some(meta.gid());
+    file.is_symlink = is_symlink;
+
+    Ok(file)
+}
+
+/// 是否需要 Stage 3 mime 检测。
+pub(crate) fn needs_mime(file: &File) -> bool {
+    if file.is_directory {
+        return false;
+    }
+    if file.is_symlink && file.mime.as_deref() == Some("inode/symlink") {
+        return false;
+    }
+    true
+}
+
+/// Stage 3：读文件头 magic bytes 检测 MIME 类型。
+pub(crate) fn augment_mime(mut file: File) -> io::Result<File> {
+    let mime = detect_mime(&file.path);
+    file.mime = Some(mime);
+    Ok(file)
+}
+
+/// 读文件头 magic bytes 检测 MIME 类型，回退到扩展名猜测。
+fn detect_mime(path: &Path) -> String {
+    let mut buf = [0u8; 256];
+    match std::fs::File::open(path) {
+        Ok(mut f) => {
+            use std::io::Read;
+            let n = f.read(&mut buf).unwrap_or(0);
+            infer::get(&buf[..n]).map(|t| t.mime_type().to_string())
+        }
+        Err(_) => None,
+    }
+    .unwrap_or_else(|| guess_mime(path))
 }
 
 /// 创建文件或目录。

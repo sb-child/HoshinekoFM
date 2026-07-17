@@ -21,31 +21,22 @@ pub use crate::mesh::types::ui::EntryKind;
 
 /// 文件系统条目信息。
 ///
-/// mime / thumbnail 是**渐进式**字段：初次快照时可能为 `None`，
-/// Worker 后台算好后通过 `WatchDelta::Upsert` 补发。
+/// 所有字段**渐进式填充**：`name` / `path` / `is_directory` / `is_symlink`
+/// 在扫描阶段（skeleton）就已确定；其余字段初始为 `None`，
+/// Worker 后台逐级算好后通过 `WatchDelta::Upsert` 补发。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
-    /// 文件名（不含路径）
     pub name: String,
-    /// 完整路径
     pub path: PathBuf,
-    /// 大小（字节），目录为 0
-    pub size: u64,
-    /// 修改时间
-    pub modified: SystemTime,
-    /// 是否为目录
     pub is_directory: bool,
-    /// 是否为符号链接
     pub is_symlink: bool,
-    /// Unix 权限位
-    pub permissions: u32,
-    /// 属主 UID
-    pub owner_uid: u32,
-    /// 属主 GID
-    pub owner_gid: u32,
-    /// MIME 类型（渐进式，初次可能为 None）
+
+    pub size: Option<u64>,
+    pub modified: Option<SystemTime>,
+    pub permissions: Option<u32>,
+    pub owner_uid: Option<u32>,
+    pub owner_gid: Option<u32>,
     pub mime: Option<String>,
-    /// 缩略图 PNG 字节（渐进式，初次为 None；仅图片类）
     pub thumbnail: Option<Vec<u8>>,
 }
 

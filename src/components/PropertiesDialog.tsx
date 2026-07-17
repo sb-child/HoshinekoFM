@@ -115,7 +115,7 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({ file, open, 
           </div>
 
           <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Modified:')}</div>
-          <div>{new Date(file.mtime).toLocaleString()}</div>
+          <div>{file.mtime != null ? file.mtime.toLocaleString() : "—"}</div>
 
           {/* Placeholder for Perms or Type details */}
           <div style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>{tProp('Type:')}</div>

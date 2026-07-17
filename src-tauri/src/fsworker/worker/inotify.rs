@@ -10,62 +10,46 @@ use crate::channel::{self, RxAsync, Tx};
 
 use super::config::WatchConfig;
 
-// --
-// 控制命令
-// --
-
-/// Registry 发给 InotifyManager 的控制命令。
 pub enum InotifyCmd {
-    Watch { path: PathBuf, is_dir: bool },
-    Unwatch { path: PathBuf },
-    Rewatch { path: PathBuf, is_dir: bool },
+    Watch {
+        path: PathBuf,
+        scope: WatchScope,
+    },
+    Unwatch {
+        path: PathBuf,
+    },
     Shutdown,
 }
 
-/// InotifyManager 产出的原始事件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchScope {
+    /// 文件列表用：需要此路径的**所有直接子项**的事件。
+    Children,
+    /// 面包屑用：仅需要此路径**自身**的属性变化事件。
+    SelfOnly,
+}
+
 #[derive(Debug, Clone)]
 pub struct RawEvent {
-    /// 受影响的 watch target 路径。
     pub path: PathBuf,
-    /// inotify 事件中携带的具体受影响的路径列表。
     pub affected_paths: Vec<PathBuf>,
+    /// 触发此事件的监视范围。SelfOnly 表示目录自身属性变化，Children 表示子项变化。
+    pub scope: WatchScope,
 }
 
-// --
-// InotifyManager
-// --
-
-/// watch 表条目，区分原始 watch 和 dual-watch（父目录）。
 struct WatchEntry {
-    is_dir: bool,
-    /// 若为 dual-watch 父目录，路由时不用 starts_with(t.parent()) 匹配，
-    /// 而是仅匹配 p==t（父目录自身变化）或 p.parent()==t（直接子项变化）。
-    is_dual: bool,
+    /// 最宽权限：SelfOnly 可升级到 Children，不降级。
+    scope: WatchScope,
 }
 
-/// 进程级单例 inotify 管理器。
-///
-/// 整个 fsworker 进程仅有一个 inotify 实例，所有目录/文件 watch
-/// 通过添加 watch descriptor 共享。虚拟文件系统（/proc /sys）走
-/// 独立 AsyncFd poll。
 pub struct InotifyManager {
-    /// 接收外部控制命令（Watch / Unwatch / Rewatch / Shutdown）。
     cmd_rx: RxAsync<InotifyCmd>,
-    /// 向 WatchScheduler 推送原始事件。
     event_tx: Tx<RawEvent>,
-    /// 取消令牌。
     cancel: CancellationToken,
-    /// 运行时配置。
     config: WatchConfig,
 }
 
 impl InotifyManager {
-    /// 创建 InotifyManager 并返回启动所需的通道对。
-    ///
-    /// 调用方获得：
-    /// - `(cmd_tx, event_rx)` -- 用于向管理器发送命令、从管理器接收事件。
-    /// - `Self` -- 持有消费端。
-    /// - `CancellationToken` -- 传递给调用方用于取消。
     pub fn spawn(
         cancel: CancellationToken,
         config: &WatchConfig,
@@ -84,7 +68,6 @@ impl InotifyManager {
         )
     }
 
-    /// 运行主循环。调用方应 `tokio::spawn(self.run())`。
     #[instrument(skip(self), name = "inotify")]
     pub async fn run(self) {
         info!("InotifyManager starting");
@@ -92,20 +75,19 @@ impl InotifyManager {
         let (raw_tx, raw_rx) = channel::unbounded::<Vec<PathBuf>>();
         let raw_rx: RxAsync<Vec<PathBuf>> = raw_rx;
 
-        let mut watcher =
-            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = raw_tx.send(event.paths);
-                }
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    warn!("InotifyManager: failed to create watcher: {e}");
-                    return;
-                }
-            };
+        let mut watcher = match notify::recommended_watcher(
+            move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                let _ = raw_tx.send(event.paths);
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("InotifyManager: failed to create watcher: {e}");
+                return;
+            }
+        };
 
-        // track watch descriptors: path -> WatchEntry
         let mut watches: HashMap<PathBuf, WatchEntry> = HashMap::new();
 
         loop {
@@ -119,15 +101,11 @@ impl InotifyManager {
 
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
-                        Ok(InotifyCmd::Watch { path, is_dir }) => {
-                            self.handle_watch(&mut watcher, &mut watches, path.clone(), is_dir);
+                        Ok(InotifyCmd::Watch { path, scope }) => {
+                            self.handle_watch(&mut watcher, &mut watches, path, scope);
                         }
                         Ok(InotifyCmd::Unwatch { path }) => {
-                            self.handle_unwatch(&mut watcher, &mut watches, &path);
-                        }
-                        Ok(InotifyCmd::Rewatch { path, is_dir }) => {
-                            self.handle_unwatch(&mut watcher, &mut watches, &path);
-                            self.handle_watch(&mut watcher, &mut watches, path, is_dir);
+                            self.handle_unwatch(&mut watcher, &mut watches, &path, None);
                         }
                         Ok(InotifyCmd::Shutdown) => {
                             info!("InotifyManager received Shutdown");
@@ -140,23 +118,34 @@ impl InotifyManager {
                 events = raw_rx.recv() => {
                     match events {
                         Ok(paths) => {
+                            // 按 (target, scope) 分组，每个 target 只收到它匹配的路径子集
+                            let mut by_target: HashMap<PathBuf, (Vec<PathBuf>, WatchScope)> = HashMap::new();
+
                             for p in &paths {
-                                if let Some(target) = watches.iter().find_map(|(t, e)| {
-                                    let matches = if e.is_dual {
-                                        p.parent().map_or(false, |par| par == t.as_path()) || p.as_path() == t.as_path()
-                                    } else if e.is_dir {
-                                        p.parent().map_or(false, |par| par == t.as_path())
-                                    } else {
-                                        p.starts_with(t.parent().unwrap_or(t)) || p.as_path() == t.as_path()
+                                for (target, entry) in &watches {
+                                    let matches = match entry.scope {
+                                        WatchScope::Children => {
+                                            p.parent().map_or(false, |par| par == target.as_path())
+                                        }
+                                        WatchScope::SelfOnly => {
+                                            p.as_path() == target.as_path()
+                                        }
                                     };
-                                    matches.then_some(t)
-                                }) {
-                                    let _ = self.event_tx.send(RawEvent {
-                                        path: target.clone(),
-                                        affected_paths: paths.clone(),
-                                    });
-                                    break;
+                                    if matches {
+                                        let e = by_target
+                                            .entry(target.clone())
+                                            .or_insert_with(|| (Vec::new(), entry.scope));
+                                        e.0.push(p.clone());
+                                    }
                                 }
+                            }
+
+                            for (target, (affected, scope)) in by_target {
+                                let _ = self.event_tx.send(RawEvent {
+                                    path: target,
+                                    affected_paths: affected,
+                                    scope,
+                                });
                             }
                         }
                         Err(_) => return,
@@ -171,54 +160,22 @@ impl InotifyManager {
         watcher: &mut notify::RecommendedWatcher,
         watches: &mut HashMap<PathBuf, WatchEntry>,
         path: PathBuf,
-        is_dir: bool,
+        scope: WatchScope,
     ) {
         if let Some(existing) = watches.get_mut(&path) {
-            if existing.is_dual {
-                existing.is_dual = false;
-                debug!(
-                    "InotifyManager: upgraded dual-watch {:?} to primary (is_dir={is_dir})",
-                    path
-                );
-            }
-            if is_dir {
-                existing.is_dir = true;
+            if scope == WatchScope::Children {
+                existing.scope = WatchScope::Children;
             }
             return;
         }
-        let parent = path.parent().map(|p| p.to_path_buf());
+
         match watcher.watch(&path, RecursiveMode::NonRecursive) {
             Ok(()) => {
-                debug!("InotifyManager: watching {:?} (is_dir={is_dir})", path);
-                watches.insert(
-                    path,
-                    WatchEntry {
-                        is_dir,
-                        is_dual: false,
-                    },
+                debug!(
+                    "InotifyManager: watching {:?} (scope={:?})",
+                    path, scope
                 );
-                // 双 watch：同时监听 parent 以检测类型变更
-                if let Some(parent_path) = parent {
-                    if !parent_path.as_os_str().is_empty()
-                        && parent_path != PathBuf::from("/")
-                        && !watches.contains_key(&parent_path)
-                    {
-                        if let Err(e) = watcher.watch(&parent_path, RecursiveMode::NonRecursive) {
-                            warn!(
-                                "InotifyManager: dual watch parent {:?} failed: {e}",
-                                parent_path
-                            );
-                        } else {
-                            watches.insert(
-                                parent_path,
-                                WatchEntry {
-                                    is_dir: true,
-                                    is_dual: true,
-                                },
-                            );
-                        }
-                    }
-                }
+                watches.insert(path, WatchEntry { scope });
             }
             Err(e) => {
                 warn!("InotifyManager: watch {:?} failed: {e}", path);
@@ -231,6 +188,7 @@ impl InotifyManager {
         watcher: &mut notify::RecommendedWatcher,
         watches: &mut HashMap<PathBuf, WatchEntry>,
         path: &PathBuf,
+        _parent: Option<&PathBuf>,
     ) {
         if watches.remove(path).is_some() {
             let _ = watcher.unwatch(path);

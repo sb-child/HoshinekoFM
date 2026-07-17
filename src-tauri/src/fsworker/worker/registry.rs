@@ -9,7 +9,7 @@ use crate::channel::Tx;
 use crate::fsworker::protocol::AppCallbackServiceClient;
 
 use super::builder::BuilderCmd;
-use super::inotify::InotifyCmd;
+use super::inotify::{InotifyCmd, WatchScope};
 use super::router::RouterCmd;
 use super::scheduler::SchedulerCmd;
 
@@ -57,16 +57,16 @@ impl WatchRegistry {
     }
 
     /// 订阅路径。若为首个 subscriber 则通知 InotifyManager 启动 watch
-    /// 并请求 Reset。需要传入 `is_dir` 以正确配置 inotify。
+    /// 并请求 Reset。
     #[instrument(skip(self, cb), name = "subscribe")]
     pub async fn subscribe(
         &self,
         watch_id: u64,
         path: PathBuf,
-        is_dir: bool,
+        scope: WatchScope,
         cb: AppCallbackServiceClient,
     ) {
-        debug!("WatchRegistry subscribe: w={watch_id} path={path:?} is_dir={is_dir}");
+        debug!("WatchRegistry subscribe: w={watch_id} path={path:?} scope={scope:?}");
 
         let was_empty = {
             let mut paths = self.paths.lock().await;
@@ -85,21 +85,19 @@ impl WatchRegistry {
             cb,
         });
 
-        // handle_watch 对已有条目安全幂等：仅更新 is_dir，不重复注册 inotify
         let _ = self.inotify_tx.send(InotifyCmd::Watch {
             path: path.clone(),
-            is_dir,
+            scope,
         });
 
         if was_empty {
             let _ = self
                 .scheduler_tx
                 .send(SchedulerCmd::Track { path: path.clone() });
+            let _ = self
+                .builder_tx
+                .send(BuilderCmd::Reset { path: path.clone() });
         }
-
-        let _ = self
-            .builder_tx
-            .send(BuilderCmd::Reset { path: path.clone() });
     }
 
     /// 解除订阅。若为最后一个 subscriber 则通知 InotifyManager 停止 watch。

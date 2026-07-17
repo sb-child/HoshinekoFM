@@ -12,14 +12,14 @@ export interface IFile {
     isDirectory: boolean;
     /**
      * File size in bytes.
-     * `0` for directories, special device files, and broken symlinks.
+     * `null` when metadata has not been loaded yet, `0` for directories.
      */
-    size: number;
+    size: number | null;
     /**
      * Last modification timestamp.
-     * `Date(0)` for special device files and broken symlinks.
+     * `null` when metadata has not been loaded yet.
      */
-    mtime: Date;
+    mtime: Date | null;
     /**
      * MIME type string.
      * Examples: `"text/plain"`, `"inode/directory"`, `"inode/blockdevice"`,

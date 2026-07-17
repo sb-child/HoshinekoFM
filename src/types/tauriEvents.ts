@@ -48,15 +48,15 @@ export type WatchDelta =
 export interface FileEntry {
   name: string;
   path: string;
-  size: number;
-  modified: number; // SystemTime as unix timestamp
   is_directory: boolean;
   is_symlink: boolean;
-  permissions: number;
-  owner_uid: number;
-  owner_gid: number;
+  size: number | null;
+  modified: number | null;
+  permissions: number | null;
+  owner_uid: number | null;
+  owner_gid: number | null;
   mime: string | null;
-  thumbnail: number[] | null; // Vec<u8> as byte array
+  thumbnail: number[] | null;
 }
 
 /** `hf:breadcrumbs` 事件 — 单个路径段信息 */

@@ -189,8 +189,8 @@ export function getFileIconFromMime(
   return "insert_drive_file";
 }
 
-export function formatSize(bytes: number) {
-  if (bytes === 0) return t("size.zero");
+export function formatSize(bytes: number | null) {
+  if (bytes == null) return "—";
   const k = 1024;
   const sizes = [
     t("size.b"),

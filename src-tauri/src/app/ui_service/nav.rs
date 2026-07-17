@@ -260,18 +260,59 @@ impl WatchSnapshot {
 
 /// Watch 线程维护的 per-tab watcher 元数据。
 struct TabWatchEntry {
-    /// Watcher 转发任务句柄（abort = drop Watcher -> unwatch）
+    /// Watcher 转发任务句柄（abort，不等）
     handle: tokio::task::JoinHandle<()>,
-    /// 该 tab 当前文件列表快照
-    snapshot: WatchSnapshot,
     /// Watch ID（由 watcher task 通过 oneshot 回报，0 表示尚未回报）
     watch_id: u64,
     /// 等待 watch_id 的 oneshot receiver（Some 表示尚未收到）
     watch_id_rx: Option<oneshot::RxOneshot<u64>>,
     /// UID Token（用于 Refresh RPC + 保活 Worker）
     token: UidToken,
-    /// 代际计数器：每次 NavUpdate 递增，校验事件是否来自当前 watcher
+}
+
+// --
+// FileListDelta -- per-tab 文件列表状态机，使用 generation 防旧 watcher 残留
+// --
+
+/// Per-tab 文件列表状态机。
+///
+/// 每次导航 `navigate()` 递增 generation，旧 watcher 的残留 delta 因 generation
+/// 不匹配被 `apply()` 丢弃。快照随同代 delta 增量更新。
+struct FileListDelta {
     generation: u64,
+    snapshot: WatchSnapshot,
+}
+
+impl FileListDelta {
+    fn new() -> Self {
+        Self {
+            generation: 0,
+            snapshot: WatchSnapshot::empty(),
+        }
+    }
+
+    /// 导航到新路径：generation 递增、快照清空。
+    /// 返回 `Reset([])` 告知前端清空文件列表（展示加载状态）。
+    fn navigate(&mut self) -> WatchDelta {
+        self.generation += 1;
+        self.snapshot = WatchSnapshot::empty();
+        WatchDelta::Reset(Vec::new())
+    }
+
+    /// 尝试应用 delta。generation 匹配才更新快照。
+    /// 返回 `true` 表示应 emit 给前端。
+    fn apply(&mut self, generation: u64, delta: &WatchDelta) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.snapshot.apply(delta);
+        true
+    }
+
+    /// 当前快照用于 tab 切换时推送。
+    fn to_delta(&self) -> WatchDelta {
+        self.snapshot.to_delta()
+    }
 }
 
 // --
@@ -279,14 +320,14 @@ struct TabWatchEntry {
 // --
 
 /// 创建 watcher 转发任务。任务持有 Watcher（RAII cleanup），
-/// 将事件通过统一 channel 转发给主线程。
+/// 将事件通过统一 channel 转发给主线程。每个事件带 generation 标签。
 ///
 /// 返回 (JoinHandle, watch_id_rx)。
 fn spawn_watcher_task(
     tab_id: u64,
-    generation: u64,
     path: PathBuf,
     token: UidToken,
+    generation: u64,
     event_tx: channel::Tx<(u64, u64, WatchDelta)>,
     mgr: Arc<AppStateManager>,
 ) -> (tokio::task::JoinHandle<()>, oneshot::RxOneshot<u64>) {
@@ -311,14 +352,14 @@ fn spawn_watcher_task(
             };
             let watch_id = watcher.watch_id();
             let _ = id_tx.send(watch_id);
-            debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} started");
+            debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} gen={generation} started");
 
             while let Ok(delta) = watcher.events.recv().await {
                 if event_tx.send((tab_id, generation, delta)).is_err() {
                     break;
                 }
             }
-            debug!("spawn_watcher_task tab={tab_id} gen={generation} watch_id={watch_id} ended");
+            debug!("spawn_watcher_task tab={tab_id} watch_id={watch_id} gen={generation} ended");
         }
         .instrument(tracing::info_span!("nav::watcher_task")),
     );
@@ -408,8 +449,9 @@ impl UIService {
     // --
     // Watcher 生命周期 -- 每窗口一个持久线程
     // --
+}
 
-    /// 为窗口启动持久 watch 线程（每个窗口调用一次）。
+impl UIService {
     ///
     /// 线程内部维护所有 tab 的 watcher 任务 + 文件列表快照。
     /// Tab 切换时直接 push 缓存快照，然后接增量事件。
@@ -426,9 +468,8 @@ impl UIService {
         let breadcrumb_mgr = BreadcrumbManager::start(window.clone(), mgr.clone());
 
         let h = tokio::spawn(async move {
-            let mut tab_targets: HashMap<u64, WatchTarget> = HashMap::new();
             let mut tab_watches: HashMap<u64, TabWatchEntry> = HashMap::new();
-            let mut tab_generations: HashMap<u64, u64> = HashMap::new();
+            let mut file_list: HashMap<u64, FileListDelta> = HashMap::new();
             let mut active_tab: Option<u64> = None;
 
             loop {
@@ -477,30 +518,31 @@ impl UIService {
                     ThreadEvent::Command(cmd) => match cmd {
                         WatchCommand::TabSwitch { tab_id } => {
                             active_tab = Some(tab_id);
-                            if let Some(entry) = tab_watches.get(&tab_id) {
-                                if entry.watch_id != 0 {
-                                    let _ = window.emit("hf:file-list", &entry.snapshot.to_delta());
-                                }
+                            if let Some(fd) = file_list.get(&tab_id) {
+                                let _ = window.emit("hf:file-list", &fd.to_delta());
                             }
                             // 面包屑：推送该 tab 的缓存面包屑
                             breadcrumb_mgr.send(BreadcrumbCommand::TabSwitch { tab_id });
                         }
                         WatchCommand::NavUpdate { tab_id, target } => {
-                            tab_targets.insert(tab_id, target.clone());
+                            // 立即告知前端清空文件列表（加载状态）
+                            let fl = file_list.entry(tab_id).or_insert_with(FileListDelta::new);
+                            let reset_delta = fl.navigate();
+                            if Some(tab_id) == active_tab {
+                                let _ = window.emit("hf:file-list", &reset_delta);
+                            }
+
+                            // abort 旧 watcher（不等，立即返回）
                             if let Some(old) = tab_watches.remove(&tab_id) {
                                 old.handle.abort();
                             }
-                            let generation = tab_generations
-                                .entry(tab_id)
-                                .and_modify(|c| *c += 1)
-                                .or_insert(1);
-                            let generation = *generation;
                             if let WatchTarget::Filesystem { path, token } = target {
+                                let gen_val = fl.generation;
                                 let (handle, id_rx) = spawn_watcher_task(
                                     tab_id,
-                                    generation,
                                     path.clone(),
                                     token.clone(),
+                                    gen_val,
                                     event_tx.clone(),
                                     mgr.clone(),
                                 );
@@ -508,11 +550,9 @@ impl UIService {
                                     tab_id,
                                     TabWatchEntry {
                                         handle,
-                                        snapshot: WatchSnapshot::empty(),
                                         watch_id: 0,
                                         watch_id_rx: Some(id_rx),
                                         token: token.clone(),
-                                        generation,
                                     },
                                 );
                                 // 面包屑：重建该 tab 的面包屑 watcher
@@ -527,8 +567,7 @@ impl UIService {
                             if let Some(entry) = tab_watches.remove(&tab_id) {
                                 entry.handle.abort();
                             }
-                            tab_targets.remove(&tab_id);
-                            tab_generations.remove(&tab_id);
+                            file_list.remove(&tab_id);
                             if active_tab == Some(tab_id) {
                                 active_tab = None;
                             }
@@ -570,14 +609,13 @@ impl UIService {
                         generation,
                         delta,
                     } => {
-                        // 校验代际：忽略旧 watcher 的残留事件
-                        let Some(entry) = tab_watches.get_mut(&tab_id) else {
+                        let Some(fl) = file_list.get_mut(&tab_id) else {
                             continue;
                         };
-                        if entry.generation != generation {
+                        if !fl.apply(generation, &delta) {
+                            // generation 不匹配，旧 watcher 残留事件，丢弃
                             continue;
                         }
-                        entry.snapshot.apply(&delta);
                         // 仅 active tab 转发给前端
                         if Some(tab_id) == active_tab {
                             let _ = window.emit("hf:file-list", &delta);
@@ -662,6 +700,7 @@ impl UIService {
         };
 
         self.emit_nav_state(window, tab_id);
+        self.emit_tabs(window);
 
         let watch_target = match target {
             NavTarget::Dashboard => WatchTarget::Dashboard,
@@ -696,6 +735,7 @@ impl UIService {
         };
 
         self.emit_nav_state(window, tab_id);
+        self.emit_tabs(window);
 
         let watch_target = match target {
             NavTarget::Dashboard => WatchTarget::Dashboard,
